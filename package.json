@@ -2,7 +2,8 @@
   "name": "the-urban-grammar-monorepo",
   "private": true,
   "workspaces": [
-    "grammar"
+    "grammar",
+    "adapters/autk"
   ],
   "scripts": {
     "build": "npm run build --workspaces",

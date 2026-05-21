@@ -1,10 +1,14 @@
 # Modules — add new module directories here as they are created
-MODULES := grammar
+MODULES := grammar adapters/autk
 
-.PHONY: build install clean $(MODULES)
+.PHONY: build install clean lint typecheck
 
 ## Build all modules
-build: $(MODULES)
+build:
+	@for module in $(MODULES); do \
+		echo "Building $$module..."; \
+		npm run build --prefix $$module; \
+	done
 
 ## Install dependencies for all modules
 install:
@@ -13,9 +17,19 @@ install:
 		npm install --prefix $$module; \
 	done
 
-## Build targets per module
-grammar:
-	npm run build --prefix grammar
+## Lint all modules
+lint:
+	@for module in $(MODULES); do \
+		echo "Linting $$module..."; \
+		npm run lint --prefix $$module; \
+	done
+
+## Typecheck all modules
+typecheck:
+	@for module in $(MODULES); do \
+		echo "Typechecking $$module..."; \
+		npm run typecheck --prefix $$module; \
+	done
 
 ## Remove dist output from all modules
 clean:
