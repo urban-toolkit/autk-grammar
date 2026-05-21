@@ -1,4 +1,4 @@
-import { ComputeAdapter, ComputeSpec } from 'urban-grammar';
+import { ComputeAdapter, ComputeSpec } from '@urban-toolkit/the-urban-grammar';
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkComputeEngine } from '@urban-toolkit/autk-compute';
 import { FeatureCollection } from 'geojson';

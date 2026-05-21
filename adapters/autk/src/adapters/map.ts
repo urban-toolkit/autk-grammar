@@ -1,4 +1,4 @@
-import { MapAdapter, MapSpec, NormalizationMode } from 'urban-grammar';
+import { MapAdapter, MapSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
 import { Targets, MapRegistry, ComputeCache } from '../types';
 import { AutkMap, MapStyle } from '@urban-toolkit/autk-map';
 import { ColorMapDomainStrategy } from '@urban-toolkit/autk-map';

@@ -1,4 +1,4 @@
-import { PlotAdapter, PlotSpec, PlotMark } from 'urban-grammar';
+import { PlotAdapter, PlotSpec, PlotMark } from '@urban-toolkit/the-urban-grammar';
 import { Targets, MapRegistry, GeoJsonCache } from '../types';
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkPlot, PlotEvent as AutkPlotEvent } from '@urban-toolkit/autk-plot';

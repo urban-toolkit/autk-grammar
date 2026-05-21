@@ -1,4 +1,4 @@
-import type { UrbanSpec } from 'urban-grammar';
+import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import type { AutkMap } from '@urban-toolkit/autk-map';
 import type { FeatureCollection } from 'geojson';
 
@@ -15,5 +15,5 @@ export type ComputeCache = Map<string, FeatureCollection>;
 
 export type AutkGrammarSpec = UrbanSpec;
 
-export { ColorMapInterpolator, NormalizationMode } from 'urban-grammar';
+export { ColorMapInterpolator, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
 

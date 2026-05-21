@@ -1,4 +1,4 @@
-import { DataAdapter, MapAdapter, PlotAdapter, ComputeAdapter, IEngine, UrbanSpec, createEngine } from "urban-grammar";
+import { DataAdapter, MapAdapter, PlotAdapter, ComputeAdapter, IEngine, UrbanSpec, createEngine } from "@urban-toolkit/the-urban-grammar";
 import { createDataAdapter } from "./adapters/data";
 import { createMapAdapter } from "./adapters/map";
 import { createPlotAdapter } from "./adapters/plot";
