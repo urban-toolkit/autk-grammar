@@ -40,8 +40,6 @@ jobs:
         run: make build
 
       - name: Publish new package versions
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           package_dirs=(grammar adapters/autk)
