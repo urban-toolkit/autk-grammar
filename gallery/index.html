@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Urban Grammar — Gallery</title>
+  <link rel="stylesheet" href="/src/hub.css" />
+</head>
+<body>
+  <header id="toolbar">
+    <span class="brand">The Urban Grammar</span>
+    <div class="controls">
+      <div class="control-group">
+        <label for="example-select">Example</label>
+        <select id="example-select">
+          <option value="">— choose —</option>
+        </select>
+      </div>
+      <div class="control-group">
+        <label for="adapter-select">Adapter</label>
+        <select id="adapter-select">
+          <option value="autk">autk</option>
+          <option value="deckgl">deckgl</option>
+        </select>
+      </div>
+      <button id="run-btn" disabled>Run</button>
+    </div>
+    <span id="status-bar"></span>
+  </header>
+  <main id="stage"></main>
+  <script type="module" src="/src/hub.ts"></script>
+</body>
+</html>

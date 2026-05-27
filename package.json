@@ -3,7 +3,9 @@
   "private": true,
   "workspaces": [
     "grammar",
-    "adapters/autk"
+    "adapters/autk",
+    "adapters/deckgl",
+    "gallery"
   ],
   "scripts": {
     "build": "npm run build --workspaces",

@@ -1,0 +1,55 @@
+{
+  "name": "@urban-toolkit/deckgl-grammar",
+  "version": "0.1.0",
+  "description": "Deck.gl adapter for the urban grammar",
+  "license": "MIT",
+  "author": "Gustavo Moreira",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/urban-toolkit/the-urban-grammar"
+  },
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/deckgl-grammar.umd.cjs",
+  "module": "./dist/deckgl-grammar.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/deckgl-grammar.js",
+      "require": "./dist/deckgl-grammar.umd.cjs"
+    }
+  },
+  "scripts": {
+    "dev": "vite",
+    "dev-build": "vite build --watch",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.46.2",
+    "@typescript-eslint/parser": "^8.46.2",
+    "@types/geojson": "^7946.0.16",
+    "@types/papaparse": "^5.3.0",
+    "eslint": "^9.38.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^16.4.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.12",
+    "vite-plugin-dts": "^4.5.4"
+  },
+  "dependencies": {
+    "deck.gl": "^9.0.0",
+    "@observablehq/plot": "^0.6.0",
+    "papaparse": "^5.4.0"
+  },
+  "peerDependencies": {
+    "@urban-toolkit/the-urban-grammar": "^0.1.0"
+  }
+}
