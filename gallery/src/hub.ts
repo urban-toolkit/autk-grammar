@@ -202,17 +202,20 @@ async function runExample(exampleId: string, adapter: AdapterName) {
     setStatus('Loading…', 'loading');
 
     try {
-        const { spec } = await meta.load();
+        const module = await meta.load();
+        const { spec, afterRun } = module;
         const targets = setupStage(meta.layout, adapter);
 
         if (adapter === 'autk') {
             const { AutkGrammar } = await import('@urban-toolkit/autk-grammar');
             const grammar = new AutkGrammar(targets);
             await grammar.run(spec);
+            if (afterRun) await afterRun(grammar);
         } else {
             const { DeckGlGrammar } = await import('@urban-toolkit/deckgl-grammar');
             const grammar = new DeckGlGrammar(targets);
             await grammar.run(spec);
+            if (afterRun) await afterRun(grammar);
         }
 
         setStatus('Done', 'done');

@@ -6,9 +6,11 @@ export function createEngine(options: EngineOptions): IEngine{
 
     // TODO check if schema is respected
 
+    let _context: unknown;
+
     async function run() {
         let context: unknown;
-        
+
         if(spec.data)
             for(const source of spec.data) {
                 context = await adapters.db.resolveSource(context, source);
@@ -36,6 +38,8 @@ export function createEngine(options: EngineOptions): IEngine{
             else
                 await adapters.plot.resolvePlot(context, spec.plot);
         }
+
+        _context = context;
     }
 
     function updatedSpec(spec: UrbanSpec) {
@@ -51,6 +55,6 @@ export function createEngine(options: EngineOptions): IEngine{
         console.log("Function not implemented yet");
     }
 
-    return { run, updatedSpec, destroy };
+    return { run, updatedSpec, destroy, get context() { return _context; } };
 }
 

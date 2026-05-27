@@ -1,4 +1,6 @@
 import { DataAdapter, MapAdapter, PlotAdapter, ComputeAdapter, IEngine, UrbanSpec, createEngine } from "@urban-toolkit/the-urban-grammar";
+import { AutkDb } from "@urban-toolkit/autk-db";
+import { FeatureCollection } from "geojson";
 import { createDataAdapter } from "./adapters/data";
 import { createMapAdapter } from "./adapters/map";
 import { createPlotAdapter } from "./adapters/plot";
@@ -11,15 +13,20 @@ export class AutkGrammar {
     private plotAdapter?: PlotAdapter;
     private computeAdapter?: ComputeAdapter;
     private grammarEngine?: IEngine;
+    private _computeCache: ComputeCache = new Map();
+    private _data: Record<string, Promise<FeatureCollection>> = {};
 
     constructor(targets?: Targets) {
         const registry: MapRegistry = new Map();
         const cache: GeoJsonCache = new Map();
-        const computeCache: ComputeCache = new Map();
         this.dataAdapter = createDataAdapter(targets, cache);
-        this.mapAdapter = createMapAdapter(targets, registry, computeCache);
+        this.mapAdapter = createMapAdapter(targets, registry, this._computeCache);
         this.plotAdapter = createPlotAdapter(targets, registry, cache);
-        this.computeAdapter = createComputeAdapter(computeCache);
+        this.computeAdapter = createComputeAdapter(this._computeCache);
+    }
+
+    get data(): Record<string, Promise<FeatureCollection>> {
+        return this._data;
     }
 
     async run(spec: UrbanSpec) {
@@ -46,5 +53,25 @@ export class AutkGrammar {
         });
 
         await this.grammarEngine.run();
+
+        const db = this.grammarEngine.context as AutkDb | undefined;
+        if (!db) {
+            console.warn('Grammar engine produced no data context.');
+            this._data = {};
+            return;
+        }
+
+        const dataObj: Record<string, Promise<FeatureCollection>> = {};
+        for (const table of db.getLayerTables()) {
+            Object.defineProperty(dataObj, table.name, {
+                get: () => {
+                    const computed = this._computeCache.get(table.name);
+                    return computed ? Promise.resolve(computed) : db.getLayer(table.name);
+                },
+                enumerable: true,
+                configurable: true,
+            });
+        }
+        this._data = dataObj;
     }
 }

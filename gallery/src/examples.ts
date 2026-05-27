@@ -3,7 +3,10 @@ import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 export type Layout = 'map' | 'map+plot' | 'multi-map' | 'data-only';
 export type AdapterName = 'autk' | 'deckgl';
 
-export type ExampleModule = { spec: UrbanSpec };
+export type ExampleModule = {
+    spec: UrbanSpec;
+    afterRun?: (grammar: unknown) => void | Promise<void>;
+};
 
 export type ExampleMeta = {
     title: string;
@@ -294,5 +297,11 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         layout: 'multi-map',
         supportedAdapters: ['autk', 'deckgl'],
         load: () => import('./examples/multi-map'),
+    },
+    'data-context-test': {
+        title: 'Data Context: Lazy Access',
+        layout: 'data-only',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/data-context-test'),
     },
 };
