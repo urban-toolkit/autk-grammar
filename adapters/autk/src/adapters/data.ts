@@ -1,5 +1,5 @@
 import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec } from '@urban-toolkit/the-urban-grammar';
-import { AutkDb } from '@urban-toolkit/autk-db';
+import { AutkDb, DEFAULT_WORKSPACE_COORDINATE_FORMAT } from '@urban-toolkit/autk-db';
 import type { FeatureCollection } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
 
@@ -62,12 +62,43 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                     if (cache && geojsonData) cache.set(geojsonSpec.outputTableName, geojsonData);
 
                     // Pass the fetched object directly so autk-db doesn't need to re-fetch
-                    if (geojsonData) {
-                        const specWithObject = { ...geojsonSpec, geojsonObject: geojsonData };
-                        delete specWithObject.geojsonFileUrl;
-                        await db.loadGeojson(specWithObject);
-                    } else {
-                        await db.loadGeojson(geojsonSpec);
+                    const loadSpec = geojsonData
+                        ? (() => { const s = { ...geojsonSpec, geojsonObject: geojsonData }; delete s.geojsonFileUrl; return s; })()
+                        : geojsonSpec;
+
+                    try {
+                        await db.loadGeojson(loadSpec);
+                    } catch (err) {
+                        const crsHint = loadSpec.coordinateFormat
+                            ? `coordinateFormat is set to "${loadSpec.coordinateFormat}"`
+                            : `no coordinateFormat was specified — defaulting to EPSG:4326 (WGS84 per RFC 7946)`;
+                        throw new Error(
+                            `Failed to load GeoJSON layer "${loadSpec.outputTableName}": ${err instanceof Error ? err.message : String(err)}. ` +
+                            `${crsHint}. Verify that coordinateFormat matches the actual CRS of the input data.`
+                        );
+                    }
+
+                    // Validate that the loaded geometry is within the workspace CRS extent.
+                    // A bounding box outside the valid world extent indicates a CRS mismatch.
+                    try {
+                        const bbox = await db.getBoundingBoxFromLayer(loadSpec.outputTableName);
+                        const WORLD_EXTENT = 25_000_000; // generous bound for DEFAULT_WORKSPACE_COORDINATE_FORMAT (EPSG:3395)
+                        if (
+                            !isFinite(bbox.minLon) || !isFinite(bbox.minLat) ||
+                            !isFinite(bbox.maxLon) || !isFinite(bbox.maxLat) ||
+                            Math.abs(bbox.minLon) > WORLD_EXTENT || Math.abs(bbox.maxLon) > WORLD_EXTENT ||
+                            Math.abs(bbox.minLat) > WORLD_EXTENT || Math.abs(bbox.maxLat) > WORLD_EXTENT
+                        ) {
+                            throw new Error(
+                                `Geometry bounding box after transform is invalid for layer "${loadSpec.outputTableName}" ` +
+                                `(bbox: [${bbox.minLon}, ${bbox.minLat}, ${bbox.maxLon}, ${bbox.maxLat}]). ` +
+                                `Verify that coordinateFormat matches the actual CRS of the input data. ` +
+                                `The workspace uses ${DEFAULT_WORKSPACE_COORDINATE_FORMAT}; input is expected in EPSG:4326 by default.`
+                            );
+                        }
+                    } catch (bboxErr) {
+                        if (bboxErr instanceof Error && bboxErr.message.includes('bounding box after transform')) throw bboxErr;
+                        // getBoundingBoxFromLayer failed (empty table, unsupported layer type, etc.) — skip validation
                     }
                     print(db, targets);
                     return db;

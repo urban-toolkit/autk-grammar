@@ -86,7 +86,26 @@ export interface BoundingBox {
 
 export type CustomDataSourceSpec = TableSourceSpec & {
     geojsonFileUrl?: string;
+    /**
+     * GeoJSON FeatureCollection to load directly.
+     *
+     * Per RFC 7946, GeoJSON coordinates MUST be in WGS84 (EPSG:4326) longitude/latitude.
+     * This is the default assumption when `coordinateFormat` is omitted.
+     *
+     * If your FeatureCollection is in a different CRS (e.g. a projected system such as
+     * EPSG:3395), you MUST set `coordinateFormat` explicitly to match the actual CRS
+     * of the input data. Omitting `coordinateFormat` when the data is not in EPSG:4326
+     * will cause the spatial transform to produce invalid geometry.
+     */
     geojsonObject?: FeatureCollection;
+    /**
+     * Source coordinate reference system of the input data, expressed as an EPSG string
+     * (e.g. `'EPSG:4326'`, `'EPSG:3395'`).
+     *
+     * Defaults to `'EPSG:4326'` (WGS84) when omitted, which is the correct value for
+     * standards-compliant GeoJSON. Only set this when the source data deviates from
+     * RFC 7946.
+     */
     coordinateFormat?: string;
     boundingBox?: BoundingBox;
 }

@@ -1,5 +1,5 @@
 import { DataAdapter, MapAdapter, PlotAdapter, ComputeAdapter, IEngine, UrbanSpec, createEngine } from "@urban-toolkit/the-urban-grammar";
-import { AutkDb } from "@urban-toolkit/autk-db";
+import { AutkDb, DEFAULT_WORKSPACE_COORDINATE_FORMAT } from "@urban-toolkit/autk-db";
 import { FeatureCollection } from "geojson";
 import { createDataAdapter } from "./adapters/data";
 import { createMapAdapter } from "./adapters/map";
@@ -23,6 +23,18 @@ export class AutkGrammar {
         this.mapAdapter = createMapAdapter(targets, registry, this._computeCache);
         this.plotAdapter = createPlotAdapter(targets, registry, cache);
         this.computeAdapter = createComputeAdapter(this._computeCache);
+    }
+
+    /**
+     * The coordinate reference system used internally by the autk workspace.
+     *
+     * Input data is expected in EPSG:4326 (WGS84) by default and is transformed
+     * to this CRS on load. Consumers that prepare data for injection (e.g. by
+     * serialising a GeoDataFrame) can read this value and reproject accordingly
+     * instead of hard-coding a CRS string.
+     */
+    get workspaceCrs(): string {
+        return DEFAULT_WORKSPACE_COORDINATE_FORMAT;
     }
 
     get data(): Record<string, Promise<FeatureCollection>> {
