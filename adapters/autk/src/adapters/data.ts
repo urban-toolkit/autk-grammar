@@ -63,8 +63,9 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
 
                     // Pass the fetched object directly so autk-db doesn't need to re-fetch
                     if (geojsonData) {
-                        const { geojsonFileUrl: _url, ...specWithoutUrl } = geojsonSpec;
-                        await db.loadGeojson({ ...specWithoutUrl, geojsonObject: geojsonData });
+                        const specWithObject = { ...geojsonSpec, geojsonObject: geojsonData };
+                        delete specWithObject.geojsonFileUrl;
+                        await db.loadGeojson(specWithObject);
                     } else {
                         await db.loadGeojson(geojsonSpec);
                     }

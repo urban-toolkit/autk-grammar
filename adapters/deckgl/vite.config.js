@@ -18,6 +18,14 @@ export default defineConfig({
         '@observablehq/plot',
         'papaparse',
       ],
+      output: {
+        globals: {
+          '@urban-toolkit/the-urban-grammar': 'theUrbanGrammar',
+          'deck.gl': 'deck_gl',
+          '@observablehq/plot': 'Plot',
+          'papaparse': 'Papa',
+        },
+      },
     },
     copyPublicDir: false,
     emptyOutDir: false,

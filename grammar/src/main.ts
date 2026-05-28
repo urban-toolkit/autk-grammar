@@ -45,7 +45,7 @@ export function createEngine(options: EngineOptions): IEngine{
     function updatedSpec(spec: UrbanSpec) {
         console.log("Spec to update", spec);
         // TODO
-        return new Promise<void>((resolve, _) => {
+        return new Promise<void>((resolve) => {
             resolve();
         });
     }

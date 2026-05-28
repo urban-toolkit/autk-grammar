@@ -20,6 +20,15 @@ export default defineConfig({
         '@urban-toolkit/autk-plot',
         '@urban-toolkit/autk-compute'
       ],
+      output: {
+        globals: {
+          '@urban-toolkit/the-urban-grammar': 'theUrbanGrammar',
+          '@urban-toolkit/autk-db': 'autkDb',
+          '@urban-toolkit/autk-map': 'autkMap',
+          '@urban-toolkit/autk-plot': 'autkPlot',
+          '@urban-toolkit/autk-compute': 'autkCompute',
+        },
+      },
     },
     copyPublicDir: false,
     emptyOutDir: false,

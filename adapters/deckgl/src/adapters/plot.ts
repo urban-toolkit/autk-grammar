@@ -40,8 +40,6 @@ function renderTable(container: HTMLElement, rows: Row[], columns: string[]): vo
 function buildPlotMarks(spec: PlotSpec, rows: Row[]): Plot.Markish[] {
     const [xAxis, yAxis] = spec.axis;
     const colorOpts = spec.color ? { fill: spec.color } : {};
-    const margins = spec.margins ?? { top: 20, right: 20, bottom: 40, left: 60 };
-
     switch (spec.mark) {
         case 'scatter':
             return [
@@ -83,8 +81,6 @@ function buildPlotMarks(spec: PlotSpec, rows: Row[]): Plot.Markish[] {
         default:
             return [Plot.frame()];
     }
-
-    void margins; // consumed by the caller via plotOptions
 }
 
 export function createPlotAdapter(targets?: Targets, cache?: Map<string, FeatureCollection>): PlotAdapter {
