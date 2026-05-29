@@ -97,3 +97,4 @@ An adapter implements four interfaces exported by `@urban-toolkit/the-urban-gram
 - `PlotAdapter` — renders plots from the context
 
 Pass instances of all four to `createEngine` via `EngineOptions.adapters`.
+
