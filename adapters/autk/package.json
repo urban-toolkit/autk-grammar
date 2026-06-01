@@ -1,6 +1,6 @@
 {
   "name": "@urban-toolkit/autk-grammar",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Autark adapter for the urban grammar",
   "license": "MIT",
   "author": "Gustavo Moreira",
@@ -50,10 +50,11 @@
     "vite-plugin-glsl": "^1.5.4"
   },
   "dependencies": {
-    "@urban-toolkit/autk-db": "^2.1.2",
-    "@urban-toolkit/autk-map": "^2.1.2",
-    "@urban-toolkit/autk-plot": "^2.1.2",
-    "@urban-toolkit/autk-compute": "^2.1.2"
+    "@urban-toolkit/autk-compute": "2.1.2",
+    "@urban-toolkit/autk-core": "2.1.2",
+    "@urban-toolkit/autk-db": "2.1.2",
+    "@urban-toolkit/autk-map": "2.1.2",
+    "@urban-toolkit/autk-plot": "2.1.2"
   },
   "peerDependencies": {
     "@urban-toolkit/the-urban-grammar": "^0.1.0"

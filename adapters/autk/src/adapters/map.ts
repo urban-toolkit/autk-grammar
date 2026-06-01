@@ -1,8 +1,8 @@
 import { MapAdapter, MapSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
 import { Targets, MapRegistry, ComputeCache } from '../types';
 import { AutkMap, MapStyle } from '@urban-toolkit/autk-map';
-import { ColorMapDomainStrategy } from '@urban-toolkit/autk-map';
 import type { ColorMapConfig, ColorMapDomainSpec, LayerType } from '@urban-toolkit/autk-map';
+import { ColorMapDomainStrategy } from '@urban-toolkit/autk-core';
 import { AutkDb } from '@urban-toolkit/autk-db';
 
 function buildDomainSpec(
