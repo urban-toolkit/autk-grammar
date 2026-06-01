@@ -55,7 +55,7 @@ jobs:
               echo "${name}@${version} is already published; skipping npm publish."
             else
               echo "Publishing ${name}@${version}..."
-              npm publish "./${dir}" --access public --provenance
+              npm publish "./${dir}" --access public
             fi
             if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
               echo "Tag ${tag} already exists; skipping."
