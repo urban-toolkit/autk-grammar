@@ -1,5 +1,5 @@
 import { PlotAdapter, PlotSpec, PlotMark } from '@urban-toolkit/the-urban-grammar';
-import { Targets, MapRegistry, GeoJsonCache } from '../types';
+import { Targets, MapRegistry, PlotRegistry, PlotMapLinks, GeoJsonCache } from '../types';
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkPlot, PlotEvent as AutkPlotEvent } from '@urban-toolkit/autk-plot';
 import type { PlotEventData, PlotType, PlotTransformConfig } from '@urban-toolkit/autk-plot';
@@ -20,7 +20,7 @@ function grammarMarkToPlotType(mark: PlotMark): PlotType {
     return mapping[mark];
 }
 
-export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, cache?: GeoJsonCache): PlotAdapter {
+export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, plotRegistry?: PlotRegistry, plotMapLinks?: PlotMapLinks, cache?: GeoJsonCache): PlotAdapter {
 
     return {
         async resolvePlot(context: unknown, spec: PlotSpec): Promise<void> {
@@ -47,6 +47,9 @@ export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, cac
                 ...(spec.margins   && { margins: spec.margins }),
                 ...(spec.transform && { transform: spec.transform as PlotTransformConfig }),
             });
+
+            plotRegistry?.set(spec.dataRef, plot);
+            if (spec.mapRef) plotMapLinks?.set(spec.dataRef, spec.mapRef);
 
             // Wire map ↔ plot events if a mapRef is specified
             if(spec.mapRef && registry) {
