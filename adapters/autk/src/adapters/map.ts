@@ -71,7 +71,13 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
             if(layerRef.opacity != null)
                 map.updateRenderInfo(name, { opacity: layerRef.opacity });
 
-            if(layerRef.isColorMap)
+            // Enable the colormap by default for thematic (getFnv) vector layers so
+            // autk-grammar maps render coloured-by-value out of the box. autk-map
+            // attaches a default colour ramp to every layer, so this works even when
+            // the spec omits colorMapInterpolator. Callers can still opt out by
+            // setting isColorMap: false explicitly. Raster layers manage their own ramp.
+            const enableColorMap = layerRef.isColorMap ?? (getFnv != null && type !== 'raster');
+            if(enableColorMap)
                 map.updateRenderInfo(name, { isColorMap: true });
 
             if(layerRef.isPick)
