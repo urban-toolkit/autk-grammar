@@ -77,6 +77,12 @@ npm install
 make build
 ```
 
+### Run gallery of examples
+
+```sh
+npm run dev --prefix gallery
+```
+
 ### Makefile reference
 
 | Command | Description |

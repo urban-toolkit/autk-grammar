@@ -292,6 +292,12 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         supportedAdapters: ['autk'],
         load: () => import('./examples/temporal-events-click'),
     },
+    'interaction-external': {
+        title: 'Interactions: External Listen & Trigger',
+        layout: 'map+plot',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/interaction-external'),
+    },
     'multi-map': {
         title: 'Multi-Map: Dual View',
         layout: 'multi-map',
