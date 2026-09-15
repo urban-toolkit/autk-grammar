@@ -3,6 +3,15 @@ import { AutkDb, DEFAULT_WORKSPACE_COORDINATE_FORMAT } from '@urban-toolkit/autk
 import type { FeatureCollection } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
 
+/**
+ * Maps an OSM source onto autk-db's parameters, which always expect
+ * `autoLoadLayers` and no longer take `dropOsmTable`.
+ */
+function toLoadOsmParams(spec: OsmDataSourceSpec) {
+    const { autoLoadLayers, ...rest } = spec;
+    return { ...rest, autoLoadLayers: { layers: autoLoadLayers?.layers ?? [] } };
+}
+
 export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): DataAdapter {
 
     function print(db: AutkDb, targets?: Targets): void {
@@ -11,7 +20,7 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
 
         const div = document.getElementById(targets.db);
         if (div) {
-            const tables = db.tables;
+            const tables = db.getTablesMetadata();
 
             div.innerHTML += `<ul>`;
             for (const table of tables) {
@@ -37,7 +46,7 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
 
             switch (type) {
                 case 'osm':
-                    await db.loadOsm(rest_spec as OsmDataSourceSpec);
+                    await db.loadOsm(toLoadOsmParams(rest_spec as OsmDataSourceSpec));
                     print(db, targets);
                     return db;
                 case 'csv':

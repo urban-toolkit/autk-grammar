@@ -1,8 +1,8 @@
 import { MapAdapter, MapSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
 import { Targets, MapRegistry, ComputeCache } from '../types';
-import { AutkMap, MapStyle } from '@urban-toolkit/autk-map';
-import type { ColorMapConfig, ColorMapDomainSpec, LayerType } from '@urban-toolkit/autk-map';
+import { AutkMap } from '@urban-toolkit/autk-map';
 import { ColorMapDomainStrategy } from '@urban-toolkit/autk-core';
+import type { ColorMapConfig, ColorMapDomainSpec, LayerType } from '@urban-toolkit/autk-core';
 import { AutkDb } from '@urban-toolkit/autk-db';
 
 function buildDomainSpec(
@@ -47,7 +47,7 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
 
     async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<void> {
         let tableToTypeMap: {[tableName: string]: string} = {};
-        for(const table of context.tables) {
+        for(const table of context.getTablesMetadata()) {
             if(table.type !== undefined) tableToTypeMap[table.name] = table.type;
         }
 
@@ -148,7 +148,7 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
                 const map = new AutkMap(canvas);
 
                 if(spec.style)
-                    MapStyle.setPredefinedStyle(spec.style)
+                    map.style.setPredefinedStyle(spec.style)
 
                 await map.init();
                 await loadLayers(map, context, spec);

@@ -1,12 +1,12 @@
 {
   "name": "@urban-toolkit/autk-grammar",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Autark adapter for the urban grammar",
   "license": "MIT",
   "author": "Gustavo Moreira",
   "repository": {
     "type": "git",
-    "url": "https://github.com/urban-toolkit/the-urban-grammar"
+    "url": "https://github.com/urban-toolkit/autk-grammar"
   },
   "type": "module",
   "files": [
@@ -35,7 +35,7 @@
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.46.2",
     "@typescript-eslint/parser": "^8.46.2",
-    "@types/geojson": "^7946.0.16",
+    "@urban-toolkit/the-urban-grammar": "*",
     "@webgpu/types": "^0.1.66",
     "eslint": "^9.38.0",
     "eslint-config-prettier": "^10.1.8",
@@ -50,13 +50,11 @@
     "vite-plugin-glsl": "^1.5.4"
   },
   "dependencies": {
-    "@urban-toolkit/autk-compute": "2.1.2",
-    "@urban-toolkit/autk-core": "2.1.2",
-    "@urban-toolkit/autk-db": "2.1.2",
-    "@urban-toolkit/autk-map": "2.1.2",
-    "@urban-toolkit/autk-plot": "2.1.2"
-  },
-  "peerDependencies": {
-    "@urban-toolkit/the-urban-grammar": "^0.1.0"
+    "@types/geojson": "^7946.0.16",
+    "@urban-toolkit/autk-compute": "^3.0.0",
+    "@urban-toolkit/autk-core": "^3.0.0",
+    "@urban-toolkit/autk-db": "^3.0.0",
+    "@urban-toolkit/autk-map": "^3.0.0",
+    "@urban-toolkit/autk-plot": "^3.0.0"
   }
 }
