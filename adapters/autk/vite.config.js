@@ -6,7 +6,8 @@ import glsl from 'vite-plugin-glsl';
 import dts from 'vite-plugin-dts';
 
 export default defineConfig({
-  plugins: [glsl(), dts()],
+  // The grammar spec is bundled into this package (code and types), so consumers only install autk-grammar.
+  plugins: [glsl(), dts({ rollupTypes: true, bundledPackages: ['@urban-toolkit/the-urban-grammar'] })],
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
@@ -14,7 +15,7 @@ export default defineConfig({
     },
     rollupOptions: {
       external: [
-        '@urban-toolkit/the-urban-grammar',
+        '@urban-toolkit/autk-core',
         '@urban-toolkit/autk-db',
         '@urban-toolkit/autk-map',
         '@urban-toolkit/autk-plot',
@@ -22,7 +23,7 @@ export default defineConfig({
       ],
       output: {
         globals: {
-          '@urban-toolkit/the-urban-grammar': 'theUrbanGrammar',
+          '@urban-toolkit/autk-core': 'autkCore',
           '@urban-toolkit/autk-db': 'autkDb',
           '@urban-toolkit/autk-map': 'autkMap',
           '@urban-toolkit/autk-plot': 'autkPlot',
