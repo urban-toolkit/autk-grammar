@@ -60,6 +60,14 @@ jobs:
             npx playwright install chromium
           fi
 
+      - name: Probe WebGPU
+        run: |
+          google-chrome --version || true
+          nvidia-smi -L || true
+          ls -l /dev/dri || true
+          echo "user=$(id -un) groups=$(id -Gn) DISPLAY=${DISPLAY:-} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-}"
+          node tests/webgpu-probe.mjs
+
       - name: Run browser tests
         env:
           CI: 'true'
