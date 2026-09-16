@@ -7,6 +7,10 @@ import { AutkMap, MapEvent } from '@urban-toolkit/autk-map';
 import type { MapEventData } from '@urban-toolkit/autk-map';
 import { FeatureCollection } from 'geojson';
 
+// autk-map 3 publishes MapEventData extending a type its .d.ts cannot resolve
+// (the import points at ../../autk-core/src), so `selection` is invisible here.
+type MapSelection = MapEventData & { selection: number[] };
+
 function grammarMarkToPlotType(mark: PlotMark): PlotType {
     const mapping: Record<PlotMark, PlotType> = {
         'scatter': 'scatterplot',
@@ -58,7 +62,7 @@ export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, plo
                 if(map) {
                     map.updateRenderInfo(spec.mapRef, { isPick: true });
 
-                    map.events.on(MapEvent.PICKING, ({ selection }: MapEventData) => {
+                    map.events.on(MapEvent.PICKING, ({ selection }: MapSelection) => {
                         plot.setSelection(selection);
                     });
 

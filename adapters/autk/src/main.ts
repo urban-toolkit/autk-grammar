@@ -13,6 +13,10 @@ import { createComputeAdapter } from "./adapters/compute";
 import { Targets, MapRegistry, PlotRegistry, PlotMapLinks, GeoJsonCache, ComputeCache, GrammarEventEmitter } from "./types";
 import type { GrammarPlotSelectionEvent } from "./types";
 
+// autk-map 3 publishes MapEventData extending a type its .d.ts cannot resolve
+// (the import points at ../../autk-core/src), so `selection` is invisible here.
+type MapSelection = MapEventData & { selection: number[] };
+
 export class AutkGrammar {
     private dataAdapter?: DataAdapter;
     private mapAdapter?: MapAdapter;
@@ -90,7 +94,7 @@ export class AutkGrammar {
         }
 
         const dataObj: Record<string, Promise<FeatureCollection>> = {};
-        for (const table of db.getLayerTables()) {
+        for (const table of db.getLayersMetadata()) {
             Object.defineProperty(dataObj, table.name, {
                 get: () => {
                     const computed = this._computeCache.get(table.name);
@@ -155,7 +159,7 @@ export class AutkGrammar {
         for (const [layerId, map] of this._mapRegistry) {
             if (seenMaps.has(map)) continue;
             seenMaps.add(map);
-            const handler = ({ selection }: MapEventData) => {
+            const handler = ({ selection }: MapSelection) => {
                 this.interactions.emit('map:picking', { layerId, selection });
             };
             map.events.on(MapEvent.PICKING, handler);

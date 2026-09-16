@@ -6,7 +6,7 @@
   "author": "Gustavo Moreira",
   "repository": {
     "type": "git",
-    "url": "https://github.com/urban-toolkit/the-urban-grammar"
+    "url": "https://github.com/urban-toolkit/autk-grammar"
   },
   "type": "module",
   "files": [

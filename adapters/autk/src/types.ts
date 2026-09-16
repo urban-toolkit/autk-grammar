@@ -55,5 +55,3 @@ export class GrammarEventEmitter {
     }
 }
 
-export { ColorMapInterpolator, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
-

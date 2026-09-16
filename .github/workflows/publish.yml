@@ -44,7 +44,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
         run: |
           set -euo pipefail
-          package_dirs=(grammar adapters/autk)
+          package_dirs=(adapters/autk)
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           for dir in "${package_dirs[@]}"; do

@@ -1,12 +1,13 @@
 {
   "name": "@urban-toolkit/the-urban-grammar",
   "version": "0.1.0",
+  "private": true,
   "description": "The grammar for urban analytics",
   "license": "MIT",
   "author": "Gustavo Moreira",
   "repository": {
     "type": "git",
-    "url": "https://github.com/urban-toolkit/the-urban-grammar"
+    "url": "https://github.com/urban-toolkit/autk-grammar"
   },
   "type": "module",
   "files": [

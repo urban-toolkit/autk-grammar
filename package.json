@@ -1,5 +1,5 @@
 {
-  "name": "the-urban-grammar-monorepo",
+  "name": "autk-grammar-monorepo",
   "private": true,
   "workspaces": [
     "grammar",
