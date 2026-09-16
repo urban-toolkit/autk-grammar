@@ -1,50 +1,73 @@
-// Prints which Chrome launch flags give a WebGPU adapter on this machine.
+// Prints which Chrome launch setups give a WebGPU adapter on this machine.
 // Run with: node tests/webgpu-probe.mjs  (CI runs it before the browser tests)
 import { chromium } from '@playwright/test';
+import { execFile } from 'child_process';
 import http from 'http';
 import fs from 'fs';
 
 const chrome = [process.env.CHROME_PATH, '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium']
     .find((path) => path && fs.existsSync(path));
 
+const vulkan = ['--headless=new', '--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--enable-features=Vulkan', '--use-angle=vulkan'];
+
 const variants = {
-    'vulkan (tests)': ['--headless=new', '--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--enable-features=Vulkan', '--use-angle=vulkan'],
-    'vulkan + use-vulkan': ['--headless=new', '--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--enable-features=Vulkan,VulkanFromANGLE,DefaultANGLEVulkan', '--use-angle=vulkan', '--use-vulkan'],
-    'webgpu only': ['--headless=new', '--enable-unsafe-webgpu', '--ignore-gpu-blocklist'],
-    'swiftshader': ['--headless=new', '--enable-unsafe-webgpu', '--enable-unsafe-swiftshader', '--use-webgpu-adapter=swiftshader', '--use-angle=swiftshader'],
+    'vulkan (tests)': { args: vulkan },
+    'vulkan, no unsafe-swiftshader default': { args: vulkan, ignoreDefaultArgs: ['--enable-unsafe-swiftshader'] },
+    'vulkan, no swiftshader/sandbox defaults': { args: vulkan, ignoreDefaultArgs: ['--enable-unsafe-swiftshader', '--no-sandbox'] },
+    'vulkan, no CDP screenshot feature': { args: vulkan, ignoreDefaultArgs: ['--enable-unsafe-swiftshader', '--enable-features=CDPScreenshotNewSurface'] },
+    'webgpu only': { args: ['--headless=new', '--enable-unsafe-webgpu', '--ignore-gpu-blocklist'] },
 };
 
-const server = http.createServer((_, res) => res.end('<!doctype html><title>probe</title>')).listen(0);
+const probePage = `<!doctype html><title>probe</title><pre id="out">pending</pre><script>
+(async () => {
+  const out = document.getElementById('out');
+  if (!navigator.gpu) { out.textContent = 'navigator.gpu missing'; return; }
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) { out.textContent = 'no adapter'; return; }
+  const info = adapter.info || {};
+  out.textContent = 'adapter: ' + info.vendor + ' / ' + info.architecture + ' / ' + info.description + (adapter.isFallbackAdapter ? ' (fallback)' : '');
+})();
+</script>`;
+const server = http.createServer((_, res) => res.end(probePage)).listen(0);
 const url = `http://localhost:${server.address().port}/`;
 console.log(`chrome: ${chrome ?? 'none found, using Playwright Chromium'}`);
 
-for (const [name, args] of Object.entries(variants)) {
+async function gpuPageSummary(page) {
+    await page.goto('chrome://gpu');
+    await page.waitForTimeout(3000);
+    const lines = await page.evaluate(() => {
+        const root = document.querySelector('info-view')?.shadowRoot ?? document;
+        return Array.from(root.querySelectorAll('h3, tr, li')).map((el) => el.textContent.replace(/\s+/g, ' ').trim());
+    });
+    return lines.filter((line) => /WebGPU|Vulkan|Dawn|GL_RENDERER|ANGLE|Problems|disabled|blocklist|error/i.test(line)).slice(0, 30);
+}
+
+for (const [name, options] of Object.entries(variants)) {
     let browser;
     try {
-        browser = await chromium.launch({ executablePath: chrome, headless: false, args });
+        browser = await chromium.launch({ executablePath: chrome, headless: false, ...options });
         const page = await browser.newPage();
         await page.goto(url);
-        const result = await page.evaluate(async () => {
-            if (!navigator.gpu) return 'navigator.gpu missing';
-            const adapter = await navigator.gpu.requestAdapter();
-            if (!adapter) return 'no adapter';
-            const info = adapter.info ?? {};
-            return `adapter: ${info.vendor} / ${info.architecture} / ${info.description}${adapter.isFallbackAdapter ? ' (fallback)' : ''}`;
-        });
-        console.log(`[${name}] ${browser.version()}: ${result}`);
+        await page.waitForFunction(() => document.getElementById('out').textContent !== 'pending', null, { timeout: 15000 });
+        console.log(`[${name}] ${await page.locator('#out').textContent()}`);
         if (name === 'vulkan (tests)') {
-            await page.goto('chrome://version');
-            console.log(`  command line: ${await page.locator('#command_line').textContent()}`);
-            await page.goto('chrome://gpu');
-            await page.waitForTimeout(2000);
-            const text = await page.locator('body').innerText();
-            const lines = text.split('\n').filter((line) => /WebGPU|Vulkan|GL_RENDERER|Problems|disabled|Dawn/i.test(line));
-            console.log(lines.slice(0, 25).map((line) => `  gpu: ${line}`).join('\n'));
+            for (const line of await gpuPageSummary(page)) console.log(`  gpu: ${line}`);
         }
     } catch (error) {
-        console.log(`[${name}] launch failed: ${error.message.split('\n')[0]}`);
+        console.log(`[${name}] failed: ${error.message.split('\n')[0]}`);
     } finally {
         await browser?.close();
     }
+}
+
+// Chrome on its own, without Playwright's default switches.
+if (chrome) {
+    const result = await new Promise((resolve) => {
+        execFile(chrome, [...vulkan, '--virtual-time-budget=10000', '--dump-dom', url], { timeout: 60000 }, (error, stdout, stderr) => {
+            const match = stdout.match(/<pre id="out">([^<]*)<\/pre>/);
+            resolve(match ? match[1] : `no output (${error?.message ?? stderr.slice(0, 200)})`);
+        });
+    });
+    console.log(`[chrome alone, vulkan] ${result}`);
 }
 server.close();
