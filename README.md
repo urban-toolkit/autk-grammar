@@ -2,6 +2,8 @@
 
 A tool-agnostic grammar for composing urban visual analytics systems.
 
+**Documentation:** [autarkjs.org/grammar](https://autarkjs.org/grammar/) · **Examples:** [autarkjs.org/grammar/examples](https://autarkjs.org/grammar/examples/)
+
 ## Overview
 
 The Urban Grammar defines a declarative specification layer for urban analytics pipelines. Rather than prescribing a specific set of tools, it establishes the conceptual vocabulary (data sources, compute operations, maps, and plots) that any implementation must fulfill. Concrete behavior is provided by adapters: separate packages that wire the grammar to a specific toolkit. This separation lets the same analytical specification run on different technology stacks with no changes to the pipeline logic.
@@ -34,7 +36,9 @@ Swapping the adapter changes the underlying tools; the spec stays the same.
 
 ## Example gallery
 
-[`gallery/`](gallery/) runs the 49 example specs in this repository and lets you pick which adapter renders each one. Between them they cover OSM and PBF loading, CSV and GeoJSON, GPU compute, colormaps, plots, and two-way interaction between a map and a plot:
+Browse the examples online, with a live editable spec for each one, at [autarkjs.org/grammar/examples](https://autarkjs.org/grammar/examples/).
+
+To run them locally, use [`gallery/`](gallery/). It runs the 49 example specs in this repository and lets you pick which adapter renders each one. Between them they cover OSM and PBF loading, CSV and GeoJSON, GPU compute, colormaps, plots, and two-way interaction between a map and a plot:
 
 ```sh
 npm run dev --prefix gallery
