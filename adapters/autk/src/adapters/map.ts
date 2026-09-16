@@ -43,6 +43,17 @@ function setValueAtPath(obj: Record<string, unknown>, path: string, value: unkno
     return result;
 }
 
+/**
+ * Resolves a grammar value path such as `count.noise` to the raster band that holds it.
+ * autk-db stores heatmap values in bands (`band_1`, ...) labelled `<aggregateFn>_<table>`.
+ */
+function rasterBand(collection: { features?: { properties?: unknown }[] }, getFnv?: string): string {
+    const props = collection.features?.[0]?.properties as { bands?: { id: string; label?: string }[] } | undefined;
+    const bands = props?.bands ?? [];
+    const band = bands.find((b) => b.id === getFnv || b.label === getFnv?.replace(/\./g, '_'));
+    return band?.id ?? bands[0]?.id ?? getFnv ?? '';
+}
+
 export function createMapAdapter(targets?: Targets, registry?: MapRegistry, computeCache?: ComputeCache): MapAdapter {
 
     async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<void> {
@@ -57,13 +68,14 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
             const getFnv   = layerRef.getFnv;
 
             const rawData = computeCache?.get(name) ?? await context.getLayer(name);
-            const data = {
+            // Raster tables (e.g. heatmaps) are a single feature with no geometry, so keep them as-is.
+            const data = type === 'raster' ? rawData : {
                 ...rawData,
                 features: (rawData.features ?? []).filter((f: any) => f.geometry != null),
             };
 
             if(type === 'raster') {
-                map.loadCollection(name, { collection: data, type: 'raster', property: getFnv ?? '' });
+                map.loadCollection(name, { collection: data, type: 'raster', property: rasterBand(data, getFnv) });
             } else {
                 map.loadCollection(name, { collection: data, type });
             }
