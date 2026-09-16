@@ -6,7 +6,7 @@ export const spec: UrbanSpec = {
             type: 'geojson',
             geojsonFileUrl: '/data/mnt_roads.geojson',
             outputTableName: 'roads',
-            coordinateFormat: 'EPSG:3395',
+            coordinateFormat: 'EPSG:4326',
         },
         {
             type: 'csv',
@@ -15,7 +15,7 @@ export const spec: UrbanSpec = {
             geometryColumns: {
                 latColumnName: 'latitude',
                 longColumnName: 'longitude',
-                coordinateFormat: 'EPSG:3395',
+                coordinateFormat: 'EPSG:4326',
             },
         },
         {

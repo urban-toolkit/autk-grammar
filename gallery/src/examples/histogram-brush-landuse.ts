@@ -4,7 +4,7 @@ export const spec: UrbanSpec = {
     data: [
         {
             type: 'geojson',
-            geojsonFileUrl: '/data/mnt_neighs_proj.geojson',
+            geojsonFileUrl: '/data/mnt_neighs_proj_landuse.geojson',
             outputTableName: 'neighborhoods',
             coordinateFormat: 'EPSG:3395',
         },
