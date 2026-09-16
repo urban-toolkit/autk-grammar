@@ -4,6 +4,7 @@
   "description": "Autark adapter for the urban grammar",
   "license": "MIT",
   "author": "Gustavo Moreira",
+  "homepage": "https://autarkjs.org/grammar/",
   "repository": {
     "type": "git",
     "url": "https://github.com/urban-toolkit/autk-grammar"
