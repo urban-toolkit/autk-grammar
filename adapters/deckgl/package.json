@@ -1,7 +1,7 @@
 {
   "name": "@urban-toolkit/deckgl-grammar",
   "version": "0.1.0",
-  "description": "Deck.gl adapter for the urban grammar",
+  "description": "Deck.gl adapter for autk-grammar",
   "license": "MIT",
   "author": "Gustavo Moreira",
   "repository": {

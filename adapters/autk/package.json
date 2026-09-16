@@ -1,7 +1,7 @@
 {
   "name": "@urban-toolkit/autk-grammar",
   "version": "0.2.0",
-  "description": "Autark adapter for the urban grammar",
+  "description": "A declarative grammar for urban visual analytics, built on Autark",
   "license": "MIT",
   "author": "Gustavo Moreira",
   "homepage": "https://autarkjs.org/grammar/",
