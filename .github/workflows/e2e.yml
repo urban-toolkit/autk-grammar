@@ -1,0 +1,76 @@
+name: E2E
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Browser tests (Autark ${{ matrix.autark }})
+    # WebGPU compute needs a real GPU, so this runs on the self-hosted GPU runner.
+    runs-on: [self-hosted, linux, gpu]
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # locked: the versions in package-lock.json
+        # latest: the newest Autark releases on npm, to catch releases that break the grammar
+        autark: [locked, latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Use the latest Autark releases
+        if: matrix.autark == 'latest'
+        run: |
+          npm install --no-save \
+            @urban-toolkit/autk-core@latest \
+            @urban-toolkit/autk-db@latest \
+            @urban-toolkit/autk-map@latest \
+            @urban-toolkit/autk-plot@latest \
+            @urban-toolkit/autk-compute@latest
+
+      - name: Show Autark versions
+        run: npm ls @urban-toolkit/autk-core @urban-toolkit/autk-db @urban-toolkit/autk-map @urban-toolkit/autk-plot @urban-toolkit/autk-compute || true
+
+      - name: Install Chromium if the runner has no Chrome
+        run: |
+          if ! command -v google-chrome >/dev/null && ! command -v chromium >/dev/null; then
+            npx playwright install chromium
+          fi
+
+      - name: Run browser tests
+        env:
+          CI: 'true'
+        run: npm run test:e2e
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.autark }}
+          path: |
+            tests/playwright-report
+            tests/test-results
+          retention-days: 14
