@@ -22,10 +22,19 @@ const probePage = `<!doctype html><title>probe</title><pre id="out">pending</pre
 (async () => {
   const out = document.getElementById('out');
   if (!navigator.gpu) { out.textContent = 'navigator.gpu missing'; return; }
-  const adapter = await navigator.gpu.requestAdapter();
-  if (!adapter) { out.textContent = 'no adapter'; return; }
-  const info = adapter.info || {};
-  out.textContent = 'adapter: ' + info.vendor + ' / ' + info.architecture + ' / ' + info.description + (adapter.isFallbackAdapter ? ' (fallback)' : '');
+  const start = performance.now();
+  for (let attempt = 1; attempt <= 30; attempt++) {
+    const options = attempt % 2 ? {} : { powerPreference: 'high-performance' };
+    const adapter = await navigator.gpu.requestAdapter(options);
+    if (adapter) {
+      const info = adapter.info || {};
+      out.textContent = 'adapter after ' + Math.round(performance.now() - start) + ' ms (attempt ' + attempt + ', ' + JSON.stringify(options) + '): ' +
+        info.vendor + ' / ' + info.architecture + ' / ' + info.description + (adapter.isFallbackAdapter ? ' (fallback)' : '');
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  out.textContent = 'no adapter after 15 s of retries';
 })();
 </script>`;
 const server = http.createServer((_, res) => res.end(probePage)).listen(0);
@@ -48,7 +57,7 @@ for (const [name, options] of Object.entries(variants)) {
         browser = await chromium.launch({ executablePath: chrome, headless: false, ...options });
         const page = await browser.newPage();
         await page.goto(url);
-        await page.waitForFunction(() => document.getElementById('out').textContent !== 'pending', null, { timeout: 15000 });
+        await page.waitForFunction(() => document.getElementById('out').textContent !== 'pending', null, { timeout: 30000 });
         console.log(`[${name}] ${await page.locator('#out').textContent()}`);
         if (name === 'vulkan (tests)') {
             for (const line of await gpuPageSummary(page)) console.log(`  gpu: ${line}`);
@@ -63,7 +72,7 @@ for (const [name, options] of Object.entries(variants)) {
 // Chrome on its own, without Playwright's default switches.
 if (chrome) {
     const result = await new Promise((resolve) => {
-        execFile(chrome, [...vulkan, '--virtual-time-budget=10000', '--dump-dom', url], { timeout: 60000 }, (error, stdout, stderr) => {
+        execFile(chrome, [...vulkan, '--virtual-time-budget=30000', '--dump-dom', url], { timeout: 60000 }, (error, stdout, stderr) => {
             const match = stdout.match(/<pre id="out">([^<]*)<\/pre>/);
             resolve(match ? match[1] : `no output (${error?.message ?? stderr.slice(0, 200)})`);
         });
