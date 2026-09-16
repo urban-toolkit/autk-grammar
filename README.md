@@ -8,7 +8,7 @@ A tool-agnostic grammar for composing urban visual analytics systems.
 
 ## Overview
 
-The Urban Grammar defines a declarative specification layer for urban analytics pipelines. Rather than prescribing a specific set of tools, it establishes the conceptual vocabulary (data sources, compute operations, maps, and plots) that any implementation must fulfill. Concrete behavior is provided by adapters: separate packages that wire the grammar to a specific toolkit. This separation lets the same analytical specification run on different technology stacks with no changes to the pipeline logic.
+autk-grammar defines a declarative specification layer for urban analytics pipelines. Rather than prescribing a specific set of tools, it establishes the conceptual vocabulary (data sources, compute operations, maps, and plots) that any implementation must fulfill. Concrete behavior is provided by adapters: separate packages that wire the grammar to a specific toolkit. This separation lets the same analytical specification run on different technology stacks with no changes to the pipeline logic.
 
 ## Packages
 
