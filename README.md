@@ -1,5 +1,7 @@
 # autk-grammar
 
+[![npm version](https://img.shields.io/npm/v/@urban-toolkit/autk-grammar?color=f43f5e&logo=npm&labelColor=111827)](https://www.npmjs.com/package/@urban-toolkit/autk-grammar)
+
 A tool-agnostic grammar for composing urban visual analytics systems.
 
 **Documentation:** [autarkjs.org/grammar](https://autarkjs.org/grammar/) · **Examples:** [autarkjs.org/grammar/examples](https://autarkjs.org/grammar/examples/)
