@@ -9,9 +9,11 @@ on:
 permissions:
   contents: read
 
+# The GPU runner on `utk` is shared with curio and runs one job at a time.
+# Never cancel a running job there (same rule as curio's workflows).
 concurrency:
   group: e2e-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   e2e:
@@ -19,6 +21,11 @@ jobs:
     # WebGPU compute needs a real GPU, so this runs on the self-hosted GPU runner.
     runs-on: [self-hosted, linux, gpu]
     timeout-minutes: 30
+
+    # SECURITY (public repo + self-hosted runner): never run fork PRs on `utk`.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
 
     strategy:
       fail-fast: false
