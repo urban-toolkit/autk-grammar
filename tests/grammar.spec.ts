@@ -11,8 +11,17 @@ test.beforeEach(async ({ page }) => {
     pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
     await page.goto('/');
-    const hasWebGpu = await page.evaluate(async () => !!(await navigator.gpu?.requestAdapter()));
-    expect(hasWebGpu, 'this browser has no WebGPU adapter').toBe(true);
+    // A freshly launched Chrome can answer requestAdapter() with null until its GPU process has
+    // started (about a second on the Linux GPU runner), so wait for an adapter before running specs.
+    const adapter = await page.evaluate(async () => {
+        for (let attempt = 0; attempt < 40; attempt++) {
+            const found = await navigator.gpu?.requestAdapter();
+            if (found) return `${found.info?.vendor} ${found.info?.architecture}`;
+            await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        return null;
+    });
+    expect(adapter, 'this browser has no WebGPU adapter').not.toBeNull();
 });
 
 test.afterEach(() => {
