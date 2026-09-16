@@ -32,6 +32,14 @@ await grammar.run(spec);
 
 Swapping the adapter changes the underlying tools; the spec stays the same.
 
+## Example gallery
+
+[`gallery/`](gallery/) runs the 49 example specs in this repository and lets you pick which adapter renders each one. Between them they cover OSM and PBF loading, CSV and GeoJSON, GPU compute, colormaps, plots, and two-way interaction between a map and a plot:
+
+```sh
+npm run dev --prefix gallery
+```
+
 ## Installation
 
 Install the Autark adapter, which includes the core grammar:
