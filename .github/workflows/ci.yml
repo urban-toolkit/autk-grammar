@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   verify:
-    name: Lint, typecheck, and build
+    name: Lint, typecheck, build, and schema
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -34,3 +34,9 @@ jobs:
 
       - name: Build and typecheck
         run: make build
+
+      - name: Validate gallery specs against the JSON Schema
+        run: npm run test:schema
+
+      - name: Unit tests
+        run: npm run test:unit

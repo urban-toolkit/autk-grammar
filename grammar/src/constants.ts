@@ -1,7 +1,10 @@
+/** OSM layer a data source can split out, or a generic geometry layer. */
 export type LayerType = 'surface' | 'water' | 'parks' | 'roads' | 'buildings' | 'points' | 'polygons' | 'polylines' | 'raster';
 
+/** Kind of data source; selects which fields a `data` entry takes. */
 export type DataSourceType = 'osm' | 'csv' | 'json' | 'geojson' | 'heatmap' | 'join';
 
+/** Color scheme for a colored map layer: `scheme*` names are categorical, `interpolate*` names are sequential or diverging. */
 export enum ColorMapInterpolator {
   CAT_ACCENT = 'schemeAccent',
   CAT_DARK2 = 'schemeDark2',
@@ -49,12 +52,16 @@ export enum ColorMapInterpolator {
   DIV_SPECTRAL = 'interpolateSpectral',
 }
 
+/** Plot type. */
 export type PlotMark = 'scatter' | 'bar' | 'line' | 'linechart' | 'parallel-coordinates' | 'table' | 'heatmatrix';
 
+/** Interaction a plot emits. */
 export type PlotEvent = 'click' | 'brush' | 'brushY' | 'brushX';
 
+/** How joined rows are combined per feature. */
 export type AggregateFunction = 'sum' | 'avg' | 'count' | 'min' | 'max' | 'weighted' | 'collect';
 
+/** How values are rescaled before coloring. */
 export enum NormalizationMode {
     MIN_MAX = 'minMax',
     PERCENTILE = 'percentile',

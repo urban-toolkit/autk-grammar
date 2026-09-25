@@ -36,6 +36,20 @@ await grammar.run(spec);
 
 Swapping the adapter changes the underlying tools; the spec stays the same.
 
+## JSON Schema
+
+The grammar's JSON Schema (draft-07) is generated from the TypeScript types in [`grammar/src/types.ts`](grammar/src/types.ts) and ships in the npm package as `build/autk-grammar-schema.json`. Its `$id` is `https://autarkjs.org/schema/autk-grammar/v1.json`, and a spec may name it in a `$schema` field.
+
+```ts
+import Ajv from 'ajv';
+import schema from '@urban-toolkit/autk-grammar/build/autk-grammar-schema.json' with { type: 'json' };
+
+const validate = new Ajv({ allowUnionTypes: true }).compile(schema);
+if (!validate(spec)) console.error(validate.errors);
+```
+
+Keys the schema does not name are allowed. `make build` regenerates the schema, and `npm run test:schema` validates every gallery spec against it.
+
 ## Example gallery
 
 Browse the examples online, with a live editable spec for each one, at [autarkjs.org/grammar/examples](https://autarkjs.org/grammar/examples/).
@@ -85,6 +99,12 @@ npm install
 make build
 ```
 
+### Validate the gallery against the schema
+
+```sh
+npm run test:schema
+```
+
 ### Run gallery of examples
 
 ```sh
@@ -106,7 +126,7 @@ npm run dev --prefix gallery
 An adapter implements four interfaces exported by the core grammar in [`grammar/`](grammar/):
 
 - `DataAdapter`: resolves data sources into a shared context
-- `ComputeAdapter`: runs GPU or CPU compute operations on the context
+- `ComputeAdapter`: runs GPU or CPU compute operations on the context. The Autark adapter's `runCompute` and `resolveComputeParams` resolve `fromFeature` uniforms, iteration and multi-line `wglsFunction` bodies into compute parameters
 - `MapAdapter`: renders map layers from the context
 - `PlotAdapter`: renders plots from the context
 
