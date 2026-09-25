@@ -63,7 +63,7 @@ grammar-clean:
 	rm -rf grammar/dist
 
 adapters/autk-clean:
-	rm -rf adapters/autk/dist
+	rm -rf adapters/autk/dist adapters/autk/build
 
 adapters/deckgl-clean:
 	rm -rf adapters/deckgl/dist

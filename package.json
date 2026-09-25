@@ -10,11 +10,15 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "install:all": "npm install --workspaces",
-    "test:e2e": "playwright test -c tests/playwright.config.ts"
+    "test:e2e": "playwright test -c tests/playwright.config.ts",
+    "test:schema": "tsx tests/schema/validate.mts",
+    "test:unit": "tsx tests/unit/compute-params.mts"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@types/pngjs": "^6.0.5",
-    "pngjs": "^7.0.0"
+    "ajv": "^8.20.0",
+    "pngjs": "^7.0.0",
+    "tsx": "^4.23.15"
   }
 }

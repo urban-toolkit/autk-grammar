@@ -1,5 +1,6 @@
 import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec } from '@urban-toolkit/the-urban-grammar';
 import { AutkDb, DEFAULT_WORKSPACE_COORDINATE_FORMAT } from '@urban-toolkit/autk-db';
+import type { LoadGeojsonParams } from '@urban-toolkit/autk-db';
 import type { FeatureCollection } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
 
@@ -65,15 +66,16 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                         const response = await fetch(geojsonSpec.geojsonFileUrl);
                         geojsonData = await response.json() as FeatureCollection;
                     } else {
-                        geojsonData = geojsonSpec.geojsonObject;
+                        // The loader tolerates null geometry and missing properties, which the inline type allows.
+                        geojsonData = geojsonSpec.geojsonObject as FeatureCollection | undefined;
                     }
 
                     if (cache && geojsonData) cache.set(geojsonSpec.outputTableName, geojsonData);
 
                     // Pass the fetched object directly so autk-db doesn't need to re-fetch
-                    const loadSpec = geojsonData
+                    const loadSpec = (geojsonData
                         ? (() => { const s = { ...geojsonSpec, geojsonObject: geojsonData }; delete s.geojsonFileUrl; return s; })()
-                        : geojsonSpec;
+                        : geojsonSpec) as LoadGeojsonParams;
 
                     try {
                         await db.loadGeojson(loadSpec);

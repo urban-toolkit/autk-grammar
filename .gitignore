@@ -3,3 +3,4 @@ dist
 .claude
 tests/test-results
 tests/playwright-report
+build

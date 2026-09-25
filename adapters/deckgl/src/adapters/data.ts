@@ -1,5 +1,5 @@
 import type { FeatureCollection, Feature, GeoJsonGeometryTypes } from 'geojson';
-import type { DataAdapter, DataSourceSpec, OsmDataSourceSpec, CsvDataSourceSpec, JsonDataSourceSpec, CustomDataSourceSpec } from '@urban-toolkit/the-urban-grammar';
+import type { DataAdapter, DataSourceSpec, OsmDataSourceSpec, CsvDataSourceSpec, JsonDataSourceSpec, CustomDataSourceSpec, GeometryColumns } from '@urban-toolkit/the-urban-grammar';
 import type { LayerType } from '@urban-toolkit/the-urban-grammar';
 import Papa from 'papaparse';
 import { DeckGlDb, Targets } from '../types';
@@ -88,6 +88,15 @@ function overpassToGeojson(response: OverpassResponse): FeatureCollection {
 
 // --- CSV / JSON helpers ---
 
+/** The columns a `geometryColumns` entry names. `true` means `Latitude` and `Longitude`, as in autk-db. */
+function latLongColumns(columns: GeometryColumns): { lat: string; lon: string } {
+    if (columns === true) return { lat: 'Latitude', lon: 'Longitude' };
+    if ('wktColumnName' in columns) {
+        throw new Error('The deck.gl adapter does not read WKT geometry; name latColumnName and longColumnName instead.');
+    }
+    return { lat: columns.latColumnName, lon: columns.longColumnName };
+}
+
 function rowsToGeojson(
     rows: Record<string, string>[],
     latCol: string,
@@ -157,7 +166,8 @@ export function createDataAdapter(targets?: Targets, cache?: Map<string, Feature
                         const res = await fetch(s.geojsonFileUrl);
                         data = await res.json() as FeatureCollection;
                     } else if (s.geojsonObject) {
-                        data = s.geojsonObject;
+                        // Features with null geometry or no properties pass through as given.
+                        data = s.geojsonObject as FeatureCollection;
                     } else {
                         throw new Error('geojson source requires geojsonFileUrl or geojsonObject');
                     }
@@ -183,11 +193,8 @@ export function createDataAdapter(targets?: Targets, cache?: Map<string, Feature
 
                     let data: FeatureCollection;
                     if (s.geometryColumns) {
-                        data = objectsToGeojson(
-                            items as Record<string, unknown>[],
-                            s.geometryColumns.latColumnName,
-                            s.geometryColumns.longColumnName,
-                        );
+                        const { lat, lon } = latLongColumns(s.geometryColumns);
+                        data = objectsToGeojson(items as Record<string, unknown>[], lat, lon);
                     } else {
                         data = items as unknown as FeatureCollection;
                     }
@@ -224,7 +231,8 @@ export function createDataAdapter(targets?: Targets, cache?: Map<string, Feature
 
                     let data: FeatureCollection;
                     if (s.geometryColumns) {
-                        data = rowsToGeojson(rows, s.geometryColumns.latColumnName, s.geometryColumns.longColumnName);
+                        const { lat, lon } = latLongColumns(s.geometryColumns);
+                        data = rowsToGeojson(rows, lat, lon);
                     } else {
                         const features: Feature[] = rows.map(row => ({
                             type: 'Feature',
