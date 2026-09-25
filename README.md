@@ -41,7 +41,7 @@ Swapping the adapter changes the underlying tools; the spec stays the same.
 The grammar's JSON Schema (draft-07) is generated from the TypeScript types in [`grammar/src/types.ts`](grammar/src/types.ts) and ships in the npm package as `build/autk-grammar-schema.json`. Its `$id` is `https://autarkjs.org/schema/autk-grammar/v1.json`, and a spec may name it in a `$schema` field.
 
 ```ts
-import Ajv from 'ajv';
+import { Ajv } from 'ajv';
 import schema from '@urban-toolkit/autk-grammar/build/autk-grammar-schema.json' with { type: 'json' };
 
 const validate = new Ajv({ allowUnionTypes: true }).compile(schema);

@@ -32,7 +32,7 @@ await grammar.run(spec);
 The package ships the grammar's JSON Schema (draft-07) as `@urban-toolkit/autk-grammar/build/autk-grammar-schema.json`, with `$id` `https://autarkjs.org/schema/autk-grammar/v1.json`. Validate a spec with any draft-07 validator:
 
 ```ts
-import Ajv from 'ajv';
+import { Ajv } from 'ajv';
 import schema from '@urban-toolkit/autk-grammar/build/autk-grammar-schema.json' with { type: 'json' };
 
 const validate = new Ajv({ allowUnionTypes: true }).compile(schema);

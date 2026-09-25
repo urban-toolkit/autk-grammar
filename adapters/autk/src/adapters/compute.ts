@@ -11,9 +11,17 @@ export function createComputeAdapter(cache?: ComputeCache): ComputeAdapter {
         async resolveCompute(context: AutkDb | undefined, spec: ComputeSpec): Promise<AutkDb | undefined> {
             if(context){
                 // A table an earlier compute pass wrote is read from the cache, so passes chain.
-                const layers: Record<string, FeatureCollection> = {};
+                // Only the pass's own table must load; a `fromFeature` table that cannot
+                // falls back to the directive's `default`.
+                const layers: Record<string, FeatureCollection | undefined> = {};
                 for (const name of computeLayerNames(spec)) {
-                    layers[name] = cache?.get(name) ?? await context.getLayer(name);
+                    const cached = cache?.get(name);
+                    if (cached) layers[name] = cached;
+                    else if (name === spec.dataRef) layers[name] = await context.getLayer(name);
+                    else {
+                        try { layers[name] = await context.getLayer(name); }
+                        catch { layers[name] = undefined; }
+                    }
                 }
 
                 const engine = new AutkComputeEngine();

@@ -31,13 +31,16 @@ export enum ColorMapInterpolator {
   SEQ_CIVIDIS = 'interpolateCividis',
   SEQ_WARM = 'interpolateWarm',
   SEQ_COOL = 'interpolateCool',
+  SEQ_CUBEHELIX_DEFAULT = 'interpolateCubehelixDefault',
   SEQ_BU_GN = 'interpolateBuGn',
   SEQ_BU_PU = 'interpolateBuPu',
   SEQ_GN_BU = 'interpolateGnBu',
   SEQ_OR_RD = 'interpolateOrRd',
+  SEQ_PU_BU_GN = 'interpolatePuBuGn',
   SEQ_PU_BU = 'interpolatePuBu',
   SEQ_PU_RD = 'interpolatePuRd',
   SEQ_RD_PU = 'interpolateRdPu',
+  SEQ_YL_GN_BU = 'interpolateYlGnBu',
   SEQ_YL_GN = 'interpolateYlGn',
   SEQ_YL_OR_BR = 'interpolateYlOrBr',
   SEQ_YL_OR_RD = 'interpolateYlOrRd',
@@ -54,6 +57,9 @@ export enum ColorMapInterpolator {
 
 /** Plot type. */
 export type PlotMark = 'scatter' | 'bar' | 'line' | 'linechart' | 'parallel-coordinates' | 'table' | 'heatmatrix';
+
+/** Transform presets a plot accepts. */
+export type PlotTransformPreset = 'binning-1d' | 'binning-2d' | 'binning-events' | 'reduce-series' | 'sort';
 
 /** Interaction a plot emits. */
 export type PlotEvent = 'click' | 'brush' | 'brushY' | 'brushX';

@@ -124,6 +124,44 @@ test("iterate 'all' dispatches once per feature and sums the outputs", async () 
     assert.equal((roads.features[0].properties as Record<string, unknown>).compute, undefined, 'input is not mutated');
 });
 
+test('batched pass keeps non-iterating directives and literal matrices', () => {
+    const p = resolveComputeParams({
+        ...base,
+        uniforms: {
+            h: { fromFeature: { layer: 'bldg', path: 'properties.h', iterate: 'batched' } },
+            alt: { fromFeature: { layer: 'sun', path: 'properties.alt' } },
+            doy: 172,
+        },
+        uniformMatrices: {
+            rot: { data: [[1, 0], [0, 1]], cols: 2 },
+            o: { fromFeature: { layer: 'bldg', path: 'geometry.coordinates.0', iterate: 'batched' }, cols: 2 },
+        },
+    }, { roads: fc([{}]), bldg: fc([{ h: 3 }], [[[0, 0], [1, 1]]]), sun: fc([{ alt: 40 }]) });
+    assert.deepEqual(p.uniforms, { alt: 40, doy: 172, num_features: 1 });
+    assert.deepEqual(p.uniformArrays?.h, [3]);
+    assert.deepEqual(p.uniformMatrices, { rot: { data: [[1, 0], [0, 1]], cols: 2 } });
+});
+
+test('matrix cols default to the row width, and an unknown width drops the entry', () => {
+    const ring = [[0, 0], [2, 0], [2, 1]];
+    const p = resolveComputeParams({
+        ...base,
+        uniformMatrices: {
+            outline: { fromFeature: { layer: 'b', path: 'geometry.coordinates.0' } },
+            bogus: { fromFeature: { layer: 'b', path: 'properties.flat' } },
+        },
+    }, { roads: fc([{}]), b: fc([{ flat: [1, 2, 3] }], [ring]) });
+    assert.deepEqual(p.uniformMatrices, { outline: { data: ring, cols: 2 } });
+});
+
+test('a missing fromFeature layer falls back to the default', () => {
+    const p = resolveComputeParams({
+        ...base,
+        uniforms: { k: { fromFeature: { layer: 'absent', path: 'properties.k' }, default: 1 } },
+    }, { roads: fc([{}]), absent: undefined });
+    assert.deepEqual(p.uniforms, { k: 1 });
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
     try { await fn(); console.log(`ok ${name}`); }

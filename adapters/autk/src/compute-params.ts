@@ -117,7 +117,10 @@ export function resolveUniformMatrices(
         const resolved = resolveDirective(value, layers, iterateIndex);
         const data = Array.isArray(resolved) ? (resolved as number[][])
             : Array.isArray(value.default) ? value.default : undefined;
-        if (data) out[key] = { data, cols: value.cols ?? 0 };
+        if (!data) continue;
+        const cols = value.cols ?? (Array.isArray(data[0]) ? data[0].length : 0);
+        if (cols > 0) out[key] = { data, cols };
+        else console.warn(`[autk-grammar] uniform matrix "${key}" has no column count; entry dropped`);
     }
     return out;
 }
@@ -133,7 +136,8 @@ function isFiniteValue(v: unknown): boolean {
  *   `[xmin,ymin, xmax,ymin, xmax,ymax, xmin,ymax]`, eight values per feature;
  * - `num_features` holds the feature count.
  * Features missing a `required` path are dropped first, and at most {@link MAX_BATCHED_FEATURES}
- * are packed. Entries that do not iterate pass through as plain uniforms.
+ * are packed. Plain numbers pass through; other entries that do not iterate are left to
+ * {@link resolveComputeParams}.
  */
 export function buildBatchedUniforms(
     uniforms: Record<string, UniformEntry> | undefined,
@@ -226,8 +230,12 @@ export function resolveComputeParams(block: ComputeSpec, layers: ComputeLayers, 
     if (iterate?.mode === 'batched') {
         const sources = lookup(layers, iterate.layer)?.features ?? [];
         const packed = buildBatchedUniforms(block.uniforms, block.uniformMatrices, sources);
-        params.uniforms = packed.uniforms;
+        // Entries that do not iterate resolve as they would without iteration.
+        const single = resolveUniforms(notBatched(block.uniforms), layers) ?? {};
+        const matrices = resolveUniformMatrices(notBatched(block.uniformMatrices), layers);
+        params.uniforms = { ...single, ...packed.uniforms };
         params.uniformArrays = { ...(params.uniformArrays ?? {}), ...packed.uniformArrays };
+        if (matrices && Object.keys(matrices).length > 0) params.uniformMatrices = matrices;
         return params;
     }
 
@@ -237,6 +245,11 @@ export function resolveComputeParams(block: ComputeSpec, layers: ComputeLayers, 
     if (uniforms) params.uniforms = uniforms;
     if (matrices) params.uniformMatrices = matrices;
     return params;
+}
+
+function notBatched<T>(entries: Record<string, T> | undefined): Record<string, T> | undefined {
+    if (!entries) return undefined;
+    return Object.fromEntries(Object.entries(entries).filter(([, v]) => !(isFromFeature(v) && v.fromFeature.iterate === 'batched')));
 }
 
 function outputColumns(block: ComputeSpec): string[] {

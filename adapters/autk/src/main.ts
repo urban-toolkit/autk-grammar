@@ -72,6 +72,7 @@ export class AutkGrammar {
         this._mapRegistry.clear();
         this._plotRegistry.clear();
         this._plotMapLinks.clear();
+        this._computeCache.clear();
 
         this.grammarEngine = createEngine({
             spec,
