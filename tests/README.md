@@ -18,4 +18,4 @@ The tests need a Chrome with WebGPU. They use the system Chrome when it is insta
 
 ## Adding a test
 
-`tests/app/main.ts` exposes `window.runExample(name)`, which runs `gallery/src/examples/<name>.ts` and returns the tables it produced, and `window.valueAt(table, index, path)` to read a feature property. Add a case to `tests/grammar.spec.ts` that runs an example and checks what it should produce.
+`tests/app/main.ts` exposes `window.runExample(name)`, which runs `gallery/src/examples/<name>.ts` and returns the tables it produced, `window.runSpec(spec)`, which does the same for a spec the test builds, and `window.valueAt(table, index, path)` to read a feature property. Add a case to `tests/grammar.spec.ts` that runs an example and checks what it should produce.
