@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import type { FeatureCollection } from 'geojson';
 import type { ComputeSpec } from '@urban-toolkit/the-urban-grammar';
 import {
-    MAX_BATCHED_FEATURES, buildBatchedUniforms, computeLayerNames, findIterateSource, joinWgsl,
-    resolveComputeParams, runCompute,
+    STORAGE_BUFFER_BINDING_SIZE, buildBatchedUniforms, computeLayerNames, findIterateSource, joinWgsl,
+    maxBatchedFeatures, resolveComputeParams, runCompute,
 } from '../../adapters/autk/src/compute-params.ts';
 
 const fc = (props: Array<Record<string, unknown>>, rings?: number[][][]): FeatureCollection => ({
@@ -88,11 +88,48 @@ test('batched packs values and bounding boxes, drops features missing required p
     assert.deepEqual(packed.uniformArrays.o, [0, 0, 4, 0, 4, 2, 0, 2, -1, -1, 1, -1, 1, 3, -1, 3]);
 });
 
-test('batched caps the feature count', () => {
-    const many = fc(Array.from({ length: MAX_BATCHED_FEATURES + 5 }, (_, i) => ({ v: i })));
-    const packed = buildBatchedUniforms({ v: { fromFeature: { layer: 'm', path: 'properties.v', iterate: 'batched' } } }, undefined, many.features);
-    assert.equal(packed.uniforms.num_features, MAX_BATCHED_FEATURES);
-    assert.equal(packed.uniformArrays.v.length, MAX_BATCHED_FEATURES);
+const box = (i: number) => [[i, 0], [i + 1, 0], [i + 1, 1]];
+const batchedValue = { v: { fromFeature: { layer: 'm', path: 'properties.v', iterate: 'batched' as const } } };
+const batchedBox = { o: { fromFeature: { layer: 'm', path: 'geometry.coordinates.0', iterate: 'batched' as const }, cols: 2 } };
+
+test('batched packs every feature, past the 2000 a uniform buffer once held', () => {
+    const n = 2108;
+    const many = fc(Array.from({ length: n }, (_, i) => ({ v: i })), Array.from({ length: n }, (_, i) => box(i)));
+    const packed = buildBatchedUniforms(batchedValue, batchedBox, many.features);
+    assert.equal(packed.uniforms.num_features, n);
+    assert.equal(packed.uniformArrays.v.length, n);
+    assert.equal(packed.uniformArrays.o.length, 8 * n);
+    assert.deepEqual(packed.uniformArrays.o.slice(-8), [n - 1, 0, n, 0, n, 1, n - 1, 1]);
+});
+
+test('batched caps the feature count at what its largest array fits in one storage buffer binding', () => {
+    const many = fc(Array.from({ length: 40 }, (_, i) => ({ v: i })), Array.from({ length: 40 }, (_, i) => box(i)));
+    const warned: string[] = [];
+    const warn = console.warn;
+    console.warn = (message: string) => { warned.push(message); };
+    try {
+        // 100 B hold three 32 B bounding boxes, or twenty-five 4 B values.
+        const boxes = buildBatchedUniforms(batchedValue, batchedBox, many.features, 100);
+        assert.equal(boxes.uniforms.num_features, 3);
+        assert.equal(boxes.uniformArrays.v.length, 3);
+        assert.equal(boxes.uniformArrays.o.length, 24);
+        const values = buildBatchedUniforms(batchedValue, undefined, many.features, 100);
+        assert.equal(values.uniforms.num_features, 25);
+        assert.equal(values.uniformArrays.v.length, 25);
+    } finally {
+        console.warn = warn;
+    }
+    assert.deepEqual(warned, [
+        '[autk-grammar] batched compute capped at 3 features (got 40): its largest packed array takes 32 B per feature, and a storage buffer binding holds 100 B',
+        '[autk-grammar] batched compute capped at 25 features (got 40): its largest packed array takes 4 B per feature, and a storage buffer binding holds 100 B',
+    ]);
+});
+
+test("the binding size is WebGPU's default maxStorageBufferBindingSize", () => {
+    assert.equal(STORAGE_BUFFER_BINDING_SIZE, 128 * 1024 * 1024);
+    assert.equal(maxBatchedFeatures(batchedValue, batchedBox), 4_194_304);
+    assert.equal(maxBatchedFeatures(batchedValue, undefined), 33_554_432);
+    assert.equal(maxBatchedFeatures({ k: 3 }, undefined), Number.POSITIVE_INFINITY);
 });
 
 test('batched pass produces one dispatch with packed arrays and no matrices', async () => {

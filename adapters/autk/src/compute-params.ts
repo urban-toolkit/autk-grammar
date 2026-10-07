@@ -9,11 +9,15 @@ export type ComputeLayers = Record<string, FeatureCollection | undefined> | Map<
 export type ComputeRunner = (params: GpgpuPipelineParams) => Promise<FeatureCollection>;
 
 /**
- * Most features a `batched` directive packs. Uniform arrays live in WebGPU uniform buffers, which
- * DX12 caps at 64 KB; a matrix entry packs 8 floats (32 B) per feature, so 2000 features use
- * 64,000 B and keep a margin below the cap.
+ * The storage buffer binding every WebGPU device supports: the default
+ * `maxStorageBufferBindingSize`, 128 MiB. autk-compute reads each array a `batched` directive
+ * packs from a read-only storage buffer of its own, so every packed array must fit one binding.
  */
-export const MAX_BATCHED_FEATURES = 2000;
+export const STORAGE_BUFFER_BINDING_SIZE = 134_217_728;
+
+/** Bytes a feature adds to a packed array: one f32 for a scalar entry, a bounding box of eight for a matrix entry. */
+const SCALAR_BYTES = 4;
+const BOX_BYTES = 8 * 4;
 
 type UniformEntry = number | FromFeatureDirective;
 type MatrixEntry = { data: number[][]; cols: number } | FromFeatureDirective;
@@ -129,20 +133,50 @@ function isFiniteValue(v: unknown): boolean {
     return v !== undefined && v !== null && !(typeof v === 'number' && !Number.isFinite(v));
 }
 
+function isBatched(value: unknown): boolean {
+    return isFromFeature(value) && value.fromFeature.iterate === 'batched';
+}
+
+/** Bytes one feature adds to the largest array a batched pass packs, or 0 when it packs none. */
+function batchedBytesPerFeature(
+    uniforms: Record<string, UniformEntry> | undefined,
+    matrices: Record<string, MatrixEntry> | undefined,
+): number {
+    if (Object.values(matrices ?? {}).some(isBatched)) return BOX_BYTES;
+    if (Object.values(uniforms ?? {}).some(isBatched)) return SCALAR_BYTES;
+    return 0;
+}
+
+/**
+ * Most features a batched pass packs: as many as its largest array holds in one storage buffer
+ * binding of `bindingSize` bytes. With {@link STORAGE_BUFFER_BINDING_SIZE} that is 4,194,304
+ * features for a pass with a matrix entry, and 33,554,432 for one with scalar entries only.
+ */
+export function maxBatchedFeatures(
+    uniforms: Record<string, UniformEntry> | undefined,
+    matrices: Record<string, MatrixEntry> | undefined,
+    bindingSize: number = STORAGE_BUFFER_BINDING_SIZE,
+): number {
+    const bytes = batchedBytesPerFeature(uniforms, matrices);
+    return bytes > 0 ? Math.floor(bindingSize / bytes) : Number.POSITIVE_INFINITY;
+}
+
 /**
  * Packs every feature of a `batched` layer into uniform arrays:
  * - a scalar entry becomes an array of one value per feature, under the entry's name;
  * - a matrix entry becomes each feature's axis-aligned bounding box as four corners
  *   `[xmin,ymin, xmax,ymin, xmax,ymax, xmin,ymax]`, eight values per feature;
  * - `num_features` holds the feature count.
- * Features missing a `required` path are dropped first, and at most {@link MAX_BATCHED_FEATURES}
- * are packed. Plain numbers pass through; other entries that do not iterate are left to
+ * Features missing a `required` path are dropped first, and at most {@link maxBatchedFeatures}
+ * are packed: as many as the largest array holds in one storage buffer binding of `bindingSize`
+ * bytes. Plain numbers pass through; other entries that do not iterate are left to
  * {@link resolveComputeParams}.
  */
 export function buildBatchedUniforms(
     uniforms: Record<string, UniformEntry> | undefined,
     matrices: Record<string, MatrixEntry> | undefined,
     sources: Feature[],
+    bindingSize: number = STORAGE_BUFFER_BINDING_SIZE,
 ): { uniforms: Record<string, number>; uniformArrays: Record<string, number[]> } {
     const outUniforms: Record<string, number> = {};
     const outArrays: Record<string, number[]> = {};
@@ -162,9 +196,14 @@ export function buildBatchedUniforms(
             console.info(`[autk-grammar] batched compute dropped ${before - sources.length} feature(s) missing ${required.join(', ')}`);
         }
     }
-    if (sources.length > MAX_BATCHED_FEATURES) {
-        console.warn(`[autk-grammar] batched compute capped at ${MAX_BATCHED_FEATURES} features (got ${sources.length})`);
-        sources = sources.slice(0, MAX_BATCHED_FEATURES);
+    const limit = maxBatchedFeatures(uniforms, matrices, bindingSize);
+    if (sources.length > limit) {
+        console.warn(
+            `[autk-grammar] batched compute capped at ${limit} features (got ${sources.length}): `
+            + `its largest packed array takes ${batchedBytesPerFeature(uniforms, matrices)} B per feature, `
+            + `and a storage buffer binding holds ${bindingSize} B`,
+        );
+        sources = sources.slice(0, limit);
     }
 
     for (const [key, value] of Object.entries(uniforms ?? {})) {
