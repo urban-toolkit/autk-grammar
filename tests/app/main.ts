@@ -16,17 +16,22 @@ function element(tag: 'canvas' | 'div', id: string): HTMLElement {
 declare global {
     interface Window {
         grammar: AutkGrammar;
+        runSpec: (spec: UrbanSpec) => Promise<RunSummary>;
         runExample: (name: string) => Promise<RunSummary>;
         valueAt: (table: string, index: number, path: string) => Promise<unknown>;
     }
 }
 
-/** Runs a gallery example spec, creating a canvas per map and a div for the plot. */
+/** Runs a gallery example spec. */
 window.runExample = async (name: string) => {
     const load = examples[`../../gallery/src/examples/${name}.ts`];
     if (!load) throw new Error(`No gallery example named ${name}`);
     const { spec } = await load();
+    return window.runSpec(spec);
+};
 
+/** Runs a spec, creating a canvas per map and a div for the plot. */
+window.runSpec = async (spec: UrbanSpec) => {
     document.getElementById('stage')!.innerHTML = '';
     const maps = Array.isArray(spec.map) ? spec.map.map((_, i) => `map${i}`) : spec.map ? ['map0'] : [];
     maps.forEach((id) => element('canvas', id));

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
+import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import type { RunSummary } from './app/main';
 
 // Runs gallery example specs end to end (data, compute, map, plot) so an Autark
@@ -30,6 +31,10 @@ test.afterEach(() => {
 
 function run(page: Page, example: string): Promise<RunSummary> {
     return page.evaluate((name) => window.runExample(name), example);
+}
+
+function runSpec(page: Page, spec: UrbanSpec): Promise<RunSummary> {
+    return page.evaluate((s) => window.runSpec(s), spec);
 }
 
 /** Fails when a map canvas is a single flat color, i.e. nothing was drawn. */
@@ -88,6 +93,49 @@ test('runs a GPU compute function', async ({ page }) => {
     expect(compactness as number).toBeGreaterThan(0);
     expect(compactness as number).toBeLessThanOrEqual(1);
     await expectDrawn(page, 'map0');
+});
+
+test('packs a batched compute past the 64 KiB a uniform buffer holds', async ({ page }) => {
+    // 2108 bounding boxes pack into 67,456 B, more than a 64 KiB uniform buffer binding holds:
+    // autk-compute 3 failed GPU validation on them and read back zeros. autk-compute 4 reads each
+    // packed array from a storage buffer, so every box counts all 2108, the last ones included.
+    const n = 2108;
+    const square = (i: number) => {
+        const x = -71.1 + (i % 50) * 0.002;
+        const y = 42.3 + Math.floor(i / 50) * 0.002;
+        return { type: 'Polygon' as const, coordinates: [[[x, y], [x + 0.001, y], [x + 0.001, y + 0.001], [x, y + 0.001], [x, y]]] };
+    };
+    const spec: UrbanSpec = {
+        data: [{
+            type: 'geojson',
+            outputTableName: 'boxes',
+            geojsonObject: {
+                type: 'FeatureCollection',
+                features: Array.from({ length: n }, (_, i) => ({ type: 'Feature' as const, properties: { v: 1 }, geometry: square(i) })),
+            },
+        }],
+        compute: [{
+            dataRef: 'boxes',
+            attributes: { w: 'v' },
+            uniforms: { v: { fromFeature: { layer: 'boxes', path: 'properties.v', iterate: 'batched' } } },
+            uniformMatrices: { o: { fromFeature: { layer: 'boxes', path: 'geometry.coordinates.0', iterate: 'batched' }, cols: 2 } },
+            outputColumnName: 'count',
+            // o packs [xmin,ymin, xmax,ymin, xmax,ymax, xmin,ymax] per feature: count the boxes that have a width.
+            wglsFunction: [
+                'var n = 0.0;',
+                'for (var i = 0u; i < u32(num_features); i++) {',
+                '    if (o[i * 8u + 2u] > o[i * 8u]) { n += v[i]; }',
+                '}',
+                'return n * w;',
+            ],
+        }],
+    };
+    await runSpec(page, spec);
+    const counts = await page.evaluate((last) => Promise.all([
+        window.valueAt('boxes', 0, 'compute.count'),
+        window.valueAt('boxes', last, 'compute.count'),
+    ]), n - 1);
+    expect(counts).toEqual([n, n]);
 });
 
 test('links a plot to the map', async ({ page }) => {
