@@ -1,5 +1,8 @@
 // Unit tests for the compute helpers, with a fake GPU runner. Run after `make build`:
 //   npm run test:unit
+// The batched cap relies on autk-compute 4, which reads each packed array from a read-only storage
+// buffer; autk-compute 3 bound them as 64 KiB uniform buffers. tests/grammar.spec.ts runs a batched
+// pass past 64 KiB on the GPU.
 import assert from 'node:assert/strict';
 import type { FeatureCollection } from 'geojson';
 import type { ComputeSpec } from '@urban-toolkit/the-urban-grammar';
@@ -92,7 +95,7 @@ const box = (i: number) => [[i, 0], [i + 1, 0], [i + 1, 1]];
 const batchedValue = { v: { fromFeature: { layer: 'm', path: 'properties.v', iterate: 'batched' as const } } };
 const batchedBox = { o: { fromFeature: { layer: 'm', path: 'geometry.coordinates.0', iterate: 'batched' as const }, cols: 2 } };
 
-test('batched packs every feature, past the 2000 a uniform buffer once held', () => {
+test('batched packs every feature, past the 2000 cap that autk-compute 3 uniform buffers needed', () => {
     const n = 2108;
     const many = fc(Array.from({ length: n }, (_, i) => ({ v: i })), Array.from({ length: n }, (_, i) => box(i)));
     const packed = buildBatchedUniforms(batchedValue, batchedBox, many.features);
@@ -102,7 +105,7 @@ test('batched packs every feature, past the 2000 a uniform buffer once held', ()
     assert.deepEqual(packed.uniformArrays.o.slice(-8), [n - 1, 0, n, 0, n, 1, n - 1, 1]);
 });
 
-test('batched caps the feature count at what its largest array fits in one storage buffer binding', () => {
+test('batched caps the feature count at what its largest array fits in one autk-compute 4 storage buffer binding', () => {
     const many = fc(Array.from({ length: 40 }, (_, i) => ({ v: i })), Array.from({ length: 40 }, (_, i) => box(i)));
     const warned: string[] = [];
     const warn = console.warn;
@@ -125,7 +128,7 @@ test('batched caps the feature count at what its largest array fits in one stora
     ]);
 });
 
-test("the binding size is WebGPU's default maxStorageBufferBindingSize", () => {
+test("the binding size is WebGPU's default maxStorageBufferBindingSize, which autk-compute 4 gets on every device", () => {
     assert.equal(STORAGE_BUFFER_BINDING_SIZE, 128 * 1024 * 1024);
     assert.equal(maxBatchedFeatures(batchedValue, batchedBox), 4_194_304);
     assert.equal(maxBatchedFeatures(batchedValue, undefined), 33_554_432);

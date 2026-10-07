@@ -10,8 +10,9 @@ export type ComputeRunner = (params: GpgpuPipelineParams) => Promise<FeatureColl
 
 /**
  * The storage buffer binding every WebGPU device supports: the default
- * `maxStorageBufferBindingSize`, 128 MiB. autk-compute reads each array a `batched` directive
+ * `maxStorageBufferBindingSize`, 128 MiB. autk-compute 4 reads each array a `batched` directive
  * packs from a read-only storage buffer of its own, so every packed array must fit one binding.
+ * autk-compute 3 bound them as uniform buffers, which hold 64 KiB (2048 bounding boxes).
  */
 export const STORAGE_BUFFER_BINDING_SIZE = 134_217_728;
 
