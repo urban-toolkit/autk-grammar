@@ -12,7 +12,7 @@ A declarative grammar for urban visual analytics, running on [Autark](https://au
 npm install @urban-toolkit/autk-grammar
 ```
 
-It runs on Autark 4: `@urban-toolkit/autk-core`, `autk-db`, `autk-map`, `autk-plot` and `autk-compute` 4.x, installed with it.
+It runs on Autark 4.1: `@urban-toolkit/autk-core`, `autk-db`, `autk-map`, `autk-plot` and `autk-compute` 4.1 or a later 4.x, installed with it.
 
 ## Usage
 
@@ -27,6 +27,18 @@ const spec: UrbanSpec = {
 
 const grammar = new AutkGrammar({ map: 'map', plot: 'plot' }); // ids of the map canvas and plot container
 await grammar.run(spec);
+```
+
+## Maps
+
+Each map draws on demand: one frame once its layers are loaded, then one each time it changes. `grammar.maps` holds the `AutkMap` of each `map` entry of the last run, in order. Between frames a map canvas can read back empty, so to read a map's pixels (for example with `canvas.toDataURL()`), call its `requestRender()` and read in a `requestAnimationFrame` callback registered after that call:
+
+```ts
+const map = grammar.maps[0];
+map.requestRender();
+requestAnimationFrame(() => {
+  const png = map.canvas.toDataURL('image/png');
+});
 ```
 
 ## JSON Schema
