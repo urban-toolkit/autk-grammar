@@ -17,7 +17,16 @@ function systemChrome(): string | undefined {
 }
 
 // On Linux, use the GPU through Vulkan (same flags as curio's hardware WebGPU runner).
-const linuxGpuArgs = ['--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--enable-features=Vulkan', '--use-angle=vulkan'];
+// Headless has no window to present to: without --disable-vulkan-surface, Chrome in a container
+// (the arcade GPU runners) gives up on Vulkan and WebGPU falls back to SwiftShader, which runs
+// compute but leaves every map canvas empty.
+const linuxGpuArgs = [
+    '--enable-unsafe-webgpu',
+    '--ignore-gpu-blocklist',
+    '--enable-features=Vulkan',
+    '--use-angle=vulkan',
+    '--disable-vulkan-surface',
+];
 
 export default defineConfig({
     testDir: '.',
