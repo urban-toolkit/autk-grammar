@@ -19,6 +19,7 @@ declare global {
         runSpec: (spec: UrbanSpec) => Promise<RunSummary>;
         runExample: (name: string) => Promise<RunSummary>;
         valueAt: (table: string, index: number, path: string) => Promise<unknown>;
+        readMap: (canvasId: string) => Promise<string>;
     }
 }
 
@@ -62,4 +63,19 @@ window.valueAt = async (table: string, index: number, path: string) => {
         (value, key) => (value == null ? undefined : (value as Record<string, unknown>)[key]),
         collection.features[index]?.properties,
     );
+};
+
+/**
+ * Reads a map canvas as a PNG data URL, in the animation frame that draws the map.
+ *
+ * A map draws on demand, and Chrome can read an idle WebGPU canvas back as transparent. So this
+ * asks the map for one frame and reads the canvas in an animation frame callback registered after
+ * the map's own, which runs in the same frame, before the frame is shown. requestRender() does
+ * nothing for a map whose draw() never ran, so such a map reads back blank.
+ */
+window.readMap = (canvasId: string) => {
+    const map = window.grammar.maps.find((m) => m.canvas.id === canvasId);
+    if (!map) throw new Error(`No map draws on #${canvasId}`);
+    map.requestRender();
+    return new Promise<string>((resolve) => requestAnimationFrame(() => resolve(map.canvas.toDataURL('image/png'))));
 };
