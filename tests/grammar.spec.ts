@@ -7,6 +7,7 @@ import type { RunSummary } from './app/main';
 // release that breaks the grammar fails here. See tests/README.md.
 
 let pageErrors: string[] = [];
+let adapterLogged = false;
 
 test.beforeEach(async ({ page }) => {
     pageErrors = [];
@@ -23,6 +24,8 @@ test.beforeEach(async ({ page }) => {
         return null;
     });
     expect(adapter, 'this browser has no WebGPU adapter').not.toBeNull();
+    if (!adapterLogged) console.log(`WebGPU adapter: ${adapter}`);
+    adapterLogged = true;
 });
 
 test.afterEach(() => {
