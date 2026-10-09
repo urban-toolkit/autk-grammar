@@ -54,7 +54,7 @@ function rasterBand(collection: { features?: { properties?: unknown }[] }, getFn
     return band?.id ?? bands[0]?.id ?? getFnv ?? '';
 }
 
-export function createMapAdapter(targets?: Targets, registry?: MapRegistry, computeCache?: ComputeCache): MapAdapter {
+export function createMapAdapter(targets?: Targets, registry?: MapRegistry, computeCache?: ComputeCache, maps?: AutkMap[]): MapAdapter {
 
     async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<void> {
         let tableToTypeMap: {[tableName: string]: string} = {};
@@ -168,6 +168,9 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
                 if(registry)
                     for(const layerRef of spec.layerRefs)
                         registry.set(layerRef.dataRef, map);
+
+                if(maps)
+                    maps[index] = map;
 
                 map.draw();
             }
