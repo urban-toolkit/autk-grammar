@@ -220,6 +220,13 @@ export type MapLayerSpec = {
     isSkip?: boolean,
     /** Allow picking features on this layer. */
     isPick?: boolean,
+    /**
+     * Columns whose values name the rows a pick on this layer selects, so an app can link
+     * the selection to other tables that hold those columns. Neither adapter reads it: the
+     * Autark adapter's `map:picking` events still report feature ids.
+     * @minItems 1
+     */
+    selectFields?: string[],
     /** Dot path to the thematic value, relative to `feature.properties` (for example `tags.highway` or `compute.result`). */
     getFnv?: string,
     /** `categorical` reads the value as a string for discrete palettes; `quantitative` reads it as a number for continuous scales. Read by the deck.gl adapter; the Autark adapter ignores it. */
@@ -253,6 +260,13 @@ export interface PlotBase {
     title?: string,
     /** Interactions the plot emits. */
     events?: PlotEvent[],
+    /**
+     * Columns whose values name the rows a selection in this plot selects, so an app can link
+     * the selection to other tables that hold those columns. Neither adapter reads it: the
+     * Autark adapter's `plot:selection` events still report feature ids.
+     * @minItems 1
+     */
+    selectFields?: string[],
     width?: number,
     height?: number,
     margins?: { left: number; right: number; top: number; bottom: number },

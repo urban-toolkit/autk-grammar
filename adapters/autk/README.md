@@ -41,6 +41,15 @@ requestAnimationFrame(() => {
 });
 ```
 
+## Interactions
+
+A layer with `isPick` and a plot with `events` report what the user selects on `grammar.interactions`: `map:picking` and `plot:selection` give feature ids, the positions of the selected features among those the layer or the plot draws (a map layer leaves out features without a geometry). To link a selection to other tables, name the columns whose values identify those rows with `selectFields` on the layer or the plot, for example `selectFields: ['nta2020']`. The grammar does not read it; the events still report feature ids, and the app reads the key values from those rows.
+
+```ts
+grammar.interactions.on('map:picking', ({ layerId, selection }) => { /* feature ids */ });
+grammar.interactions.on('plot:selection', ({ plotId, event, selection }) => { /* feature ids */ });
+```
+
 ## JSON Schema
 
 The package ships the grammar's JSON Schema (draft-07) as `@urban-toolkit/autk-grammar/build/autk-grammar-schema.json`, with `$id` `https://autarkjs.org/schema/autk-grammar/v1.json`. Validate a spec with any draft-07 validator:

@@ -1,7 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
+import type { MapSpec, PlotSpec, UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import type { RunSummary } from './app/main';
+import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
 
 // Runs gallery example specs end to end (data, compute, map, plot) so an Autark
 // release that breaks the grammar fails here. See tests/README.md.
@@ -161,6 +162,32 @@ test('links a plot to the map', async ({ page }) => {
         window.grammar.clearHighlightOnMap('neighborhoods');
         window.grammar.clearHighlightOnPlot('neighborhoods');
     });
+});
+
+test('draws a layer and a plot that name selectFields, and still reports feature ids', async ({ page }) => {
+    // interaction-external names nta2020 as the key of its pickable layer and of its plot.
+    // Neither adapter reads selectFields: the spec draws as before, and a click on a plot mark
+    // reports the clicked feature's id, not its key value.
+    expect((interactionExternal.map as MapSpec).layerRefs[0].selectFields).toEqual(['nta2020']);
+    expect((interactionExternal.plot as PlotSpec).selectFields).toEqual(['nta2020']);
+
+    const { tables, plotSvgs } = await run(page, 'interaction-external');
+    expect(tables.neighborhoods.properties).toContain('nta2020');
+    expect(plotSvgs).toBeGreaterThan(0);
+    await expectDrawn(page, 'map0');
+
+    expect(await page.locator('#plot .autkMark').count()).toBeGreaterThan(0);
+    const { clicked, emitted } = await page.evaluate(() => new Promise<{ clicked: unknown; emitted: unknown }>((resolve) => {
+        const mark = document.querySelector('#plot .autkMark') as Element & { __data__?: { autkIds?: number[] } };
+        const clicked = mark.__data__?.autkIds;
+        window.grammar.interactions.on('plot:selection', ({ selection }) => resolve({ clicked, emitted: selection }));
+        setTimeout(() => resolve({ clicked, emitted: 'no plot:selection event within 5 s' }), 5000);
+        mark.dispatchEvent(new MouseEvent('click'));
+    }));
+    expect(clicked).toEqual([expect.any(Number)]);
+    expect(emitted).toEqual(clicked);
+    const [id] = emitted as number[];
+    expect(Number.isInteger(id) && id >= 0 && id < tables.neighborhoods.features, `feature id ${id}`).toBe(true);
 });
 
 test('draws two maps from one spec', async ({ page }) => {

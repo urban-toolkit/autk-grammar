@@ -11,7 +11,7 @@ export const spec: UrbanSpec = {
         },
     ],
     map: {
-        layerRefs: [{ dataRef: 'neighborhoods', isPick: true }],
+        layerRefs: [{ dataRef: 'neighborhoods', isPick: true, selectFields: ['nta2020'] }],
     },
     plot: {
         dataRef: 'neighborhoods',
@@ -20,6 +20,7 @@ export const spec: UrbanSpec = {
         title: 'Neighborhood Areas',
         width: 420,
         events: ['click', 'brush'],
+        selectFields: ['nta2020'],
         mapRef: 'neighborhoods',
     },
 };
