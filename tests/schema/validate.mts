@@ -68,6 +68,9 @@ expect('line with binning-events', { plot: { ...plot, mark: 'line', transform: {
 expect('table with sort', { plot: { ...plot, mark: 'table', transform: { preset: 'sort' } } }, true);
 expect('heatmatrix with binning-2d', { plot: { ...plot, mark: 'heatmatrix', transform: { preset: 'binning-2d' } } }, true);
 expect('parallel coordinates with any preset', { plot: { ...plot, mark: 'parallel-coordinates', transform: { preset: 'binning-1d' } } }, true);
+expect('layer selectFields', { map: { layerRefs: [{ dataRef: 't', isPick: true, selectFields: ['id'] }] } }, true);
+expect('scatter selectFields', { plot: { ...plot, mark: 'scatter', events: ['click'], selectFields: ['city', 'id'] } }, true);
+expect('bar selectFields', { plot: { ...plot, mark: 'bar', events: ['brushX'], selectFields: ['id'] } }, true);
 
 // Documents the runtime cannot draw.
 expect('unknown data type', { data: [{ ...osm, type: 'shapefile' }] }, false);
@@ -97,6 +100,15 @@ expect('scatter with one axis', { plot: { dataRef: 't', mark: 'scatter', axis: [
 expect('table with binning', { plot: { ...plot, mark: 'table', transform: { preset: 'binning-1d' } } }, false);
 expect('bar with sort', { plot: { ...plot, mark: 'bar', transform: { preset: 'sort' } } }, false);
 expect('unknown transform preset', { plot: { ...plot, mark: 'scatter', transform: { preset: 'smooth' } } }, false);
+// Keys the schema does not name are allowed, so each of these is valid unless selectFields is typed.
+expect('layer selectFields as a string', { map: { layerRefs: [{ dataRef: 't', selectFields: 'id' }] } }, false);
+expect('layer selectFields empty', { map: { layerRefs: [{ dataRef: 't', selectFields: [] }] } }, false);
+expect('layer selectFields with a number', { map: { layerRefs: [{ dataRef: 't', selectFields: ['id', 3] }] } }, false);
+for (const mark of ['scatter', 'bar']) {
+    expect(`${mark} selectFields as a string`, { plot: { ...plot, mark, selectFields: 'id' } }, false);
+    expect(`${mark} selectFields empty`, { plot: { ...plot, mark, selectFields: [] } }, false);
+    expect(`${mark} selectFields with a number`, { plot: { ...plot, mark, selectFields: ['id', 3] } }, false);
+}
 
 if (checked === 0) {
     failures++;
