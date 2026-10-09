@@ -2,6 +2,8 @@
 
 These tests run gallery example specs through the grammar in Chrome with WebGPU, and check the results: loaded tables, spatial joins, GPU compute values, linked plots, and that each map canvas was actually drawn. They run the adapter and grammar **source** against whichever Autark packages are installed.
 
+A map draws on demand, and Chrome can read an idle WebGPU canvas back as transparent, so a test reads a map canvas in the animation frame that draws the map: `window.readMap` asks the map for one frame (`requestRender()`) and reads the canvas in an animation frame callback registered after the map's own. `requestRender()` does nothing for a map whose `draw()` never ran, so such a map reads back blank.
+
 CI (`.github/workflows/e2e.yml`) runs them on every pull request and every push to `main`, twice:
 
 - **locked**: the Autark versions in `package-lock.json`.
@@ -18,4 +20,4 @@ The tests need a Chrome with WebGPU. They use the system Chrome when it is insta
 
 ## Adding a test
 
-`tests/app/main.ts` exposes `window.runExample(name)`, which runs `gallery/src/examples/<name>.ts` and returns the tables it produced, `window.runSpec(spec)`, which does the same for a spec the test builds, and `window.valueAt(table, index, path)` to read a feature property. Add a case to `tests/grammar.spec.ts` that runs an example and checks what it should produce.
+`tests/app/main.ts` exposes `window.runExample(name)`, which runs `gallery/src/examples/<name>.ts` and returns the tables it produced, `window.runSpec(spec)`, which does the same for a spec the test builds, `window.valueAt(table, index, path)` to read a feature property, and `window.readMap(canvasId)`, which returns a map canvas as a PNG data URL. Add a case to `tests/grammar.spec.ts` that runs an example and checks what it should produce; `expectDrawn(page, canvasId)` checks that a map drew.

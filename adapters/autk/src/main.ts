@@ -22,6 +22,7 @@ export class AutkGrammar {
     private _computeCache: ComputeCache = new Map();
     private _data: Record<string, Promise<FeatureCollection>> = {};
     private _mapRegistry: MapRegistry = new Map();
+    private _maps: AutkMap[] = [];
     private _plotRegistry: PlotRegistry = new Map();
     private _fwdCleanups: Array<() => void> = [];
     private _plotMapLinks: PlotMapLinks = new Map();
@@ -31,7 +32,7 @@ export class AutkGrammar {
     constructor(targets?: Targets) {
         const cache: GeoJsonCache = new Map();
         this.dataAdapter = createDataAdapter(targets, cache);
-        this.mapAdapter = createMapAdapter(targets, this._mapRegistry, this._computeCache);
+        this.mapAdapter = createMapAdapter(targets, this._mapRegistry, this._computeCache, this._maps);
         this.plotAdapter = createPlotAdapter(targets, this._mapRegistry, this._plotRegistry, this._plotMapLinks, cache);
         this.computeAdapter = createComputeAdapter(this._computeCache);
     }
@@ -52,6 +53,18 @@ export class AutkGrammar {
         return this._data;
     }
 
+    /**
+     * The maps the last {@link run} drew, one per `map` entry of the spec, in order.
+     *
+     * Each map draws on demand: one frame once its layers are loaded, then one each
+     * time it changes. Between frames a map canvas can read back empty, so to read a
+     * map's pixels (for example with `canvas.toDataURL()`), call its `requestRender()`
+     * and read in a `requestAnimationFrame` callback registered after that call.
+     */
+    get maps(): readonly AutkMap[] {
+        return this._maps;
+    }
+
     async run(spec: UrbanSpec) {
         if(!this.dataAdapter)
             throw new Error('Database adapter not initialized. Please call the constructor first.');
@@ -66,6 +79,7 @@ export class AutkGrammar {
             throw new Error('Compute adapter not initialized. Please call the constructor first.');
 
         this._mapRegistry.clear();
+        this._maps.length = 0;
         this._plotRegistry.clear();
         this._plotMapLinks.clear();
         this._computeCache.clear();

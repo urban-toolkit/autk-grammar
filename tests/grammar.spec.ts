@@ -7,6 +7,7 @@ import type { RunSummary } from './app/main';
 // release that breaks the grammar fails here. See tests/README.md.
 
 let pageErrors: string[] = [];
+let adapterLogged = false;
 
 test.beforeEach(async ({ page }) => {
     pageErrors = [];
@@ -23,6 +24,8 @@ test.beforeEach(async ({ page }) => {
         return null;
     });
     expect(adapter, 'this browser has no WebGPU adapter').not.toBeNull();
+    if (!adapterLogged) console.log(`WebGPU adapter: ${adapter}`);
+    adapterLogged = true;
 });
 
 test.afterEach(() => {
@@ -37,10 +40,17 @@ function runSpec(page: Page, spec: UrbanSpec): Promise<RunSummary> {
     return page.evaluate((s) => window.runSpec(s), spec);
 }
 
-/** Fails when a map canvas is a single flat color, i.e. nothing was drawn. */
+/**
+ * Fails when a map canvas is a single flat color, i.e. nothing was drawn. Reads the canvas
+ * itself (window.readMap), in the frame that draws the map, so the map's controls and
+ * watermark on top of it are not counted.
+ */
 async function expectDrawn(page: Page, canvasId: string) {
     await page.waitForTimeout(1500);
-    const png = PNG.sync.read(await page.locator(`#${canvasId}`).screenshot());
+    const dataUrl = await page.evaluate((id) => window.readMap(id), canvasId);
+    const image = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
+    await test.info().attach(`${canvasId}.png`, { body: image, contentType: 'image/png' });
+    const png = PNG.sync.read(image);
     const colors = new Set<number>();
     for (let i = 0; i < png.data.length && colors.size < 16; i += 4 * 97) {
         colors.add((png.data[i] << 16) | (png.data[i + 1] << 8) | png.data[i + 2]);
