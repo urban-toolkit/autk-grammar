@@ -41,6 +41,38 @@ requestAnimationFrame(() => {
 });
 ```
 
+## Layer styling
+
+Besides `dataRef`, a layer of `map.layerRefs` takes these styling options:
+
+| Option | Effect |
+|---|---|
+| `title` | The layer's id in its map, which its legend shows as its title. Without a title, the id is the `dataRef`. Two layers of one map cannot have the same id. |
+| `color` | The layer's color, `#rrggbb`. The layer is drawn in it rather than by its `getFnv` value, unless `isColorMap` is `true`. |
+| `stroke` | A polygon layer's outline: its color, `#rrggbb`, or `false` for none. |
+| `width` | The width of a polylines or roads layer's lines, in the map's planar units (autk-map's `polylinesWidth`). |
+| `colorMapInterpolator` | The color scheme. A raster layer's cells and its legend's labels follow it. |
+| `colorMapCenter` | On a raster layer, the value at the middle of the color scale. The scale then runs from the center less the farthest value's distance to it, to the center plus that distance. |
+| `colorMapReverse` | On a raster layer, runs the color scale from the highest value to the lowest. |
+| `transferFunction` | On a raster layer, how opaque its cells are by value: autk-map's transfer function (`mode`, `opacityMin`, `opacityMax`, `gamma`, `zeroCenter`). `{ opacityMin: 1, opacityMax: 1 }` draws every cell with a value fully opaque. |
+
+After a run, `grammar.mapLayer(dataRef)` finds the layer a map draws for a table: the `AutkMap` and the layer's id in it. `highlightOnMap`, `clearHighlightOnMap` and a plot's `mapRef` also name a layer by its `dataRef`.
+
+```ts
+await grammar.run({
+  data: [/* tables named routes and parcels, and a heatmap raster named change */],
+  map: {
+    layerRefs: [
+      { dataRef: 'parcels', color: '#4e79a7', stroke: false },
+      { dataRef: 'routes', title: 'Fastest route', color: '#e15759', width: 30 },
+      { dataRef: 'change', title: 'Change', colorMapInterpolator: ColorMapInterpolator.DIV_RED_BLUE, colorMapCenter: 0, colorMapReverse: true },
+    ],
+  },
+});
+const { map, layerId } = grammar.mapLayer('routes')!; // layerId is 'Fastest route'
+map.updateRenderInfo(layerId, { opacity: 0.5 });
+```
+
 ## Interactions
 
 A layer with `isPick` and a plot with `events` report what the user selects on `grammar.interactions`: `map:picking` and `plot:selection` give feature ids, the positions of the selected features among those the layer or the plot draws (a map layer leaves out features without a geometry). To link a selection to other tables, name the columns whose values identify those rows with `selectFields` on the layer or the plot, for example `selectFields: ['nta2020']`. The grammar does not read it; the events still report feature ids, and the app reads the key values from those rows.

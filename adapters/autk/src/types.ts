@@ -11,8 +11,17 @@ export type Targets = {
 }
 
 export type MapRegistry = Map<string, AutkMap>;
+export type MapLayerIds = Map<string, string>; // dataRef → id of the layer that draws it in the map the MapRegistry holds for it
 export type PlotRegistry = Map<string, AutkPlot>;
-export type PlotMapLinks = Map<string, string>; // plotId (dataRef) → mapRef (layerId)
+export type PlotMapLinks = Map<string, string>; // plotId (dataRef) → mapRef (dataRef of a map layer)
+
+/** A layer a map of the last run draws, as `AutkGrammar.mapLayer` finds it by its table's name. */
+export interface GrammarMapLayer {
+    /** The map that draws the layer. */
+    map: AutkMap;
+    /** The layer's id in that map: its `title`, else its `dataRef`. */
+    layerId: string;
+}
 export type GeoJsonCache = Map<string, FeatureCollection>;
 export type ComputeCache = Map<string, FeatureCollection>;
 

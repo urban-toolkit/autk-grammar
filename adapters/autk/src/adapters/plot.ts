@@ -1,5 +1,5 @@
 import { PlotAdapter, PlotSpec, PlotMark } from '@urban-toolkit/the-urban-grammar';
-import { Targets, MapRegistry, PlotRegistry, PlotMapLinks, GeoJsonCache } from '../types';
+import { Targets, MapRegistry, MapLayerIds, PlotRegistry, PlotMapLinks, GeoJsonCache } from '../types';
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkPlot, PlotEvent as AutkPlotEvent } from '@urban-toolkit/autk-plot';
 import type { PlotEventData, PlotType, PlotTransformConfig } from '@urban-toolkit/autk-plot';
@@ -20,7 +20,7 @@ function grammarMarkToPlotType(mark: PlotMark): PlotType {
     return mapping[mark];
 }
 
-export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, plotRegistry?: PlotRegistry, plotMapLinks?: PlotMapLinks, cache?: GeoJsonCache): PlotAdapter {
+export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, plotRegistry?: PlotRegistry, plotMapLinks?: PlotMapLinks, cache?: GeoJsonCache, layerIds?: MapLayerIds): PlotAdapter {
 
     return {
         async resolvePlot(context: unknown, spec: PlotSpec): Promise<void> {
@@ -51,12 +51,14 @@ export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, plo
             plotRegistry?.set(spec.dataRef, plot);
             if (spec.mapRef) plotMapLinks?.set(spec.dataRef, spec.mapRef);
 
-            // Wire map ↔ plot events if a mapRef is specified
+            // Wire map ↔ plot events if a mapRef is specified. mapRef names the layer's
+            // table; the layer's id in its map is its title, else that name.
             if(spec.mapRef && registry) {
                 const map: AutkMap | undefined = registry.get(spec.mapRef);
+                const layerId = layerIds?.get(spec.mapRef) ?? spec.mapRef;
 
                 if(map) {
-                    map.updateRenderInfo(spec.mapRef, { isPick: true });
+                    map.updateRenderInfo(layerId, { isPick: true });
 
                     map.events.on(MapEvent.PICKING, ({ selection }: MapEventData) => {
                         plot.setSelection(selection);
@@ -64,7 +66,7 @@ export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, plo
 
                     for(const event of events) {
                         plot.events.on(event, ({ selection }: PlotEventData) => {
-                            map.setHighlightedIds(spec.mapRef!, selection);
+                            map.setHighlightedIds(layerId, selection);
                         });
                     }
                 }

@@ -1,9 +1,94 @@
-import { MapAdapter, MapSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
-import { Targets, MapRegistry, ComputeCache } from '../types';
+import { MapAdapter, MapLayerSpec, MapSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
+import { Targets, MapRegistry, MapLayerIds, ComputeCache } from '../types';
 import { AutkMap } from '@urban-toolkit/autk-map';
-import { ColorMapDomainStrategy } from '@urban-toolkit/autk-core';
-import type { ColorMapConfig, ColorMapDomainSpec, LayerType } from '@urban-toolkit/autk-core';
+import type { LayerRenderInfo } from '@urban-toolkit/autk-map';
+import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator } from '@urban-toolkit/autk-core';
+import type { ColorHEX, ColorMapConfig, ColorMapDomainSpec, ColorRGB, LayerType, TransferFunction } from '@urban-toolkit/autk-core';
 import { AutkDb } from '@urban-toolkit/autk-db';
+
+/** The id a layer has in its map: its `title`, else its `dataRef`. */
+export function layerIdOf(layerRef: MapLayerSpec): string {
+    return typeof layerRef.title === 'string' && layerRef.title !== '' ? layerRef.title : layerRef.dataRef;
+}
+
+/** Refuses a map whose layers would share an id. */
+function checkLayerIds(spec: MapSpec, index: number): void {
+    const ids = new Set<string>();
+    for (const layerRef of spec.layerRefs) {
+        const id = layerIdOf(layerRef);
+        if (ids.has(id))
+            throw new Error(`Map ${index} draws two layers with the id "${id}". A layer's id is its title, else its dataRef: give each layer of a map its own title.`);
+        ids.add(id);
+    }
+}
+
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+function hexColor(value: string, key: string, layerId: string): ColorRGB {
+    if (!HEX_COLOR.test(value))
+        throw new Error(`Layer "${layerId}": ${key} must be a color written #rrggbb, not "${value}".`);
+    return ColorMap.hexToRgb(value as ColorHEX);
+}
+
+/** What `color`, `stroke` and `width` set on the layer's autk-map render info. */
+function styleRenderInfo(layerRef: MapLayerSpec, layerId: string): Partial<LayerRenderInfo> {
+    const renderInfo: Partial<LayerRenderInfo> = {};
+    if (layerRef.color != null)
+        renderInfo.color = hexColor(layerRef.color, 'color', layerId);
+    if (layerRef.stroke === false)
+        renderInfo.showBorders = false;
+    else if (layerRef.stroke != null)
+        renderInfo.strokeColor = hexColor(layerRef.stroke, 'stroke', layerId);
+    if (layerRef.width != null)
+        renderInfo.polylinesWidth = layerRef.width;
+    return renderInfo;
+}
+
+/**
+ * Whether the layer is colored by value. An explicit `isColorMap` decides. A raster layer is colored by value
+ * either way, and this only shows or hides its legend. Otherwise a layer with a `color` is drawn in it, and a
+ * layer with a scheme or a `getFnv` value is colored by value.
+ */
+function colorsByValue(layerRef: MapLayerSpec, type: LayerType): boolean {
+    if (layerRef.isColorMap != null) return layerRef.isColorMap;
+    if (type === 'raster')
+        return layerRef.colorMapInterpolator != null || layerRef.colorMapCenter != null || layerRef.colorMapReverse === true;
+    if (layerRef.color != null) return false;
+    return layerRef.colorMapInterpolator != null || layerRef.getFnv != null;
+}
+
+/** A raster band's values, as autk-map reads them. */
+function bandValues(collection: { features?: { properties?: unknown }[] }, band: string): Float32Array | null {
+    const values = (collection.features?.[0]?.properties as Record<string, unknown> | undefined)?.[band];
+    if (values instanceof Float32Array) return values;
+    if ((ArrayBuffer.isView(values) && !(values instanceof DataView)) || Array.isArray(values))
+        return Float32Array.from(values as ArrayLike<number>, (v) => (Number.isFinite(Number(v)) ? Number(v) : NaN));
+    return null;
+}
+
+/**
+ * The domain of a raster's centered or reversed color scale, or `undefined` when the layer asks for neither, the
+ * scheme is categorical, or the band has no value. Centered on `center`, it runs from the center less the farthest
+ * value's distance to it, to the center plus that distance; when every value is the center, it is not centered.
+ * Otherwise it is the domain autk-map resolves from `config`. `reverse` turns it around.
+ */
+export function rasterScaleDomain(values: Float32Array, config: ColorMapConfig, center?: number, reverse?: boolean): number[] | undefined {
+    if (ColorMap.isCategorical(config.interpolator)) return undefined;
+    let reach = 0;
+    let finite = 0;
+    for (let i = 0; i < values.length; i++) {
+        const value = values[i];
+        if (!Number.isFinite(value)) continue;
+        finite++;
+        if (center != null) reach = Math.max(reach, Math.abs(value - center));
+    }
+    const centered = center != null && reach > 0;
+    if (finite === 0 || (!centered && reverse !== true)) return undefined;
+    const domain = centered && center != null
+        ? [center - reach, center, center + reach]
+        : ColorMap.resolveDomainFromData(values, config) as number[];
+    return reverse === true ? [...domain].reverse() : domain;
+}
 
 function buildDomainSpec(
     normalization: MapSpec['layerRefs'][number]['normalization'],
@@ -54,7 +139,7 @@ function rasterBand(collection: { features?: { properties?: unknown }[] }, getFn
     return band?.id ?? bands[0]?.id ?? getFnv ?? '';
 }
 
-export function createMapAdapter(targets?: Targets, registry?: MapRegistry, computeCache?: ComputeCache, maps?: AutkMap[]): MapAdapter {
+export function createMapAdapter(targets?: Targets, registry?: MapRegistry, computeCache?: ComputeCache, maps?: AutkMap[], layerIds?: MapLayerIds): MapAdapter {
 
     async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<void> {
         let tableToTypeMap: {[tableName: string]: string} = {};
@@ -64,6 +149,7 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
 
         for(const layerRef of spec.layerRefs){
             const name     = layerRef.dataRef;
+            const layerId  = layerIdOf(layerRef);
             const type     = tableToTypeMap[name] as LayerType;
             const getFnv   = layerRef.getFnv;
 
@@ -73,30 +159,32 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
                 ...rawData,
                 features: (rawData.features ?? []).filter((f: any) => f.geometry != null),
             };
+            const band = type === 'raster' ? rasterBand(data, getFnv) : '';
 
             if(type === 'raster') {
-                map.loadCollection(name, { collection: data, type: 'raster', property: rasterBand(data, getFnv) });
+                map.loadCollection(layerId, { collection: data, type: 'raster', property: band });
             } else {
-                map.loadCollection(name, { collection: data, type });
+                map.loadCollection(layerId, { collection: data, type });
             }
 
             if(layerRef.opacity != null)
-                map.updateRenderInfo(name, { opacity: layerRef.opacity });
+                map.updateRenderInfo(layerId, { opacity: layerRef.opacity });
 
-            // Enable the colormap by default for thematic (getFnv) vector layers so
-            // autk-grammar maps render coloured-by-value out of the box. autk-map
-            // attaches a default colour ramp to every layer, so this works even when
-            // the spec omits colorMapInterpolator. Callers can still opt out by
-            // setting isColorMap: false explicitly. Raster layers manage their own ramp.
-            const enableColorMap = layerRef.isColorMap ?? (getFnv != null && type !== 'raster');
-            if(enableColorMap)
-                map.updateRenderInfo(name, { isColorMap: true });
+            const style = styleRenderInfo(layerRef, layerId);
+            if(Object.keys(style).length > 0)
+                map.updateRenderInfo(layerId, style);
+
+            // Thematic (getFnv) vector layers are colored by value out of the box: autk-map
+            // attaches a default colour ramp to every layer, so this works even when the
+            // spec omits colorMapInterpolator (see colorsByValue).
+            if(colorsByValue(layerRef, type))
+                map.updateRenderInfo(layerId, { isColorMap: true });
 
             if(layerRef.isPick)
-                map.updateRenderInfo(name, { isPick: true });
+                map.updateRenderInfo(layerId, { isPick: true });
 
             if(layerRef.isSkip)
-                map.updateRenderInfo(name, { isSkip: true });
+                map.updateRenderInfo(layerId, { isSkip: true });
 
             // When catchAllCategory is set, remap features whose property value is not
             // in colorMapDomain to the catch-all label, and extend the domain to include it.
@@ -122,19 +210,41 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
                     : [...colorMapDomain, catchAllCategory];
             }
 
-            if(layerRef.colorMapInterpolator) {
+            // A raster's transfer function is only stored by setTransferFunction; the
+            // updateColorMap below colors the cells again with it.
+            const rasterTransfer = type === 'raster' && layerRef.transferFunction != null;
+            if(rasterTransfer) {
+                const layer = map.layerManager.searchByLayerId(layerId) as unknown as
+                    { setTransferFunction?: (transferFunction: TransferFunction) => void } | null;
+                layer?.setTransferFunction?.(layerRef.transferFunction as TransferFunction);
+            }
+
+            // The scheme and its domain go through updateColorMap, which colors a raster's
+            // cells again and gives the legend its labels.
+            const rasterScale = type === 'raster' && (layerRef.colorMapCenter != null || layerRef.colorMapReverse === true);
+            if(layerRef.colorMapInterpolator || rasterScale) {
                 const colormapConfig: ColorMapConfig = {
                     // urban-grammar ColorMapInterpolator values are string-compatible
                     // with autk-core ColorMapInterpolator at runtime
-                    interpolator: layerRef.colorMapInterpolator as unknown as ColorMapConfig['interpolator'],
+                    interpolator: (layerRef.colorMapInterpolator as unknown as ColorMapConfig['interpolator'] | undefined)
+                        ?? map.layerManager.searchByLayerId(layerId)?.layerRenderInfo.colormap.config.interpolator
+                        ?? ColorMapInterpolator.SEQ_REDS,
                     domainSpec: buildDomainSpec(layerRef.normalization, effectiveDomain),
                 };
-                map.updateRenderInfo(name, { colormap: { config: colormapConfig }, isColorMap: true });
+                const values = rasterScale ? bandValues(data, band) : null;
+                const domain = values
+                    ? rasterScaleDomain(values, colormapConfig, layerRef.colorMapCenter, layerRef.colorMapReverse)
+                    : undefined;
+                if(domain)
+                    colormapConfig.domainSpec = { type: ColorMapDomainStrategy.USER, params: domain };
+                map.updateColorMap(layerId, { colorMap: colormapConfig });
+            } else if(rasterTransfer) {
+                map.updateColorMap(layerId, { colorMap: {} });
             }
 
             if(getFnv && type !== 'raster') {
                 const property = getFnv.startsWith('properties.') ? getFnv : `properties.${getFnv}`;
-                map.updateThematic(name, { collection: thematicData, property });
+                map.updateThematic(layerId, { collection: thematicData, property });
             }
         }
     }
@@ -142,6 +252,8 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
     return {
         async resolveMap(context: AutkDb | undefined, spec: MapSpec, index: number = 0): Promise<void> {
             if(targets && targets.map && context){
+
+                checkLayerIds(spec, index);
 
                 let canvas;
 
@@ -165,9 +277,10 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
                 await map.init();
                 await loadLayers(map, context, spec);
 
-                if(registry)
-                    for(const layerRef of spec.layerRefs)
-                        registry.set(layerRef.dataRef, map);
+                for(const layerRef of spec.layerRefs) {
+                    registry?.set(layerRef.dataRef, map);
+                    layerIds?.set(layerRef.dataRef, layerIdOf(layerRef));
+                }
 
                 if(maps)
                     maps[index] = map;
