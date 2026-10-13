@@ -199,17 +199,94 @@ export interface CustomDataSourceSpec extends TableSourceBase {
 export type DataSourceSpec = OsmDataSourceSpec | CsvDataSourceSpec | JsonDataSourceSpec | CustomDataSourceSpec | HeatmapSourceSpec | JoinSourceSpec;
 
 /**
+ * A color as `#rrggbb`.
+ * @pattern ^#[0-9a-fA-F]{6}$
+ */
+export type HexColor = string;
+
+/**
+ * How opaque a raster layer's cells are by value: autk-map's transfer function. A cell with no value is clear.
+ */
+export type RasterTransferFunction = {
+    /**
+     * `far-zero`: cells farther from `zeroCenter` are more opaque (autk-map's default). `near-zero`: cells closer to
+     * `zeroCenter` are more opaque. `linear`: opacity grows from the lowest value to the highest.
+     */
+    mode?: 'near-zero' | 'far-zero' | 'linear',
+    /**
+     * Lowest opacity, from 0 to 1. Defaults to 0.
+     * @minimum 0
+     * @maximum 1
+     */
+    opacityMin?: number,
+    /**
+     * Highest opacity, from 0 to 1. Defaults to 1.
+     * @minimum 0
+     * @maximum 1
+     */
+    opacityMax?: number,
+    /**
+     * Exponent applied to a cell's place between the lowest and highest opacity. Defaults to 1.
+     * @exclusiveMinimum 0
+     */
+    gamma?: number,
+    /** Value the `far-zero` and `near-zero` modes measure from. Defaults to 0. */
+    zeroCenter?: number,
+}
+
+/**
  * One layer drawn by a map.
  */
 export type MapLayerSpec = {
     /** Name of the table to draw, as produced by a data source or a compute pass. */
     dataRef: string,
+    /**
+     * Name of the layer, shown as its legend's title. It becomes the layer's id in the map, so two layers of one
+     * map cannot have the same title, and a title cannot be another layer's `dataRef` in that map. Without it, the
+     * layer's id is its `dataRef`. Read by the Autark adapter; the deck.gl adapter ignores it.
+     * @minLength 1
+     */
+    title?: string,
     /** Layer opacity, from 0 to 1. */
     opacity?: number,
+    /**
+     * Color of the layer, as `#rrggbb`. A layer with a color is drawn in it rather than by its `getFnv` value,
+     * unless `isColorMap` is `true`. Raster layers are always colored by value. Read by the Autark adapter; the
+     * deck.gl adapter ignores it.
+     */
+    color?: HexColor,
+    /**
+     * Outline of a polygon layer: its color, as `#rrggbb`, or `false` to draw no outline. Read by the Autark
+     * adapter, which outlines polygon layers only; the deck.gl adapter ignores it.
+     */
+    stroke?: HexColor | false,
+    /**
+     * Width of the lines of a polylines or roads layer, in the map's planar units (about meters). It replaces
+     * the widths a roads layer gives each kind of road. Read by the Autark adapter; the deck.gl adapter ignores it.
+     * @exclusiveMinimum 0
+     */
+    width?: number,
     /** Color the layer by the value read with `getFnv`. */
     isColorMap?: boolean,
     /** Color scheme used when `isColorMap` is set. */
     colorMapInterpolator?: ColorMapInterpolator,
+    /**
+     * Value at the middle of a raster layer's color scale: the scale runs from this value less the farthest value's
+     * distance to it, to this value plus that distance, so a diverging scheme's middle color marks it. Read by the
+     * Autark adapter for raster layers; other layers and the deck.gl adapter ignore it.
+     */
+    colorMapCenter?: number,
+    /**
+     * Run a raster layer's color scale from its highest value to its lowest, so the scheme's first color marks the
+     * highest value. Read by the Autark adapter for raster layers; other layers and the deck.gl adapter ignore it.
+     */
+    colorMapReverse?: boolean,
+    /**
+     * How opaque a raster layer's cells are by value, as autk-map's transfer function: for example
+     * `{ opacityMin: 1, opacityMax: 1 }` draws every cell with a value fully opaque. Read by the Autark adapter for
+     * raster layers; other layers and the deck.gl adapter ignore it.
+     */
+    transferFunction?: RasterTransferFunction,
     /** Legend labels. Read by the deck.gl adapter; the Autark adapter ignores it. */
     colorMapLabels?: string[],
     /** Feature ids drawn as picked. Read by the deck.gl adapter; the Autark adapter ignores it. */
@@ -270,7 +347,7 @@ export interface PlotBase {
     width?: number,
     height?: number,
     margins?: { left: number; right: number; top: number; bottom: number },
-    /** Layer id of a map this plot links its selection to. */
+    /** `dataRef` of the map layer this plot links its selection to. */
     mapRef?: string,
 }
 

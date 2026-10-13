@@ -71,6 +71,11 @@ expect('parallel coordinates with any preset', { plot: { ...plot, mark: 'paralle
 expect('layer selectFields', { map: { layerRefs: [{ dataRef: 't', isPick: true, selectFields: ['id'] }] } }, true);
 expect('scatter selectFields', { plot: { ...plot, mark: 'scatter', events: ['click'], selectFields: ['city', 'id'] } }, true);
 expect('bar selectFields', { plot: { ...plot, mark: 'bar', events: ['brushX'], selectFields: ['id'] } }, true);
+expect('layer title, color, outline and width', { map: { layerRefs: [{ dataRef: 't', title: 'Trees', color: '#1f77b4', stroke: '#D62728', width: 2.5 }] } }, true);
+expect('layer without an outline', { map: { layerRefs: [{ dataRef: 't', stroke: false }] } }, true);
+expect('raster scale centered and reversed', { map: { layerRefs: [{ dataRef: 'r', colorMapInterpolator: 'interpolateRdBu', colorMapCenter: -1.5, colorMapReverse: true }] } }, true);
+expect('raster transfer function', { map: { layerRefs: [{ dataRef: 'r', transferFunction: { mode: 'linear', opacityMin: 0, opacityMax: 1, gamma: 2, zeroCenter: 5 } }] } }, true);
+expect('raster cells opaque', { map: { layerRefs: [{ dataRef: 'r', transferFunction: { opacityMin: 1, opacityMax: 1 } }] } }, true);
 
 // Documents the runtime cannot draw.
 expect('unknown data type', { data: [{ ...osm, type: 'shapefile' }] }, false);
@@ -108,6 +113,36 @@ for (const mark of ['scatter', 'bar']) {
     expect(`${mark} selectFields as a string`, { plot: { ...plot, mark, selectFields: 'id' } }, false);
     expect(`${mark} selectFields empty`, { plot: { ...plot, mark, selectFields: [] } }, false);
     expect(`${mark} selectFields with a number`, { plot: { ...plot, mark, selectFields: ['id', 3] } }, false);
+}
+// The same holds for the layer styling options.
+const layer = (options: Record<string, unknown>) => ({ map: { layerRefs: [{ dataRef: 't', ...options }] } });
+expect('layer title empty', layer({ title: '' }), false);
+expect('layer title as a number', layer({ title: 3 }), false);
+expect('layer color by name', layer({ color: 'red' }), false);
+expect('layer color as short hex', layer({ color: '#f00' }), false);
+expect('layer color without #', layer({ color: '1f77b4' }), false);
+expect('layer stroke true', layer({ stroke: true }), false);
+expect('layer stroke by name', layer({ stroke: 'blue' }), false);
+expect('layer width zero', layer({ width: 0 }), false);
+expect('layer width negative', layer({ width: -2 }), false);
+expect('layer width as a string', layer({ width: '2' }), false);
+expect('colorMapCenter as a string', layer({ colorMapCenter: '0' }), false);
+expect('colorMapReverse as a string', layer({ colorMapReverse: 'yes' }), false);
+expect('transferFunction as a number', layer({ transferFunction: 1 }), false);
+expect('transferFunction with an unknown mode', layer({ transferFunction: { mode: 'log' } }), false);
+expect('transferFunction opacity above 1', layer({ transferFunction: { opacityMin: 1.5 } }), false);
+expect('transferFunction opacity below 0', layer({ transferFunction: { opacityMax: -0.1 } }), false);
+expect('transferFunction gamma zero', layer({ transferFunction: { gamma: 0 } }), false);
+expect('transferFunction zeroCenter as a string', layer({ transferFunction: { zeroCenter: '0' } }), false);
+
+// Each layer styling option is documented in the schema.
+const layerProperties = schema.definitions?.MapLayerSpec?.properties ?? {};
+for (const key of ['title', 'color', 'width', 'stroke', 'colorMapCenter', 'colorMapReverse', 'transferFunction']) {
+    const description = layerProperties[key]?.description;
+    if (typeof description !== 'string' || description.trim() === '') {
+        failures++;
+        console.error(`FAIL MapLayerSpec.${key} has no description in the schema`);
+    }
 }
 
 if (checked === 0) {

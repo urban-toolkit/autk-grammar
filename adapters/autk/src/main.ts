@@ -10,8 +10,8 @@ import { createDataAdapter } from "./adapters/data";
 import { createMapAdapter } from "./adapters/map";
 import { createPlotAdapter } from "./adapters/plot";
 import { createComputeAdapter } from "./adapters/compute";
-import { Targets, MapRegistry, PlotRegistry, PlotMapLinks, GeoJsonCache, ComputeCache, GrammarEventEmitter } from "./types";
-import type { GrammarPlotSelectionEvent } from "./types";
+import { Targets, MapRegistry, MapLayerIds, PlotRegistry, PlotMapLinks, GeoJsonCache, ComputeCache, GrammarEventEmitter } from "./types";
+import type { GrammarMapLayer, GrammarPlotSelectionEvent } from "./types";
 
 export class AutkGrammar {
     private dataAdapter?: DataAdapter;
@@ -22,6 +22,7 @@ export class AutkGrammar {
     private _computeCache: ComputeCache = new Map();
     private _data: Record<string, Promise<FeatureCollection>> = {};
     private _mapRegistry: MapRegistry = new Map();
+    private _mapLayerIds: MapLayerIds = new Map();
     private _maps: AutkMap[] = [];
     private _plotRegistry: PlotRegistry = new Map();
     private _fwdCleanups: Array<() => void> = [];
@@ -32,8 +33,8 @@ export class AutkGrammar {
     constructor(targets?: Targets) {
         const cache: GeoJsonCache = new Map();
         this.dataAdapter = createDataAdapter(targets, cache);
-        this.mapAdapter = createMapAdapter(targets, this._mapRegistry, this._computeCache, this._maps);
-        this.plotAdapter = createPlotAdapter(targets, this._mapRegistry, this._plotRegistry, this._plotMapLinks, cache);
+        this.mapAdapter = createMapAdapter(targets, this._mapRegistry, this._computeCache, this._maps, this._mapLayerIds);
+        this.plotAdapter = createPlotAdapter(targets, this._mapRegistry, this._plotRegistry, this._plotMapLinks, cache, this._mapLayerIds);
         this.computeAdapter = createComputeAdapter(this._computeCache);
     }
 
@@ -65,6 +66,20 @@ export class AutkGrammar {
         return this._maps;
     }
 
+    /**
+     * The layer a map of the last {@link run} draws for a table, found by the table's name (a layer's `dataRef`):
+     * the map that draws it, and the layer's id in that map, which is its `title`, else its `dataRef`.
+     * `undefined` when no map draws the table. When several layers draw it, the last one.
+     *
+     * @example
+     * const layer = grammar.mapLayer('buildings');
+     * layer?.map.updateRenderInfo(layer.layerId, { opacity: 0.5 });
+     */
+    mapLayer(dataRef: string): GrammarMapLayer | undefined {
+        const map = this._mapRegistry.get(dataRef);
+        return map ? { map, layerId: this._mapLayerIds.get(dataRef) ?? dataRef } : undefined;
+    }
+
     async run(spec: UrbanSpec) {
         if(!this.dataAdapter)
             throw new Error('Database adapter not initialized. Please call the constructor first.');
@@ -79,6 +94,7 @@ export class AutkGrammar {
             throw new Error('Compute adapter not initialized. Please call the constructor first.');
 
         this._mapRegistry.clear();
+        this._mapLayerIds.clear();
         this._maps.length = 0;
         this._plotRegistry.clear();
         this._plotMapLinks.clear();
@@ -119,24 +135,26 @@ export class AutkGrammar {
     }
 
     /**
-     * Highlights features on the map layer identified by `layerId`.
+     * Highlights features on the map layer that draws the table `dataRef` (see {@link mapLayer}).
      * If that layer is linked to a plot via `mapRef`, the plot selection is updated too.
      */
-    highlightOnMap(layerId: string, featureIds: number[]): void {
-        this._mapRegistry.get(layerId)?.setHighlightedIds(layerId, featureIds);
+    highlightOnMap(dataRef: string, featureIds: number[]): void {
+        const layer = this.mapLayer(dataRef);
+        layer?.map.setHighlightedIds(layer.layerId, featureIds);
         for (const [plotId, mapRef] of this._plotMapLinks) {
-            if (mapRef === layerId) this._plotRegistry.get(plotId)?.setSelection(featureIds);
+            if (mapRef === dataRef) this._plotRegistry.get(plotId)?.setSelection(featureIds);
         }
     }
 
     /**
-     * Clears highlighted features on the map layer identified by `layerId`.
+     * Clears highlighted features on the map layer that draws the table `dataRef` (see {@link mapLayer}).
      * If that layer is linked to a plot via `mapRef`, the plot selection is cleared too.
      */
-    clearHighlightOnMap(layerId: string): void {
-        this._mapRegistry.get(layerId)?.clearHighlightedIds(layerId);
+    clearHighlightOnMap(dataRef: string): void {
+        const layer = this.mapLayer(dataRef);
+        layer?.map.clearHighlightedIds(layer.layerId);
         for (const [plotId, mapRef] of this._plotMapLinks) {
-            if (mapRef === layerId) this._plotRegistry.get(plotId)?.setSelection([]);
+            if (mapRef === dataRef) this._plotRegistry.get(plotId)?.setSelection([]);
         }
     }
 
@@ -147,7 +165,8 @@ export class AutkGrammar {
     clearHighlightOnPlot(plotId: string): void {
         this._plotRegistry.get(plotId)?.setSelection([]);
         const mapRef = this._plotMapLinks.get(plotId);
-        if (mapRef) this._mapRegistry.get(mapRef)?.clearHighlightedIds(mapRef);
+        const layer = mapRef ? this.mapLayer(mapRef) : undefined;
+        layer?.map.clearHighlightedIds(layer.layerId);
     }
 
     /**
@@ -157,7 +176,8 @@ export class AutkGrammar {
     setPlotSelection(plotId: string, featureIds: number[]): void {
         this._plotRegistry.get(plotId)?.setSelection(featureIds);
         const mapRef = this._plotMapLinks.get(plotId);
-        if (mapRef) this._mapRegistry.get(mapRef)?.setHighlightedIds(mapRef, featureIds);
+        const layer = mapRef ? this.mapLayer(mapRef) : undefined;
+        layer?.map.setHighlightedIds(layer.layerId, featureIds);
     }
 
     private _rewireInteractions(): void {
