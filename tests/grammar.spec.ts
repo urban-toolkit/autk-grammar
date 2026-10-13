@@ -198,7 +198,20 @@ test('draws two maps from one spec', async ({ page }) => {
 });
 
 // Layer options: small inline tables in Midtown Manhattan. `zones` and `blocks` are four squares
-// each, `paths` three east-west lines.
+// each, `paths` three east-west lines. autk-db crops every table to the first polygon table it
+// loads, so each spec loads `area`, one square around them all, first.
+const area: DataSourceSpec = {
+    type: 'geojson',
+    outputTableName: 'area',
+    geojsonObject: {
+        type: 'FeatureCollection',
+        features: [{
+            type: 'Feature',
+            properties: {},
+            geometry: { type: 'Polygon', coordinates: [[[-74.0, 40.735], [-73.96, 40.735], [-73.96, 40.775], [-74.0, 40.775], [-74.0, 40.735]]] },
+        }],
+    },
+};
 function squares(name: string, y: number): DataSourceSpec {
     const square = (i: number) => {
         const x = -73.99 + i * 0.004;
@@ -238,7 +251,7 @@ async function layerById(page: Page, canvasId = 'map0'): Promise<Record<string, 
 
 test('names a layer by its title, and the legend and the lookup by data name follow it', async ({ page }) => {
     await runSpec(page, {
-        data: [zones, paths],
+        data: [area, zones, paths],
         map: { layerRefs: [{ dataRef: 'zones', title: 'Zone value', getFnv: 'v' }, { dataRef: 'paths' }] },
     });
     // The title is the autk-map layer id; a layer without one keeps its dataRef.
@@ -257,17 +270,17 @@ test('names a layer by its title, and the legend and the lookup by data name fol
 
 test('refuses two layers with one id in a map, and takes one title in two maps', async ({ page }) => {
     await expect(runSpec(page, {
-        data: [zones, paths],
+        data: [area, zones, paths],
         map: { layerRefs: [{ dataRef: 'zones', title: 'Same' }, { dataRef: 'paths', title: 'Same' }] },
     })).rejects.toThrow('Map 0 draws two layers with the id "Same"');
     // A title is a layer id, so it cannot be another layer's dataRef in the same map.
     await expect(runSpec(page, {
-        data: [zones, paths],
+        data: [area, zones, paths],
         map: { layerRefs: [{ dataRef: 'zones', title: 'paths' }, { dataRef: 'paths' }] },
     })).rejects.toThrow('Map 0 draws two layers with the id "paths"');
 
     await runSpec(page, {
-        data: [zones, paths],
+        data: [area, zones, paths],
         map: [{ layerRefs: [{ dataRef: 'zones', title: 'Same' }] }, { layerRefs: [{ dataRef: 'paths', title: 'Same' }] }],
     });
     expect((await mapLayers(page, 'map0')).map((layer) => layer.id)).toEqual(['Same']);
@@ -276,7 +289,7 @@ test('refuses two layers with one id in a map, and takes one title in two maps',
 
 test('highlights a titled layer, and links it to a plot, by its data name', async ({ page }) => {
     await runSpec(page, {
-        data: [zones],
+        data: [area, zones],
         map: { layerRefs: [{ dataRef: 'zones', title: 'Zones', isPick: true }] },
         plot: { dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], events: ['click'], mapRef: 'zones' },
     });
@@ -304,7 +317,7 @@ test('highlights a titled layer, and links it to a plot, by its data name', asyn
 
 test('draws a layer in its color, line width and outline', async ({ page }) => {
     await runSpec(page, {
-        data: [zones, blocks, paths],
+        data: [area, zones, blocks, paths],
         map: {
             layerRefs: [
                 { dataRef: 'zones', color: '#1f77b4', stroke: '#d62728', getFnv: 'v' },
