@@ -3,6 +3,7 @@ import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import { ColorMap } from '@urban-toolkit/autk-core';
 import type { ColorMapInterpolator, ColorRGB } from '@urban-toolkit/autk-core';
 import type { AutkMap } from '@urban-toolkit/autk-map';
+import type { Geometry } from 'geojson';
 
 export type TableSummary = { features: number; properties: string[] };
 export type RunSummary = { tables: Record<string, TableSummary>; plotSvgs: number };
@@ -41,6 +42,7 @@ declare global {
         runSpec: (spec: UrbanSpec) => Promise<RunSummary>;
         runExample: (name: string) => Promise<RunSummary>;
         valueAt: (table: string, index: number, path: string) => Promise<unknown>;
+        featureExtents: (table: string) => Promise<number[][]>;
         readMap: (canvasId: string) => Promise<string>;
         mapLayers: (canvasId: string) => LayerState[];
         rasterCells: (canvasId: string, layerId: string) => { values: number[]; rgba: number[] };
@@ -96,6 +98,31 @@ window.valueAt = async (table: string, index: number, path: string) => {
         (value, key) => (value == null ? undefined : (value as Record<string, unknown>)[key]),
         collection.features[index]?.properties,
     );
+};
+
+/** Each feature's extent as [minX, minY, maxX, maxY], in workspace coordinates (World Mercator meters). */
+window.featureExtents = async (table: string) => {
+    const collection = await window.grammar.data[table];
+    return collection.features.map((feature) => {
+        const extent = [Infinity, Infinity, -Infinity, -Infinity];
+        const visit = (value: unknown): void => {
+            if (!Array.isArray(value)) return;
+            if (typeof value[0] !== 'number') {
+                value.forEach(visit);
+                return;
+            }
+            extent[0] = Math.min(extent[0], value[0]);
+            extent[1] = Math.min(extent[1], value[1]);
+            extent[2] = Math.max(extent[2], value[0]);
+            extent[3] = Math.max(extent[3], value[1]);
+        };
+        const walk = (geometry: Geometry | null): void => {
+            if (geometry?.type === 'GeometryCollection') geometry.geometries.forEach(walk);
+            else if (geometry) visit(geometry.coordinates);
+        };
+        walk(feature.geometry);
+        return extent;
+    });
 };
 
 /**

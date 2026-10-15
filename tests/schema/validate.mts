@@ -76,6 +76,10 @@ expect('layer without an outline', { map: { layerRefs: [{ dataRef: 't', stroke: 
 expect('raster scale centered and reversed', { map: { layerRefs: [{ dataRef: 'r', colorMapInterpolator: 'interpolateRdBu', colorMapCenter: -1.5, colorMapReverse: true }] } }, true);
 expect('raster transfer function', { map: { layerRefs: [{ dataRef: 'r', transferFunction: { mode: 'linear', opacityMin: 0, opacityMax: 1, gamma: 2, zeroCenter: 5 } }] } }, true);
 expect('raster cells opaque', { map: { layerRefs: [{ dataRef: 'r', transferFunction: { opacityMin: 1, opacityMax: 1 } }] } }, true);
+const box = [-87.66415, 41.858, -87.61232, 41.89966];
+const osmIn = (queryArea: unknown) => ({ data: [{ ...osm, queryArea }] });
+expect('osm with a bbox', osmIn({ bbox: box }), true);
+expect('osm with a bbox and a pbf', { data: [{ ...osm, pbfFileUrl: 'downtown.osm.pbf', queryArea: { bbox: box } }] }, true);
 
 // Documents the runtime cannot draw.
 expect('unknown data type', { data: [{ ...osm, type: 'shapefile' }] }, false);
@@ -134,6 +138,20 @@ expect('transferFunction opacity above 1', layer({ transferFunction: { opacityMi
 expect('transferFunction opacity below 0', layer({ transferFunction: { opacityMax: -0.1 } }), false);
 expect('transferFunction gamma zero', layer({ transferFunction: { gamma: 0 } }), false);
 expect('transferFunction zeroCenter as a string', layer({ transferFunction: { zeroCenter: '0' } }), false);
+// An OSM queryArea is a bbox [west, south, east, north] in degrees, or geocodeArea with areas, never both.
+// West < east and south < north are checked when the spec runs (tests/grammar.spec.ts).
+expect('osm bbox with three numbers', osmIn({ bbox: box.slice(0, 3) }), false);
+expect('osm bbox with five numbers', osmIn({ bbox: [...box, 0] }), false);
+expect('osm bbox with a string', osmIn({ bbox: [...box.slice(0, 3), '41.9'] }), false);
+expect('osm bbox as an object', osmIn({ bbox: { west: box[0], south: box[1], east: box[2], north: box[3] } }), false);
+expect('osm bbox west below -180', osmIn({ bbox: [-180.5, box[1], box[2], box[3]] }), false);
+expect('osm bbox east above 180', osmIn({ bbox: [box[0], box[1], 180.5, box[3]] }), false);
+expect('osm bbox south below -90', osmIn({ bbox: [box[0], -90.5, box[2], box[3]] }), false);
+expect('osm bbox north above 90', osmIn({ bbox: [box[0], box[1], box[2], 90.5] }), false);
+expect('osm bbox with geocodeArea and areas', osmIn({ bbox: box, geocodeArea: 'Chicago', areas: ['Loop'] }), false);
+expect('osm bbox with geocodeArea', osmIn({ bbox: box, geocodeArea: 'Chicago' }), false);
+expect('osm bbox with areas', osmIn({ bbox: box, areas: ['Loop'] }), false);
+expect('osm queryArea without bbox or geocodeArea', osmIn({}), false);
 
 // Each layer styling option is documented in the schema.
 const layerProperties = schema.definitions?.MapLayerSpec?.properties ?? {};
@@ -143,6 +161,12 @@ for (const key of ['title', 'color', 'width', 'stroke', 'colorMapCenter', 'color
         failures++;
         console.error(`FAIL MapLayerSpec.${key} has no description in the schema`);
     }
+}
+// So is the OSM bbox.
+const bboxDescription = schema.definitions?.OsmBoundingBoxArea?.properties?.bbox?.description;
+if (typeof bboxDescription !== 'string' || bboxDescription.trim() === '') {
+    failures++;
+    console.error('FAIL OsmBoundingBoxArea.bbox has no description in the schema');
 }
 
 if (checked === 0) {

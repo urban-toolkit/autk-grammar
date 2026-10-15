@@ -80,6 +80,68 @@ test('builds OSM layer tables from a PBF file', async ({ page }) => {
     await expectDrawn(page, 'map0');
 });
 
+// A box around Wall Street, inside the gallery's lower Manhattan extract: [west, south, east, north] in degrees.
+const BOX = [-74.0125, 40.705, -74.008, 40.7085];
+
+/** Reads the lower Manhattan extract for `queryArea` into the tables box_surface, box_roads and box_buildings. */
+function boxSpec(queryArea: unknown): UrbanSpec {
+    const source = {
+        type: 'osm',
+        outputTableName: 'box',
+        pbfFileUrl: '/data/lower_mnt.osm.pbf',
+        queryArea,
+        autoLoadLayers: { layers: ['surface', 'roads', 'buildings'] },
+    };
+    return { data: [source as DataSourceSpec] };
+}
+
+/** A point given in degrees, in autk-db's workspace coordinates: World Mercator (EPSG:3395) meters, on the WGS84 ellipsoid. */
+function worldMercator(lon: number, lat: number): [number, number] {
+    const a = 6378137;
+    const e = 0.0818191908426215;
+    const phi = (lat * Math.PI) / 180;
+    const s = e * Math.sin(phi);
+    return [(a * lon * Math.PI) / 180, a * Math.log(Math.tan(Math.PI / 4 + phi / 2) * ((1 - s) / (1 + s)) ** (e / 2))];
+}
+
+test('loads the OSM layers inside a bbox from a PBF file', async ({ page }) => {
+    const { tables } = await runSpec(page, {
+        ...boxSpec({ bbox: BOX }),
+        map: { layerRefs: [{ dataRef: 'box_surface' }, { dataRef: 'box_roads' }, { dataRef: 'box_buildings' }] },
+    });
+    for (const layer of ['surface', 'roads', 'buildings']) {
+        expect(tables[`box_${layer}`]?.features, `box_${layer}`).toBeGreaterThan(0);
+    }
+
+    // autk-db cuts the surface and the roads to the box, and keeps or drops each building whole: a building
+    // may reach past the box, but not lie apart from it. 1 m covers autk-db's rounding.
+    const [west, south] = worldMercator(BOX[0], BOX[1]);
+    const [east, north] = worldMercator(BOX[2], BOX[3]);
+    const inside = ([x0, y0, x1, y1]: number[]) => x0 >= west - 1 && y0 >= south - 1 && x1 <= east + 1 && y1 <= north + 1;
+    const touches = ([x0, y0, x1, y1]: number[]) => x1 >= west - 1 && y1 >= south - 1 && x0 <= east + 1 && y0 <= north + 1;
+    const extents = (table: string) => page.evaluate((name) => window.featureExtents(name), table);
+    expect((await extents('box_surface')).filter((extent) => !inside(extent)), 'surface outside the box').toEqual([]);
+    expect((await extents('box_roads')).filter((extent) => !inside(extent)), 'roads outside the box').toEqual([]);
+    expect((await extents('box_buildings')).filter((extent) => !touches(extent)), 'buildings apart from the box').toEqual([]);
+    await expectDrawn(page, 'map0');
+});
+
+test('refuses a bbox that is not [west, south, east, north] in degrees, and a bbox with named areas', async ({ page }) => {
+    const refused = (queryArea: unknown, message: string) =>
+        expect(runSpec(page, boxSpec(queryArea))).rejects.toThrow(`OSM source "box": ${message}`);
+    const shape = 'queryArea.bbox must hold four numbers, [west, south, east, north] in degrees.';
+    await refused({ bbox: BOX.slice(0, 3) }, shape);
+    await refused({ bbox: [...BOX, 0] }, shape);
+    await refused({ bbox: [...BOX.slice(0, 3), '40.7085'] }, shape);
+    await refused({ bbox: [-181, 40.705, -74.008, 40.7085] }, 'queryArea.bbox west and east must be longitudes from -180 to 180.');
+    await refused({ bbox: [-74.0125, 40.705, -74.008, 90.5] }, 'queryArea.bbox south and north must be latitudes from -90 to 90.');
+    await refused({ bbox: [-74.008, 40.705, -74.0125, 40.7085] }, 'queryArea.bbox west (-74.008) must be less than east (-74.0125)');
+    await refused({ bbox: [-74.0125, 40.705, -74.008, 40.705] }, 'queryArea.bbox south (40.705) must be less than north (40.705).');
+    const both = 'queryArea takes either bbox or geocodeArea with areas, not both.';
+    await refused({ bbox: BOX, geocodeArea: 'New York', areas: ['Financial District'] }, both);
+    await refused({ bbox: BOX, areas: ['Financial District'] }, both);
+});
+
 test('aggregates a spatial join', async ({ page }) => {
     await run(page, 'spatial-join');
     const counts = await page.evaluate(async () => {
