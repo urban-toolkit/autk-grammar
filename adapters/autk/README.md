@@ -29,6 +29,30 @@ const grammar = new AutkGrammar({ map: 'map', plot: 'plot' }); // ids of the map
 await grammar.run(spec);
 ```
 
+## OpenStreetMap areas
+
+An `osm` source's `queryArea` names the area to load in one of two ways, never both:
+
+| Area | Effect |
+|---|---|
+| `{ geocodeArea, areas }` | The boundaries named in `areas` inside the region `geocodeArea`, for example `{ geocodeArea: 'Chicago', areas: ['Loop'] }`. |
+| `{ bbox }` | A box, `[west, south, east, north]` in degrees (WGS84). The box is the whole area: no boundary is read. Each layer is cut to the box, except buildings, which are kept or dropped whole. |
+
+A box needs west less than east and south less than north, and cannot cross the antimeridian. The run refuses any other box, and a `queryArea` with both, with a message that names the source.
+
+```ts
+await grammar.run({
+  data: [{
+    type: 'osm',
+    outputTableName: 'downtown',
+    pbfFileUrl: 'chicago_downtown.osm.pbf',
+    queryArea: { bbox: [-87.66415, 41.858, -87.61232, 41.89966] },
+    autoLoadLayers: { layers: ['roads', 'buildings'] },
+  }],
+  map: { layerRefs: [{ dataRef: 'downtown_roads' }, { dataRef: 'downtown_buildings' }] },
+});
+```
+
 ## Maps
 
 Each map draws on demand: one frame once its layers are loaded, then one each time it changes. `grammar.maps` holds the `AutkMap` of each `map` entry of the last run, in order. Between frames a map canvas can read back empty, so to read a map's pixels (for example with `canvas.toDataURL()`), call its `requestRender()` and read in a `requestAnimationFrame` callback registered after that call:

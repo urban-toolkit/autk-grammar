@@ -59,7 +59,49 @@ export interface HeatmapSourceSpec extends TableSourceBase {
 }
 
 /**
- * Loads OpenStreetMap data for a named area, from Overpass or from a PBF extract.
+ * A longitude in degrees (WGS84).
+ * @minimum -180
+ * @maximum 180
+ */
+type Longitude = number;
+
+/**
+ * A latitude in degrees (WGS84).
+ * @minimum -90
+ * @maximum 90
+ */
+type Latitude = number;
+
+/**
+ * An area named by OpenStreetMap boundaries: sub-areas inside a geocoded region.
+ */
+export interface OsmNamedArea {
+    /** Region to geocode, for example a city name. */
+    geocodeArea: string;
+    /** Sub-areas inside the region, for example neighborhood names. */
+    areas: string[];
+    /** Not with `geocodeArea` and `areas`. */
+    bbox?: undefined;
+}
+
+/**
+ * An area given as a box instead of boundary names. The box is the whole area: no boundary is read.
+ */
+export interface OsmBoundingBoxArea {
+    /**
+     * The box as `[west, south, east, north]` in degrees (WGS84), with west less than east and south less than
+     * north. A box across the antimeridian is not supported. The Autark adapter cuts each layer to the box, but
+     * keeps or drops each building whole.
+     */
+    bbox: [west: Longitude, south: Latitude, east: Longitude, north: Latitude];
+    /** Not with `bbox`. */
+    geocodeArea?: undefined;
+    /** Not with `bbox`. */
+    areas?: undefined;
+}
+
+/**
+ * Loads OpenStreetMap data for a named area or a box, from Overpass or from a PBF extract.
  */
 export interface OsmDataSourceSpec extends TableSourceBase {
     type: 'osm';
@@ -71,13 +113,8 @@ export interface OsmDataSourceSpec extends TableSourceBase {
         dropOsmTable?: boolean;
         layers: Array<LayerType>;
     };
-    /** Area to load: the named sub-areas inside a geocoded region. */
-    queryArea: {
-        /** Region to geocode, for example a city name. */
-        geocodeArea: string;
-        /** Sub-areas inside the region, for example neighborhood names. */
-        areas: string[];
-    };
+    /** Area to load: sub-areas inside a geocoded region (`geocodeArea` with `areas`), or a box (`bbox`), not both. */
+    queryArea: OsmNamedArea | OsmBoundingBoxArea;
 }
 
 /**

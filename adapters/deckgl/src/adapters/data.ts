@@ -28,7 +28,12 @@ const LAYER_TYPE_TO_OSM_TAGS: Partial<Record<LayerType, [string, string][]>> = {
 };
 
 function buildOverpassQuery(spec: OsmDataSourceSpec): string {
-    const area = spec.queryArea.geocodeArea;
+    const { queryArea } = spec;
+    // Overpass filters by a box as (south, west, north, east), or by the geocoded region's area.
+    const scope = queryArea.bbox === undefined
+        ? '(area.searchArea)'
+        : `(${queryArea.bbox[1]},${queryArea.bbox[0]},${queryArea.bbox[3]},${queryArea.bbox[2]})`;
+    const searchArea = queryArea.bbox === undefined ? `area[name="${queryArea.geocodeArea}"]->.searchArea;\n` : '';
     const layers = spec.autoLoadLayers?.layers ?? [];
 
     const filters: string[] = [];
@@ -38,18 +43,17 @@ function buildOverpassQuery(spec: OsmDataSourceSpec): string {
         if (!tags) continue;
         for (const [key, val] of tags) {
             const valFilter = val === '*' ? '' : `="${val}"`;
-            filters.push(`  way["${key}"${valFilter}](area.searchArea);`);
-            filters.push(`  relation["${key}"${valFilter}](area.searchArea);`);
+            filters.push(`  way["${key}"${valFilter}]${scope};`);
+            filters.push(`  relation["${key}"${valFilter}]${scope};`);
         }
     }
 
     if (filters.length === 0) {
-        filters.push('  nwr(area.searchArea);');
+        filters.push(`  nwr${scope};`);
     }
 
     return `[out:json][timeout:90];
-area[name="${area}"]->.searchArea;
-(
+${searchArea}(
 ${filters.join('\n')}
 );
 out geom;`;
