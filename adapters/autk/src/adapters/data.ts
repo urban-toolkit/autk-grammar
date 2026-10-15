@@ -5,12 +5,39 @@ import type { FeatureCollection } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
 
 /**
+ * The query area autk-db reads: `{ bbox }` or `{ geocodeArea, areas }`. autk-db takes any area with a
+ * `bbox` key as a box, so a box that also names areas, or that is not [west, south, east, north] in
+ * degrees with west less than east and south less than north, is refused here.
+ */
+function queryAreaOf(spec: OsmDataSourceSpec): OsmDataSourceSpec['queryArea'] {
+    const { queryArea } = spec;
+    if (queryArea.bbox === undefined) return { geocodeArea: queryArea.geocodeArea, areas: queryArea.areas };
+
+    const refuse = (message: string) => new Error(`OSM source "${spec.outputTableName}": ${message}`);
+    if (queryArea.geocodeArea !== undefined || queryArea.areas !== undefined)
+        throw refuse('queryArea takes either bbox or geocodeArea with areas, not both.');
+    const box: unknown = queryArea.bbox;
+    if (!Array.isArray(box) || box.length !== 4 || !box.every((value) => typeof value === 'number' && Number.isFinite(value)))
+        throw refuse('queryArea.bbox must hold four numbers, [west, south, east, north] in degrees.');
+    const [west, south, east, north] = queryArea.bbox;
+    if (Math.abs(west) > 180 || Math.abs(east) > 180)
+        throw refuse('queryArea.bbox west and east must be longitudes from -180 to 180.');
+    if (Math.abs(south) > 90 || Math.abs(north) > 90)
+        throw refuse('queryArea.bbox south and north must be latitudes from -90 to 90.');
+    if (west >= east)
+        throw refuse(`queryArea.bbox west (${west}) must be less than east (${east}); a box across the antimeridian is not supported.`);
+    if (south >= north)
+        throw refuse(`queryArea.bbox south (${south}) must be less than north (${north}).`);
+    return { bbox: [west, south, east, north] };
+}
+
+/**
  * Maps an OSM source onto autk-db's parameters, which always expect
  * `autoLoadLayers` and no longer take `dropOsmTable`.
  */
 function toLoadOsmParams(spec: OsmDataSourceSpec) {
     const { autoLoadLayers, ...rest } = spec;
-    return { ...rest, autoLoadLayers: { layers: autoLoadLayers?.layers ?? [] } };
+    return { ...rest, queryArea: queryAreaOf(spec), autoLoadLayers: { layers: autoLoadLayers?.layers ?? [] } };
 }
 
 export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): DataAdapter {

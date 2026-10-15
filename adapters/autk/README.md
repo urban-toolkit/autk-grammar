@@ -12,7 +12,7 @@ A declarative grammar for urban visual analytics, running on [Autark](https://au
 npm install @urban-toolkit/autk-grammar
 ```
 
-It runs on Autark 4.1: `@urban-toolkit/autk-core`, `autk-db`, `autk-map`, `autk-plot` and `autk-compute` 4.1 or a later 4.x, installed with it.
+It runs on Autark 4.1.1: `@urban-toolkit/autk-core`, `autk-db`, `autk-map`, `autk-plot` and `autk-compute` 4.1.1 or a later 4.x, installed with it.
 
 ## Usage
 
@@ -27,6 +27,30 @@ const spec: UrbanSpec = {
 
 const grammar = new AutkGrammar({ map: 'map', plot: 'plot' }); // ids of the map canvas and plot container
 await grammar.run(spec);
+```
+
+## OpenStreetMap areas
+
+An `osm` source's `queryArea` names the area to load in one of two ways, never both:
+
+| Area | Effect |
+|---|---|
+| `{ geocodeArea, areas }` | The boundaries named in `areas` inside the region `geocodeArea`, for example `{ geocodeArea: 'Chicago', areas: ['Loop'] }`. |
+| `{ bbox }` | A box, `[west, south, east, north]` in degrees (WGS84). The box is the whole area: no boundary is read. Each layer is cut to the box, except buildings, which are kept or dropped whole. |
+
+A box needs west less than east and south less than north, and cannot cross the antimeridian. The run refuses any other box, and a `queryArea` with both, with a message that names the source.
+
+```ts
+await grammar.run({
+  data: [{
+    type: 'osm',
+    outputTableName: 'downtown',
+    pbfFileUrl: 'chicago_downtown.osm.pbf',
+    queryArea: { bbox: [-87.66415, 41.858, -87.61232, 41.89966] },
+    autoLoadLayers: { layers: ['roads', 'buildings'] },
+  }],
+  map: { layerRefs: [{ dataRef: 'downtown_roads' }, { dataRef: 'downtown_buildings' }] },
+});
 ```
 
 ## Maps
