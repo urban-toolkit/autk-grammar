@@ -12,7 +12,7 @@ A declarative grammar for urban visual analytics, running on [Autark](https://au
 npm install @urban-toolkit/autk-grammar
 ```
 
-It runs on Autark 4.1: `@urban-toolkit/autk-core`, `autk-db`, `autk-map`, `autk-plot` and `autk-compute` 4.1 or a later 4.x, installed with it.
+It runs on Autark 4.1.1: `@urban-toolkit/autk-core`, `autk-db`, `autk-map`, `autk-plot` and `autk-compute` 4.1.1 or a later 4.x, installed with it.
 
 ## Usage
 
