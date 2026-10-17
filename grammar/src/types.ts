@@ -273,6 +273,8 @@ export type RasterTransferFunction = {
 
 /**
  * One layer drawn by a map.
+ * @if { "required": ["colorMapRange"] }
+ * @then { "not": { "required": ["colorMapDomain"] } }
  */
 export type MapLayerSpec = {
     /** Name of the table to draw, as produced by a data source or a compute pass. */
@@ -308,14 +310,26 @@ export type MapLayerSpec = {
     /** Color scheme used when `isColorMap` is set. */
     colorMapInterpolator?: ColorMapInterpolator,
     /**
-     * Value at the middle of a raster layer's color scale: the scale runs from this value less the farthest value's
-     * distance to it, to this value plus that distance, so a diverging scheme's middle color marks it. Read by the
-     * Autark adapter for raster layers; other layers and the deck.gl adapter ignore it.
+     * Ends of the layer's color scale, as `[low, high]` with low less than high. The layer is colored over this
+     * range instead of its own lowest and highest values, so layers that set the same range color the same value
+     * alike, in one map or in maps side by side. On a raster layer, `colorMapCenter` and `colorMapReverse` apply
+     * within it, and a `transferFunction` still sets opacity from the layer's own values. A categorical scheme
+     * ignores it, and it cannot be set with `colorMapDomain`. Read by the Autark adapter for raster and vector
+     * layers; the deck.gl adapter ignores it.
+     * @uniqueItems true
+     */
+    colorMapRange?: [low: number, high: number],
+    /**
+     * Value at the middle of a raster layer's color scale, so a diverging scheme's middle color marks it. With
+     * `colorMapRange`, the scale runs from the range's low through this value to its high (a sequential scheme keeps
+     * only the ends); without it, from this value less the farthest value's distance to it, to this value plus that
+     * distance. Read by the Autark adapter for raster layers; other layers and the deck.gl adapter ignore it.
      */
     colorMapCenter?: number,
     /**
      * Run a raster layer's color scale from its highest value to its lowest, so the scheme's first color marks the
-     * highest value. Read by the Autark adapter for raster layers; other layers and the deck.gl adapter ignore it.
+     * highest value; with `colorMapRange`, from the range's high to its low. Read by the Autark adapter for raster
+     * layers; other layers and the deck.gl adapter ignore it.
      */
     colorMapReverse?: boolean,
     /**
@@ -345,7 +359,7 @@ export type MapLayerSpec = {
     getFnv?: string,
     /** `categorical` reads the value as a string for discrete palettes; `quantitative` reads it as a number for continuous scales. Read by the deck.gl adapter; the Autark adapter ignores it. */
     getFnvType?: 'categorical' | 'quantitative',
-    /** Allowed category values; anything else is drawn as the catch-all category. Only used when `getFnvType` is `categorical`. */
+    /** Allowed category values; anything else is drawn as the catch-all category. Only used when `getFnvType` is `categorical`. Not with `colorMapRange`. */
     colorMapDomain?: string[],
     catchAllCategory?: string,
     /** Value used for features where `getFnv` resolves to nothing. Read by the deck.gl adapter; the Autark adapter ignores it. */

@@ -52,7 +52,8 @@ function styleRenderInfo(layerRef: MapLayerSpec, layerId: string): Partial<Layer
 function colorsByValue(layerRef: MapLayerSpec, type: LayerType): boolean {
     if (layerRef.isColorMap != null) return layerRef.isColorMap;
     if (type === 'raster')
-        return layerRef.colorMapInterpolator != null || layerRef.colorMapCenter != null || layerRef.colorMapReverse === true;
+        return layerRef.colorMapInterpolator != null || layerRef.colorMapRange != null || layerRef.colorMapCenter != null
+            || layerRef.colorMapReverse === true;
     if (layerRef.color != null) return false;
     return layerRef.colorMapInterpolator != null || layerRef.getFnv != null;
 }
@@ -67,13 +68,21 @@ function bandValues(collection: { features?: { properties?: unknown }[] }, band:
 }
 
 /**
- * The domain of a raster's centered or reversed color scale, or `undefined` when the layer asks for neither, the
- * scheme is categorical, or the band has no value. Centered on `center`, it runs from the center less the farthest
- * value's distance to it, to the center plus that distance; when every value is the center, it is not centered.
- * Otherwise it is the domain autk-map resolves from `config`. `reverse` turns it around.
+ * The domain of a raster's color scale when the layer sets a range, a center or reverse, or `undefined` when it
+ * sets none of them, the scheme is categorical, or, without a range, the band has no value. A range is the domain:
+ * `[low, high]`, or `[low, center, high]` with a center. Without one, a scale centered on `center` runs from the
+ * center less the farthest value's distance to it, to the center plus that distance; when every value is the
+ * center, it is not centered. Otherwise it is the domain autk-map resolves from `config`. `reverse` turns it around.
  */
-export function rasterScaleDomain(values: Float32Array, config: ColorMapConfig, center?: number, reverse?: boolean): number[] | undefined {
+export function rasterScaleDomain(
+    values: Float32Array | null, config: ColorMapConfig, center?: number, reverse?: boolean, range?: [number, number],
+): number[] | undefined {
     if (ColorMap.isCategorical(config.interpolator)) return undefined;
+    if (range != null) {
+        const domain = center != null ? [range[0], center, range[1]] : [range[0], range[1]];
+        return reverse === true ? domain.reverse() : domain;
+    }
+    if (!values) return undefined;
     let reach = 0;
     let finite = 0;
     for (let i = 0; i < values.length; i++) {
@@ -88,6 +97,38 @@ export function rasterScaleDomain(values: Float32Array, config: ColorMapConfig, 
         ? [center - reach, center, center + reach]
         : ColorMap.resolveDomainFromData(values, config) as number[];
     return reverse === true ? [...domain].reverse() : domain;
+}
+
+/**
+ * The domain of a vector layer's color scale: its range, unless the scheme is categorical. autk-map colors a vector
+ * layer on the GPU from its domain's first value to its last, which must be the higher, so the domain is neither
+ * centered nor reversed.
+ */
+function vectorScaleDomain(config: ColorMapConfig, range?: [number, number]): number[] | undefined {
+    if (range == null || ColorMap.isCategorical(config.interpolator)) return undefined;
+    return [range[0], range[1]];
+}
+
+/**
+ * Refuses a `colorMapRange` that is not two numbers with low less than high, one set with `colorMapDomain`, and
+ * one whose layer's `colorMapCenter` lies outside it. The schema refuses the same shapes and the pairing with
+ * `colorMapDomain`, but JSON Schema cannot compare two values: a low above its high and a center outside the range
+ * are refused only here.
+ */
+function checkColorMapRange(layerRef: MapLayerSpec): void {
+    const range: unknown = layerRef.colorMapRange;
+    if (range === undefined) return;
+    const refuse = (message: string) => new Error(`Layer "${layerIdOf(layerRef)}": ${message}`);
+    if (!Array.isArray(range) || range.length !== 2 || !range.every((value) => typeof value === 'number' && Number.isFinite(value)))
+        throw refuse('colorMapRange must hold two numbers, [low, high].');
+    const [low, high] = range as [number, number];
+    if (low >= high)
+        throw refuse(`colorMapRange low (${low}) must be less than high (${high}).`);
+    if (layerRef.colorMapDomain !== undefined)
+        throw refuse('set colorMapRange or colorMapDomain, not both.');
+    const center = layerRef.colorMapCenter;
+    if (center != null && (center < low || center > high))
+        throw refuse(`colorMapCenter (${center}) must lie within colorMapRange [${low}, ${high}].`);
 }
 
 function buildDomainSpec(
@@ -220,9 +261,11 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
             }
 
             // The scheme and its domain go through updateColorMap, which colors a raster's
-            // cells again and gives the legend its labels.
-            const rasterScale = type === 'raster' && (layerRef.colorMapCenter != null || layerRef.colorMapReverse === true);
-            if(layerRef.colorMapInterpolator || rasterScale) {
+            // cells again and gives the legend its labels. A vector layer keeps the domain
+            // in its config, where the updateThematic below reads it.
+            const range = layerRef.colorMapRange;
+            const rasterScale = type === 'raster' && (range != null || layerRef.colorMapCenter != null || layerRef.colorMapReverse === true);
+            if(layerRef.colorMapInterpolator || rasterScale || range) {
                 const colormapConfig: ColorMapConfig = {
                     // urban-grammar ColorMapInterpolator values are string-compatible
                     // with autk-core ColorMapInterpolator at runtime
@@ -231,10 +274,11 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
                         ?? ColorMapInterpolator.SEQ_REDS,
                     domainSpec: buildDomainSpec(layerRef.normalization, effectiveDomain),
                 };
-                const values = rasterScale ? bandValues(data, band) : null;
-                const domain = values
-                    ? rasterScaleDomain(values, colormapConfig, layerRef.colorMapCenter, layerRef.colorMapReverse)
-                    : undefined;
+                let domain: number[] | undefined;
+                if(rasterScale)
+                    domain = rasterScaleDomain(bandValues(data, band), colormapConfig, layerRef.colorMapCenter, layerRef.colorMapReverse, range);
+                else if(type !== 'raster')
+                    domain = vectorScaleDomain(colormapConfig, range);
                 if(domain)
                     colormapConfig.domainSpec = { type: ColorMapDomainStrategy.USER, params: domain };
                 map.updateColorMap(layerId, { colorMap: colormapConfig });
@@ -254,6 +298,8 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
             if(targets && targets.map && context){
 
                 checkLayerIds(spec, index);
+                for(const layerRef of spec.layerRefs)
+                    checkColorMapRange(layerRef);
 
                 let canvas;
 

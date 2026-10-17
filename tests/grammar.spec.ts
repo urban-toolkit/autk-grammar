@@ -259,9 +259,9 @@ test('draws two maps from one spec', async ({ page }) => {
     await expectDrawn(page, 'map1');
 });
 
-// Layer options: small inline tables in Midtown Manhattan. `zones` and `blocks` are four squares
-// each, `paths` three east-west lines. autk-db crops every table to the first polygon table it
-// loads, so each spec loads `area`, one square around them all, first.
+// Layer options: small inline tables in Midtown Manhattan. `zones`, `blocks` and `lots` are four
+// squares each, valued 0 to 30 (`lots` 0 to 60), `paths` three east-west lines. autk-db crops every
+// table to the first polygon table it loads, so each spec loads `area`, one square around them all, first.
 const area: DataSourceSpec = {
     type: 'geojson',
     outputTableName: 'area',
@@ -274,7 +274,7 @@ const area: DataSourceSpec = {
         }],
     },
 };
-function squares(name: string, y: number): DataSourceSpec {
+function squares(name: string, y: number, step = 10): DataSourceSpec {
     const square = (i: number) => {
         const x = -73.99 + i * 0.004;
         return { type: 'Polygon' as const, coordinates: [[[x, y], [x + 0.003, y], [x + 0.003, y + 0.003], [x, y + 0.003], [x, y]]] };
@@ -284,12 +284,13 @@ function squares(name: string, y: number): DataSourceSpec {
         outputTableName: name,
         geojsonObject: {
             type: 'FeatureCollection',
-            features: [0, 1, 2, 3].map((i) => ({ type: 'Feature' as const, properties: { id: i, v: i * 10 }, geometry: square(i) })),
+            features: [0, 1, 2, 3].map((i) => ({ type: 'Feature' as const, properties: { id: i, v: i * step }, geometry: square(i) })),
         },
     };
 }
 const zones = squares('zones', 40.75);
 const blocks = squares('blocks', 40.756);
+const lots = squares('lots', 40.762, 20);
 const paths: DataSourceSpec = {
     type: 'geojson',
     outputTableName: 'paths',
@@ -402,6 +403,60 @@ test('draws a layer in its color, line width and outline', async ({ page }) => {
     expect(layers.paths).toMatchObject({ color: { r: 44, g: 160, b: 44, alpha: 1 }, polylinesWidth: 40 });
 });
 
+test('colors two vector layers with different value ranges over one colorMapRange', async ({ page }) => {
+    const twoLayers = (options: Partial<MapLayerSpec>): UrbanSpec => ({
+        data: [area, zones, lots],
+        map: { layerRefs: [{ dataRef: 'zones', getFnv: 'v', ...options }, { dataRef: 'lots', getFnv: 'v', ...options }] },
+    });
+    const domains = async () => {
+        const layers = await layerById(page);
+        return { zones: layers.zones.domain, lots: layers.lots.domain };
+    };
+    // Each layer on its own scale: 20 is two thirds up the zones' scale and a third up the lots'.
+    await runSpec(page, twoLayers({ colorMapInterpolator: scheme('interpolateViridis') }));
+    expect(await domains()).toEqual({ zones: [0, 30], lots: [0, 60] });
+
+    // One range on both. autk-map colors a vector layer on the GPU by a value's place between its domain's
+    // ends, so a value has one color on both layers.
+    await runSpec(page, twoLayers({ colorMapInterpolator: scheme('interpolateViridis'), colorMapRange: [0, 50] }));
+    const labels = await page.evaluate((domain) => window.domainLabels(domain), [0, 50]);
+    const layers = await layerById(page);
+    for (const id of ['zones', 'lots'])
+        expect(layers[id], id).toMatchObject({ isColorMap: true, interpolator: 'interpolateViridis', domain: [0, 50], labels });
+
+    // Without a scheme too, in autk-map's own.
+    await runSpec(page, twoLayers({ colorMapRange: [0, 50] }));
+    expect(await domains()).toEqual({ zones: [0, 50], lots: [0, 50] });
+
+    // A vector layer ignores colorMapCenter and colorMapReverse: its scale runs from the range's low to its
+    // high, with autk-core's middle value on a diverging scheme.
+    await runSpec(page, twoLayers({ colorMapInterpolator: scheme('interpolateRdBu'), colorMapRange: [-10, 50], colorMapCenter: 0, colorMapReverse: true }));
+    expect(await domains()).toEqual({ zones: [-10, 20, 50], lots: [-10, 20, 50] });
+
+    // A categorical scheme ignores the range: each value stays a category of its own.
+    await runSpec(page, twoLayers({ colorMapInterpolator: scheme('schemeCategory10'), colorMapRange: [0, 50] }));
+    const categories = await domains();
+    expect({ zones: [...categories.zones ?? []].sort(), lots: [...categories.lots ?? []].sort() })
+        .toEqual({ zones: ['0', '10', '20', '30'], lots: ['0', '20', '40', '60'] });
+});
+
+test('refuses a colorMapRange that is not [low, high] with low below high, with colorMapDomain, or around a center outside it', async ({ page }) => {
+    const refused = (options: Record<string, unknown>, message: string) => expect(runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones', title: 'Zones', getFnv: 'v', ...options } as MapLayerSpec] },
+    })).rejects.toThrow(`Layer "Zones": ${message}`);
+    const shape = 'colorMapRange must hold two numbers, [low, high].';
+    await refused({ colorMapRange: [0] }, shape);
+    await refused({ colorMapRange: [0, 10, 20] }, shape);
+    await refused({ colorMapRange: [0, '10'] }, shape);
+    await refused({ colorMapRange: { low: 0, high: 10 } }, shape);
+    await refused({ colorMapRange: [10, 0] }, 'colorMapRange low (10) must be less than high (0).');
+    await refused({ colorMapRange: [5, 5] }, 'colorMapRange low (5) must be less than high (5).');
+    await refused({ colorMapRange: [0, 10], colorMapDomain: ['0', '10'] }, 'set colorMapRange or colorMapDomain, not both.');
+    await refused({ colorMapRange: [0, 10], colorMapCenter: 12 }, 'colorMapCenter (12) must lie within colorMapRange [0, 10].');
+    await refused({ colorMapRange: [0, 10], colorMapCenter: -1 }, 'colorMapCenter (-1) must lie within colorMapRange [0, 10].');
+});
+
 // Raster layers: the gallery's 30 x 30 noise heatmap, drawn over its neighborhoods.
 const scheme = (name: string) => name as unknown as ColorMapInterpolator;
 function heatmapWith(options: Partial<MapLayerSpec>): UrbanSpec {
@@ -411,18 +466,23 @@ function heatmapWith(options: Partial<MapLayerSpec>): UrbanSpec {
     };
 }
 
-async function heatmapLayer(page: Page) {
-    const layer = (await layerById(page)).heatmap;
-    const { values } = await page.evaluate(() => window.rasterCells('map0', 'heatmap'));
+async function heatmapLayer(page: Page, canvasId = 'map0', layerId = 'heatmap') {
+    const layer = (await layerById(page, canvasId))[layerId];
+    const { values } = await page.evaluate(({ canvasId, layerId }) => window.rasterCells(canvasId, layerId), { canvasId, layerId });
     const finite = values.filter(Number.isFinite);
     expect(finite.length).toBeGreaterThan(0);
     return { layer, finite, min: Math.min(...finite), max: Math.max(...finite) };
 }
 
-/** Counts the heatmap cells with a value whose color is not the scheme's color for that value over *domain*. */
-function cellsOffScheme(page: Page, interpolator: string, domain: number[]): Promise<{ colored: number; off: number }> {
-    return page.evaluate(({ interpolator, domain }) => {
-        const { values, rgba } = window.rasterCells('map0', 'heatmap');
+/**
+ * Counts the cells with a value of a raster layer (the heatmap on map0 unless named) whose color is not the
+ * scheme's color for that value over *domain*.
+ */
+function cellsOffScheme(
+    page: Page, interpolator: string, domain: number[], canvasId = 'map0', layerId = 'heatmap',
+): Promise<{ colored: number; off: number }> {
+    return page.evaluate(({ interpolator, domain, canvasId, layerId }) => {
+        const { values, rgba } = window.rasterCells(canvasId, layerId);
         let colored = 0;
         let off = 0;
         values.forEach((value, i) => {
@@ -432,7 +492,7 @@ function cellsOffScheme(page: Page, interpolator: string, domain: number[]): Pro
             if (rgba[i * 4] !== c.r || rgba[i * 4 + 1] !== c.g || rgba[i * 4 + 2] !== c.b) off++;
         });
         return { colored, off };
-    }, { interpolator, domain });
+    }, { interpolator, domain, canvasId, layerId });
 }
 
 function expectDomain(actual: Array<number | string> | undefined, expected: number[]) {
@@ -521,4 +581,101 @@ test('centers and reverses a raster color scale', async ({ page }) => {
     const far = Math.max(...difference.finite.map((v) => Math.abs(v)));
     expectDomain(difference.layer.domain, [far, 0, -far]);
     expect((await cellsOffScheme(page, 'interpolateRdBu', difference.layer.domain as number[])).off).toBe(0);
+});
+
+// The same points counted within 400 m of each cell instead of 1000 m: the same grid, with lower counts.
+const nearHeatmap: DataSourceSpec = {
+    type: 'heatmap',
+    tableJoinName: 'noise',
+    near: { distance: 400 },
+    outputTableName: 'heatmap_near',
+    grid: { rows: 30, columns: 30 },
+    groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }],
+};
+
+/** The heatmap on map0 and the 400 m heatmap on map1, both on Viridis, with *options*. */
+function twoHeatmapsWith(options: Partial<MapLayerSpec>): UrbanSpec {
+    const layer = (dataRef: string): MapLayerSpec => ({ dataRef, getFnv: 'count.noise', colorMapInterpolator: scheme('interpolateViridis'), ...options });
+    return {
+        data: [...(heatmapGeojson.data ?? []), nearHeatmap],
+        map: [{ layerRefs: [layer('heatmap')] }, { layerRefs: [layer('heatmap_near')] }],
+    };
+}
+
+/** A raster layer's colors: each cell value's RGB as `r,g,b`, and the opacity (0..255) of every cell with a value. */
+function rasterColors(page: Page, canvasId: string, layerId: string): Promise<{ rgb: Record<string, string>; alphas: number[] }> {
+    return page.evaluate(({ canvasId, layerId }) => {
+        const { values, rgba } = window.rasterCells(canvasId, layerId);
+        const rgb: Record<string, string> = {};
+        const alphas: number[] = [];
+        values.forEach((value, i) => {
+            if (!Number.isFinite(value)) return;
+            rgb[String(value)] = rgba.slice(i * 4, i * 4 + 3).join(',');
+            alphas.push(rgba[i * 4 + 3]);
+        });
+        return { rgb, alphas };
+    }, { canvasId, layerId });
+}
+
+/** The values two rasters both hold that they color differently, and how many values they both hold. */
+function sharedValues(a: Record<string, string>, b: Record<string, string>) {
+    const shared = Object.keys(a).filter((value) => value in b);
+    return { count: shared.length, colorsDiffer: shared.filter((value) => a[value] !== b[value]) };
+}
+
+test('colors two rasters with different value ranges alike over one colorMapRange', async ({ page }) => {
+    // Each raster on its own scale: a count both rasters hold is colored differently on the two maps.
+    await runSpec(page, twoHeatmapsWith({}));
+    const wide = await heatmapLayer(page, 'map0', 'heatmap');
+    const near = await heatmapLayer(page, 'map1', 'heatmap_near');
+    expect(near.max).toBeLessThan(wide.max - 1);
+    expect(wide.layer.domain).toEqual([wide.min, wide.max]);
+    expect(near.layer.domain).toEqual([near.min, near.max]);
+    const apart = sharedValues((await rasterColors(page, 'map0', 'heatmap')).rgb, (await rasterColors(page, 'map1', 'heatmap_near')).rgb);
+    expect(apart.colorsDiffer.length).toBeGreaterThan(0);
+
+    // One range on both, ending between their highest counts, with every cell opaque as Curio draws rasters:
+    // both maps color each value over the range, so a count has one color on both.
+    const range: [number, number] = [0, Math.round((near.max + wide.max) / 2)];
+    await runSpec(page, twoHeatmapsWith({ colorMapRange: range, transferFunction: { opacityMin: 1, opacityMax: 1 } }));
+    const labels = await page.evaluate((domain) => window.domainLabels(domain), range);
+    for (const [canvasId, layerId] of [['map0', 'heatmap'], ['map1', 'heatmap_near']]) {
+        const { layer } = await heatmapLayer(page, canvasId, layerId);
+        expect(layer.domain, layerId).toEqual(range);
+        expect(layer.labels, layerId).toEqual(labels);
+        expect((await cellsOffScheme(page, 'interpolateViridis', range, canvasId, layerId)).off, layerId).toBe(0);
+    }
+    const wideColors = await rasterColors(page, 'map0', 'heatmap');
+    const nearColors = await rasterColors(page, 'map1', 'heatmap_near');
+    const together = sharedValues(wideColors.rgb, nearColors.rgb);
+    expect(together.count).toBeGreaterThan(1);
+    expect(together.colorsDiffer).toEqual([]);
+    expect([...wideColors.alphas, ...nearColors.alphas].filter((alpha) => alpha !== 255)).toEqual([]);
+});
+
+test('centers and reverses a raster color scale within its colorMapRange, and draws a range without a scheme', async ({ page }) => {
+    // With a center: from the range's low through the center to its high, whatever the cell values.
+    await runSpec(page, heatmapWith({ colorMapInterpolator: scheme('interpolateRdBu'), colorMapRange: [-40, 160], colorMapCenter: 20 }));
+    const centered = await heatmapLayer(page);
+    expect(centered.layer.domain).toEqual([-40, 20, 160]);
+    expect(centered.layer.labels).toEqual(await page.evaluate((domain) => window.domainLabels(domain), [-40, 20, 160]));
+    expect((await page.evaluate(() => window.legend()))?.labels).toEqual(centered.layer.labels);
+    expect((await cellsOffScheme(page, 'interpolateRdBu', [-40, 20, 160])).off).toBe(0);
+
+    // Reversed: from the range's high through the center to its low.
+    await runSpec(page, heatmapWith({ colorMapInterpolator: scheme('interpolateRdBu'), colorMapRange: [-40, 160], colorMapCenter: 20, colorMapReverse: true }));
+    expect((await heatmapLayer(page)).layer.domain).toEqual([160, 20, -40]);
+    expect((await cellsOffScheme(page, 'interpolateRdBu', [160, 20, -40])).off).toBe(0);
+
+    // Reversed without a center, on a sequential scheme: from the range's high to its low.
+    await runSpec(page, heatmapWith({ colorMapInterpolator: scheme('interpolateViridis'), colorMapRange: [5, 50], colorMapReverse: true }));
+    expect((await heatmapLayer(page)).layer.domain).toEqual([50, 5]);
+    expect((await cellsOffScheme(page, 'interpolateViridis', [50, 5])).off).toBe(0);
+
+    // A range alone colors the raster over it in autk-map's own scheme, and shows its legend.
+    await runSpec(page, heatmapWith({ colorMapRange: [0, 100] }));
+    const plain = await heatmapLayer(page);
+    expect(plain.layer).toMatchObject({ isColorMap: true, domain: [0, 100] });
+    expect((await page.evaluate(() => window.legend()))?.visible).toBe(true);
+    expect((await cellsOffScheme(page, plain.layer.interpolator, [0, 100])).off).toBe(0);
 });

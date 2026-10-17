@@ -76,6 +76,10 @@ expect('layer without an outline', { map: { layerRefs: [{ dataRef: 't', stroke: 
 expect('raster scale centered and reversed', { map: { layerRefs: [{ dataRef: 'r', colorMapInterpolator: 'interpolateRdBu', colorMapCenter: -1.5, colorMapReverse: true }] } }, true);
 expect('raster transfer function', { map: { layerRefs: [{ dataRef: 'r', transferFunction: { mode: 'linear', opacityMin: 0, opacityMax: 1, gamma: 2, zeroCenter: 5 } }] } }, true);
 expect('raster cells opaque', { map: { layerRefs: [{ dataRef: 'r', transferFunction: { opacityMin: 1, opacityMax: 1 } }] } }, true);
+expect('layer color range', { map: { layerRefs: [{ dataRef: 't', getFnv: 'v', colorMapRange: [0, 11] }] } }, true);
+expect('raster color range centered and reversed', {
+    map: { layerRefs: [{ dataRef: 'r', colorMapInterpolator: 'interpolateRdBu', colorMapRange: [-2.5, 4], colorMapCenter: 0, colorMapReverse: true }] },
+}, true);
 const box = [-87.66415, 41.858, -87.61232, 41.89966];
 const osmIn = (queryArea: unknown) => ({ data: [{ ...osm, queryArea }] });
 expect('osm with a bbox', osmIn({ bbox: box }), true);
@@ -138,6 +142,16 @@ expect('transferFunction opacity above 1', layer({ transferFunction: { opacityMi
 expect('transferFunction opacity below 0', layer({ transferFunction: { opacityMax: -0.1 } }), false);
 expect('transferFunction gamma zero', layer({ transferFunction: { gamma: 0 } }), false);
 expect('transferFunction zeroCenter as a string', layer({ transferFunction: { zeroCenter: '0' } }), false);
+expect('colorMapRange with one number', layer({ colorMapRange: [0] }), false);
+expect('colorMapRange with three numbers', layer({ colorMapRange: [0, 5, 10] }), false);
+expect('colorMapRange with a string', layer({ colorMapRange: [0, '10'] }), false);
+expect('colorMapRange as a number', layer({ colorMapRange: 10 }), false);
+expect('colorMapRange as an object', layer({ colorMapRange: { low: 0, high: 10 } }), false);
+expect('colorMapRange with low equal to high', layer({ colorMapRange: [5, 5] }), false);
+expect('colorMapRange with colorMapDomain', layer({ colorMapRange: [0, 10], colorMapDomain: ['a', 'b'] }), false);
+expect('colorMapRange with an empty colorMapDomain', layer({ colorMapRange: [0, 10], colorMapDomain: [] }), false);
+// A range whose low is above its high is refused when the spec runs (tests/grammar.spec.ts): JSON Schema
+// cannot compare two values of a document.
 // An OSM queryArea is a bbox [west, south, east, north] in degrees, or geocodeArea with areas, never both.
 // West < east and south < north are checked when the spec runs (tests/grammar.spec.ts).
 expect('osm bbox with three numbers', osmIn({ bbox: box.slice(0, 3) }), false);
@@ -155,7 +169,7 @@ expect('osm queryArea without bbox or geocodeArea', osmIn({}), false);
 
 // Each layer styling option is documented in the schema.
 const layerProperties = schema.definitions?.MapLayerSpec?.properties ?? {};
-for (const key of ['title', 'color', 'width', 'stroke', 'colorMapCenter', 'colorMapReverse', 'transferFunction']) {
+for (const key of ['title', 'color', 'width', 'stroke', 'colorMapCenter', 'colorMapReverse', 'colorMapRange', 'transferFunction']) {
     const description = layerProperties[key]?.description;
     if (typeof description !== 'string' || description.trim() === '') {
         failures++;
