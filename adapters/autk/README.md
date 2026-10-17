@@ -76,8 +76,9 @@ Besides `dataRef`, a layer of `map.layerRefs` takes these styling options:
 | `stroke` | A polygon layer's outline: its color, `#rrggbb`, or `false` for none. |
 | `width` | The width of a polylines or roads layer's lines, in the map's planar units (autk-map's `polylinesWidth`). |
 | `colorMapInterpolator` | The color scheme. A raster layer's cells and its legend's labels follow it. |
-| `colorMapCenter` | On a raster layer, the value at the middle of the color scale. The scale then runs from the center less the farthest value's distance to it, to the center plus that distance. |
-| `colorMapReverse` | On a raster layer, runs the color scale from the highest value to the lowest. |
+| `colorMapRange` | The ends of the color scale, `[low, high]` with low less than high. The layer is colored over this range instead of its own lowest and highest values, so layers that set the same range, in one map or in maps side by side, color the same value alike. Raster and vector layers. A categorical scheme ignores it, and a layer cannot set both `colorMapRange` and `colorMapDomain`. On a raster layer, a `transferFunction` still sets opacity from the layer's own values. |
+| `colorMapCenter` | On a raster layer, the value at the middle of the color scale. With `colorMapRange`, the scale runs from the range's low through the center to its high (a sequential scheme keeps only the ends). Without it, the scale runs from the center less the farthest value's distance to it, to the center plus that distance. |
+| `colorMapReverse` | On a raster layer, runs the color scale from the highest value to the lowest, or from `colorMapRange`'s high to its low. |
 | `transferFunction` | On a raster layer, how opaque its cells are by value: autk-map's transfer function (`mode`, `opacityMin`, `opacityMax`, `gamma`, `zeroCenter`). `{ opacityMin: 1, opacityMax: 1 }` draws every cell with a value fully opaque. |
 
 After a run, `grammar.mapLayer(dataRef)` finds the layer a map draws for a table: the `AutkMap` and the layer's id in it. `highlightOnMap`, `clearHighlightOnMap` and a plot's `mapRef` also name a layer by its `dataRef`.
