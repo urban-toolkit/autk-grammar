@@ -1,7 +1,7 @@
 import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec } from '@urban-toolkit/the-urban-grammar';
 import { AutkDb, DEFAULT_WORKSPACE_COORDINATE_FORMAT } from '@urban-toolkit/autk-db';
 import type { LoadGeojsonParams } from '@urban-toolkit/autk-db';
-import type { FeatureCollection } from 'geojson';
+import type { FeatureCollection, Geometry } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
 
 /**
@@ -38,6 +38,41 @@ function queryAreaOf(spec: OsmDataSourceSpec): OsmDataSourceSpec['queryArea'] {
 function toLoadOsmParams(spec: OsmDataSourceSpec) {
     const { autoLoadLayers, ...rest } = spec;
     return { ...rest, queryArea: queryAreaOf(spec), autoLoadLayers: { layers: autoLoadLayers?.layers ?? [] } };
+}
+
+/**
+ * The CRS advice. Only a bounding-box check gives it, when the box shows that a layer's coordinates
+ * are not in the CRS it was loaded as; any other load error is autk-db's own message.
+ */
+function crsAdvice(coordinateFormat: string | undefined): string {
+    const assumed = coordinateFormat
+        ? `coordinateFormat is set to "${coordinateFormat}"`
+        : 'no coordinateFormat was specified, so it defaults to EPSG:4326 (WGS84 per RFC 7946)';
+    return `${assumed}. Verify that coordinateFormat matches the actual CRS of the input data.`;
+}
+
+/** The [minX, minY, maxX, maxY] of every position in a collection, or undefined when it has none. */
+function extentOf(collection: FeatureCollection): [number, number, number, number] | undefined {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const visitPositions = (value: unknown): void => {
+        if (!Array.isArray(value)) return;
+        if (typeof value[0] === 'number') {
+            const [x, y] = value as number[];
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+            return;
+        }
+        for (const inner of value) visitPositions(inner);
+    };
+    const visitGeometry = (geometry: Geometry | null | undefined): void => {
+        if (!geometry) return;
+        if (geometry.type === 'GeometryCollection') geometry.geometries.forEach(visitGeometry);
+        else visitPositions(geometry.coordinates);
+    };
+    for (const feature of collection.features ?? []) visitGeometry(feature?.geometry);
+    return minX <= maxX ? [minX, minY, maxX, maxY] : undefined;
 }
 
 export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): DataAdapter {
@@ -104,16 +139,22 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                         ? (() => { const s = { ...geojsonSpec, geojsonObject: geojsonData }; delete s.geojsonFileUrl; return s; })()
                         : geojsonSpec) as LoadGeojsonParams;
 
+                    // Degrees put every y within -90 to 90, so a y outside it shows a layer in another CRS. The
+                    // transform makes such a y infinite, and autk-db would refuse the layer with a grid error.
+                    // A longitude past 180 is not checked: the transform wraps it.
+                    const readAsDegrees = /^EPSG:4326$/i.test(loadSpec.coordinateFormat ?? 'EPSG:4326');
+                    const extent = geojsonData && readAsDegrees ? extentOf(geojsonData) : undefined;
+                    if (extent && (extent[1] < -90 || extent[3] > 90)) {
+                        throw new Error(
+                            `GeoJSON layer "${loadSpec.outputTableName}" has y coordinates outside -90 to 90 ` +
+                            `(bbox: [${extent.join(', ')}]), so they cannot be EPSG:4326 degrees. ${crsAdvice(loadSpec.coordinateFormat)}`
+                        );
+                    }
+
                     try {
                         await db.loadGeojson(loadSpec);
                     } catch (err) {
-                        const crsHint = loadSpec.coordinateFormat
-                            ? `coordinateFormat is set to "${loadSpec.coordinateFormat}"`
-                            : `no coordinateFormat was specified — defaulting to EPSG:4326 (WGS84 per RFC 7946)`;
-                        throw new Error(
-                            `Failed to load GeoJSON layer "${loadSpec.outputTableName}": ${err instanceof Error ? err.message : String(err)}. ` +
-                            `${crsHint}. Verify that coordinateFormat matches the actual CRS of the input data.`
-                        );
+                        throw new Error(`Failed to load GeoJSON layer "${loadSpec.outputTableName}": ${err instanceof Error ? err.message : String(err)}`);
                     }
 
                     // Validate that the loaded geometry is within the workspace CRS extent.
@@ -130,7 +171,7 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                             throw new Error(
                                 `Geometry bounding box after transform is invalid for layer "${loadSpec.outputTableName}" ` +
                                 `(bbox: [${bbox.minLon}, ${bbox.minLat}, ${bbox.maxLon}, ${bbox.maxLat}]). ` +
-                                `Verify that coordinateFormat matches the actual CRS of the input data. ` +
+                                `${crsAdvice(loadSpec.coordinateFormat)} ` +
                                 `The workspace uses ${DEFAULT_WORKSPACE_COORDINATE_FORMAT}; input is expected in EPSG:4326 by default.`
                             );
                         }
