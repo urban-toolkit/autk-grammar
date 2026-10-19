@@ -142,6 +142,44 @@ test('refuses a bbox that is not [west, south, east, north] in degrees, and a bb
     await refused({ bbox: BOX, areas: ['Financial District'] }, both);
 });
 
+/** A GeoJSON source of one polygon whose coordinates are declared as EPSG:4326 degrees. */
+function onePolygon(name: string, ring: number[][]): DataSourceSpec {
+    return {
+        type: 'geojson',
+        outputTableName: name,
+        coordinateFormat: 'EPSG:4326',
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } }],
+        },
+    };
+}
+
+/** The message a spec's run is refused with, or '' when it runs. */
+function refusal(page: Page, spec: UrbanSpec): Promise<string> {
+    return runSpec(page, spec).then(() => '', (error: Error) => error.message);
+}
+
+test("reports autk-db's reason for refusing a GeoJSON layer, with no CRS advice", async ({ page }) => {
+    // Its points lie on one line, so the polygon has no area and collapses on autk-db's 1 cm grid
+    // whatever the CRS (urban-toolkit/curio#899). Its coordinates are the degrees it declares.
+    const message = await refusal(page, {
+        data: [onePolygon('flat', [[-73.99, 40.75], [-73.985, 40.75], [-73.98, 40.75], [-73.99, 40.75]])],
+    });
+    expect(message).toContain('Failed to load GeoJSON layer "flat": ');
+    expect(message).toContain('collapses');
+    expect(message).not.toContain('coordinateFormat');
+});
+
+test('refuses a layer of projected meters read as degrees, with its bounding box and CRS advice', async ({ page }) => {
+    // A square in Web Mercator meters in Midtown Manhattan, declared as EPSG:4326.
+    const message = await refusal(page, {
+        data: [onePolygon('meters', [[-8236000, 4975000], [-8235000, 4975000], [-8235000, 4976000], [-8236000, 4976000], [-8236000, 4975000]])],
+    });
+    expect(message).toContain('bbox: [');
+    expect(message).toContain('Verify that coordinateFormat matches the actual CRS of the input data');
+});
+
 test('aggregates a spatial join', async ({ page }) => {
     await run(page, 'spatial-join');
     const counts = await page.evaluate(async () => {
