@@ -33,8 +33,8 @@ export function createEngine(options: EngineOptions): IEngine{
 
         if(spec.plot){
             if(Array.isArray(spec.plot))
-                for(const plot of spec.plot)
-                    await adapters.plot.resolvePlot(context, plot);
+                for(let i = 0; i < spec.plot.length; i++)
+                    await adapters.plot.resolvePlot(context, spec.plot[i], i);
             else
                 await adapters.plot.resolvePlot(context, spec.plot);
         }

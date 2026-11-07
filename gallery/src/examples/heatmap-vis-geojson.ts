@@ -20,7 +20,7 @@ export const spec: UrbanSpec = {
         },
         {
             type: 'heatmap',
-            tableJoinName: 'noise',
+            joinDataRef: 'noise',
             near: { distance: 1000 },
             outputTableName: 'heatmap',
             grid: { rows: 30, columns: 30 },

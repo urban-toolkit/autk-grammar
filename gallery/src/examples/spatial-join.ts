@@ -20,8 +20,8 @@ export const spec: UrbanSpec = {
         },
         {
             type: 'join',
-            tableRootName: 'neighborhoods',
-            tableJoinName: 'noise',
+            dataRef: 'neighborhoods',
+            joinDataRef: 'noise',
             groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }],
         },
     ],

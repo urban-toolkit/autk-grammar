@@ -16,6 +16,7 @@ export type LayerState = {
     strokeColor?: ColorRGB;
     showBorders?: boolean;
     polylinesWidth?: number;
+    pointSize?: number;
     isColorMap?: boolean;
     isPick?: boolean;
     interpolator: string;
@@ -39,12 +40,13 @@ function element(tag: 'canvas' | 'div', id: string): HTMLElement {
 declare global {
     interface Window {
         grammar: AutkGrammar;
-        runSpec: (spec: UrbanSpec) => Promise<RunSummary>;
+        runSpec: (spec: UrbanSpec, plotTargets?: 'one' | 'each') => Promise<RunSummary>;
         runExample: (name: string) => Promise<RunSummary>;
         valueAt: (table: string, index: number, path: string) => Promise<unknown>;
         featureExtents: (table: string) => Promise<number[][]>;
         readMap: (canvasId: string) => Promise<string>;
         mapLayers: (canvasId: string) => LayerState[];
+        cameraState: (canvasId: string) => { eye: number[]; lookAt: number[] };
         rasterCells: (canvasId: string, layerId: string) => { values: number[]; rgba: number[] };
         legend: () => LegendState | null;
         schemeColor: (value: number, interpolator: string, domain: number[]) => ColorRGB;
@@ -66,16 +68,21 @@ window.runExample = async (name: string) => {
     return window.runSpec(spec);
 };
 
-/** Runs a spec, creating a canvas per map and a div for the plot. */
-window.runSpec = async (spec: UrbanSpec) => {
+/**
+ * Runs a spec, creating a canvas per map and a div for the plots: one div, `#plot`, that holds them all, or with
+ * `plotTargets: 'each'` one div per plot, `#plot0`, `#plot1`, and so on.
+ */
+window.runSpec = async (spec: UrbanSpec, plotTargets: 'one' | 'each' = 'one') => {
     document.getElementById('stage')!.innerHTML = '';
     const maps = Array.isArray(spec.map) ? spec.map.map((_, i) => `map${i}`) : spec.map ? ['map0'] : [];
     maps.forEach((id) => element('canvas', id));
-    if (spec.plot) element('div', 'plot');
+    const plotCount = spec.plot === undefined ? 0 : Array.isArray(spec.plot) ? spec.plot.length : 1;
+    const plotIds = plotTargets === 'each' ? Array.from({ length: plotCount }, (_, i) => `plot${i}`) : plotCount ? ['plot'] : [];
+    plotIds.forEach((id) => element('div', id));
 
     const grammar = new AutkGrammar({
         ...(maps.length && { map: Array.isArray(spec.map) ? maps : maps[0] }),
-        ...(spec.plot && { plot: 'plot' }),
+        ...(plotIds.length && { plot: plotTargets === 'each' ? plotIds : 'plot' }),
     });
     window.grammar = grammar;
     await grammar.run(spec);
@@ -88,7 +95,7 @@ window.runSpec = async (spec: UrbanSpec) => {
             properties: Object.keys(collection.features[0]?.properties ?? {}),
         };
     }
-    return { tables, plotSvgs: document.querySelectorAll('#plot svg').length };
+    return { tables, plotSvgs: document.querySelectorAll(plotTargets === 'each' ? '[id^="plot"] svg' : '#plot svg').length };
 };
 
 /** Reads a (dot path) property of one feature, e.g. valueAt('neighborhoods', 0, 'sjoin.count.noise'). */
@@ -139,6 +146,12 @@ window.readMap = (canvasId: string) => {
     return new Promise<string>((resolve) => requestAnimationFrame(() => resolve(map.canvas.toDataURL('image/png'))));
 };
 
+/** Where the camera of the map on #canvasId is and what it looks at. */
+window.cameraState = (canvasId: string) => {
+    const { camera } = mapOn(canvasId);
+    return { eye: [...camera.getEye()], lookAt: [...camera.getLookAt()] };
+};
+
 /** The render state autk-map holds for each layer of the map on #canvasId, in its layer order. */
 window.mapLayers = (canvasId: string) => mapOn(canvasId).layerManager.layers.map((layer) => {
     const info = layer.layerRenderInfo;
@@ -150,6 +163,7 @@ window.mapLayers = (canvasId: string) => mapOn(canvasId).layerManager.layers.map
         strokeColor: info.strokeColor,
         showBorders: info.showBorders,
         polylinesWidth: info.polylinesWidth,
+        pointSize: info.pointSize,
         isColorMap: info.isColorMap,
         isPick: info.isPick,
         interpolator: info.colormap.config.interpolator,

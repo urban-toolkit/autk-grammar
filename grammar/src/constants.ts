@@ -2,7 +2,7 @@
 export type LayerType = 'surface' | 'water' | 'parks' | 'roads' | 'buildings' | 'points' | 'polygons' | 'polylines' | 'raster';
 
 /** Kind of data source; selects which fields a `data` entry takes. */
-export type DataSourceType = 'osm' | 'csv' | 'json' | 'geojson' | 'heatmap' | 'join';
+export type DataSourceType = 'osm' | 'csv' | 'json' | 'geojson' | 'geotiff' | 'heatmap' | 'join';
 
 /** Color scheme for a colored map layer: `scheme*` names are categorical, `interpolate*` names are sequential or diverging. */
 export enum ColorMapInterpolator {

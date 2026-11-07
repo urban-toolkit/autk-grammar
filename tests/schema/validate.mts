@@ -35,12 +35,12 @@ const csv = { type: 'csv', outputTableName: 'c', csvFileUrl: 'rows.csv' };
 const point = { type: 'Point', coordinates: [0, 0] };
 const plot = { dataRef: 't', axis: ['a', 'b'] };
 const layers = { layerRefs: [{ dataRef: 't' }] };
-const compute = { dataRef: 't', attributes: { h: 'height' }, outputColumnName: 'out', wglsFunction: 'return h;' };
+const compute = { dataRef: 't', attributes: { h: 'height' }, outputColumnName: 'out', wgslFunction: 'return h;' };
 
 // Forms the runtime accepts.
 expect('extra keys stay open', { data: [osm], map: layers, initialView: { zoom: 3 } }, true);
 expect('$schema declaration', { $schema: schema.$id, map: layers }, true);
-expect('wglsFunction as lines', { compute: [{ ...compute, wglsFunction: ['let x = h;', 'return x;'] }] }, true);
+expect('wgslFunction as lines', { compute: [{ ...compute, wgslFunction: ['let x = h;', 'return x;'] }] }, true);
 expect('fromFeature uniform', {
     compute: [{ ...compute, uniforms: { sunAz: { fromFeature: { layer: 'sun', path: 'properties.az', iterate: 'batched', required: true }, default: 0 } } }],
 }, true);
@@ -68,6 +68,13 @@ expect('line with binning-events', { plot: { ...plot, mark: 'line', transform: {
 expect('table with sort', { plot: { ...plot, mark: 'table', transform: { preset: 'sort' } } }, true);
 expect('heatmatrix with binning-2d', { plot: { ...plot, mark: 'heatmatrix', transform: { preset: 'binning-2d' } } }, true);
 expect('parallel coordinates with any preset', { plot: { ...plot, mark: 'parallel-coordinates', transform: { preset: 'binning-1d' } } }, true);
+expect('map camera', { map: { ...layers, camera: { zoom: 14, pitch: 60, bearing: 90 } } }, true);
+expect('map camera with one field', { map: { ...layers, camera: { pitch: 45 } } }, true);
+expect('layout grid', { map: layers, layout: { type: 'grid', columns: 3, gap: 8 } }, true);
+expect('layout without fields', { map: layers, layout: {} }, true);
+expect('ids and a link', { map: { ...layers, id: 'm' }, plot: { ...plot, mark: 'scatter', id: 'p' }, links: [{ source: 'p', target: 'm' }] }, true);
+expect('link naming a layer', { map: { ...layers, id: 'm' }, plot: { ...plot, mark: 'scatter', id: 'p' }, links: [{ source: 'p', target: 'm', layer: 'Roads' }] }, true);
+expect('no links', { map: layers, links: [] }, true);
 expect('layer selectFields', { map: { layerRefs: [{ dataRef: 't', isPick: true, selectFields: ['id'] }] } }, true);
 expect('scatter selectFields', { plot: { ...plot, mark: 'scatter', events: ['click'], selectFields: ['city', 'id'] } }, true);
 expect('bar selectFields', { plot: { ...plot, mark: 'bar', events: ['brushX'], selectFields: ['id'] } }, true);
@@ -87,23 +94,39 @@ expect('osm with a bbox and a pbf', { data: [{ ...osm, pbfFileUrl: 'downtown.osm
 
 // Documents the runtime cannot draw.
 expect('unknown data type', { data: [{ ...osm, type: 'shapefile' }] }, false);
-expect('heatmap without grid', { data: [{ type: 'heatmap', outputTableName: 'h', tableJoinName: 't', near: { distance: 5 } }] }, false);
+expect('heatmap without grid', { data: [{ type: 'heatmap', outputTableName: 'h', joinDataRef: 't', near: { distance: 5 } }] }, false);
 expect('heatmap is not a csv', { data: [{ type: 'heatmap', outputTableName: 'x' }] }, false);
 expect('osm without queryArea', { data: [{ type: 'osm', outputTableName: 't' }] }, false);
-expect('join without tableJoinName', { data: [{ type: 'join', tableRootName: 't' }] }, false);
+expect('join without joinDataRef', { data: [{ type: 'join', dataRef: 't' }] }, false);
 expect('map without layerRefs', { map: {} }, false);
 expect('layer without dataRef', { map: { layerRefs: [{ opacity: 1 }] } }, false);
 expect('unknown color scheme', { map: { layerRefs: [{ dataRef: 't', colorMapInterpolator: 'rainbow' }] } }, false);
 expect('plot with unknown mark', { plot: { dataRef: 't', mark: 'pie', axis: ['a'] } }, false);
 expect('plot with empty axis', { plot: { dataRef: 't', mark: 'bar', axis: [] } }, false);
 expect('plot without axis', { plot: { dataRef: 't', mark: 'bar' } }, false);
-expect('compute without an output', { compute: [{ dataRef: 't', attributes: {}, wglsFunction: 'return 1;' }] }, false);
-expect('compute without wglsFunction', { compute: [{ dataRef: 't', attributes: {}, outputColumnName: 'o' }] }, false);
+expect('compute without an output', { compute: [{ dataRef: 't', attributes: {}, wgslFunction: 'return 1;' }] }, false);
+expect('compute without wgslFunction', { compute: [{ dataRef: 't', attributes: {}, outputColumnName: 'o' }] }, false);
 expect('compute with empty outputColumns', { compute: [{ ...compute, outputColumns: [] }] }, false);
 expect('data source without type', { data: [{ outputTableName: 't', csvFileUrl: 'x.csv' }] }, false);
 expect('csv without a source', { data: [{ type: 'csv', outputTableName: 'c' }] }, false);
 expect('csv with both sources', { data: [{ ...csv, csvObject: [['a']] }] }, false);
 expect('json without a source', { data: [{ type: 'json', outputTableName: 'j' }] }, false);
+expect('geotiff', { data: [{ type: 'geotiff', outputTableName: 'r', geotiffFileUrl: 'r.tif', coordinateFormat: 'EPSG:3857', maxRasterCells: 5000, resampleMethod: 'nearest' }] }, true);
+expect('geotiff without a url', { data: [{ type: 'geotiff', outputTableName: 'r' }] }, false);
+expect('geotiff with a bad resample method', { data: [{ type: 'geotiff', outputTableName: 'r', geotiffFileUrl: 'r.tif', resampleMethod: 'cubic' }] }, false);
+expect('geojson with a layer type', { data: [{ type: 'geojson', outputTableName: 'g', geojsonFileUrl: 'g.json', layerType: 'polylines' }] }, true);
+expect('geojson with a bad layer type', { data: [{ type: 'geojson', outputTableName: 'g', geojsonFileUrl: 'g.json', layerType: 'rivers' }] }, false);
+const gpgpu = { dataRef: 'g', attributes: { x: 'a' }, outputColumnName: 'r', wgslFunction: 'return x;' };
+const render = { type: 'render', outputTableName: 'vis', layers: [{ id: 'b', dataRef: 'b', type: 'buildings' }], viewpoints: { dataRef: 'b', strategy: { type: 'building-windows', floors: 3 }, sampling: { directions: 8 } }, aggregation: { type: 'classes', includeBackground: true }, camera: { fov: 90, clip: { near: 1, far: 500 } }, tileSize: 64 };
+expect('gpgpu pass into a new table', { compute: [{ ...gpgpu, type: 'gpgpu', outputTableName: 'g2', layerType: 'polygons' }] }, true);
+expect('render pass', { compute: [render] }, true);
+expect('render pass without outputTableName', { compute: [(({ outputTableName, ...rest }) => rest)(render)] }, false);
+expect('render pass without layers', { compute: [{ ...render, layers: [] }] }, false);
+expect('render pass with a tile size that is not a multiple of 8', { compute: [{ ...render, tileSize: 30 }] }, false);
+expect('render pass with a bad aggregation', { compute: [{ ...render, aggregation: { type: 'sum' } }] }, false);
+const heat = { type: 'heatmap', outputTableName: 'h', joinDataRef: 'n', near: { distance: 500 }, grid: { rows: 10, columns: 10 } };
+expect('heatmap with useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: false } }] }, true);
+expect('heatmap with a non-boolean useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: 'no' } }] }, false);
 expect('geojson without a source', { data: [{ type: 'geojson', outputTableName: 'g' }] }, false);
 expect('geojson with no features', { data: [{ type: 'geojson', outputTableName: 'g', geojsonObject: { type: 'FeatureCollection', features: [] } }] }, false);
 expect('linechart without transform', { plot: { ...plot, mark: 'linechart' } }, false);
@@ -131,6 +154,8 @@ expect('layer color as short hex', layer({ color: '#f00' }), false);
 expect('layer color without #', layer({ color: '1f77b4' }), false);
 expect('layer stroke true', layer({ stroke: true }), false);
 expect('layer stroke by name', layer({ stroke: 'blue' }), false);
+expect('layer pointSize', layer({ pointSize: 30 }), true);
+expect('layer pointSize zero', layer({ pointSize: 0 }), false);
 expect('layer width zero', layer({ width: 0 }), false);
 expect('layer width negative', layer({ width: -2 }), false);
 expect('layer width as a string', layer({ width: '2' }), false);
@@ -166,6 +191,20 @@ expect('osm bbox with geocodeArea and areas', osmIn({ bbox: box, geocodeArea: 'C
 expect('osm bbox with geocodeArea', osmIn({ bbox: box, geocodeArea: 'Chicago' }), false);
 expect('osm bbox with areas', osmIn({ bbox: box, areas: ['Loop'] }), false);
 expect('osm queryArea without bbox or geocodeArea', osmIn({}), false);
+expect('camera pitch above 90', { map: { ...layers, camera: { pitch: 91 } } }, false);
+expect('camera pitch below 0', { map: { ...layers, camera: { pitch: -1 } } }, false);
+expect('camera bearing above 360', { map: { ...layers, camera: { bearing: 361 } } }, false);
+expect('camera zoom below 0', { map: { ...layers, camera: { zoom: -1 } } }, false);
+expect('camera zoom as a string', { map: { ...layers, camera: { zoom: '12' } } }, false);
+expect('layout with an unknown type', { map: layers, layout: { type: 'diagonal' } }, false);
+expect('layout grid with zero columns', { map: layers, layout: { type: 'grid', columns: 0 } }, false);
+expect('layout with a negative gap', { map: layers, layout: { gap: -1 } }, false);
+expect('map with an empty id', { map: { ...layers, id: '' } }, false);
+expect('plot with an empty id', { plot: { ...plot, mark: 'scatter', id: '' } }, false);
+expect('link without a source', { map: layers, links: [{ target: 'm' }] }, false);
+expect('link without a target', { map: layers, links: [{ source: 'p' }] }, false);
+expect('link with an empty layer', { map: layers, links: [{ source: 'p', target: 'm', layer: '' }] }, false);
+expect('links as an object', { map: layers, links: { source: 'p', target: 'm' } }, false);
 
 // Each layer styling option is documented in the schema.
 const layerProperties = schema.definitions?.MapLayerSpec?.properties ?? {};

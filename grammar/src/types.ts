@@ -25,10 +25,13 @@ export type TableSourceSpec = TableSourceBase & {
 export interface JoinSourceSpec {
     type: 'join';
     /** Table that receives the joined columns. */
-    tableRootName: string;
+    dataRef: string;
     /** Table whose rows are joined onto the root table. */
-    tableJoinName: string;
-    /** Join rows within `distance` (in workspace units) instead of by containment. */
+    joinDataRef: string;
+    /**
+     * Join rows within `distance` (in workspace units) instead of by containment. `useCentroid` measures from
+     * centroid to centroid; it defaults to true.
+     */
     near?: { distance: number; useCentroid?: boolean };
     /** Aggregate the joined rows per root feature. */
     groupBy?: Array<{
@@ -44,9 +47,12 @@ export interface JoinSourceSpec {
 export interface HeatmapSourceSpec extends TableSourceBase {
     type: 'heatmap';
     /** Table whose rows are aggregated onto the grid. */
-    tableJoinName: string;
-    /** Radius around each grid cell, in workspace units, within which rows are aggregated. */
-    near: { distance: number };
+    joinDataRef: string;
+    /**
+     * Radius around each grid cell, in workspace units, within which rows are aggregated. `useCentroid` measures
+     * from centroid to centroid; it defaults to true.
+     */
+    near: { distance: number; useCentroid?: boolean };
     groupBy?: Array<{
         column: string;
         aggregateFn?: AggregateFunction;
@@ -227,13 +233,33 @@ export interface CustomDataSourceSpec extends TableSourceBase {
      */
     coordinateFormat?: string;
     boundingBox?: BoundingBox;
+    /**
+     * How the map draws the layer. When omitted, autk-db reads it from the first feature's geometry. Set it to draw
+     * lines as `polylines` or polygons as a `buildings` layer, for example. Read by the Autark adapter only.
+     */
+    layerType?: LayerType;
+}
+
+/**
+ * Loads a GeoTIFF raster from `geotiffFileUrl` as a raster table: one feature, with one band per value. Read by the
+ * Autark adapter only.
+ */
+export interface GeoTiffDataSourceSpec extends TableSourceBase {
+    type: 'geotiff';
+    geotiffFileUrl: string;
+    /** CRS of the file, as an EPSG string. Defaults to `'EPSG:4326'`. */
+    coordinateFormat?: string;
+    /** Most cells to decode; a larger raster is downsampled to fit. Defaults to 1 000 000. */
+    maxRasterCells?: number;
+    /** How a larger raster is downsampled. Defaults to `'bilinear'`. */
+    resampleMethod?: 'nearest' | 'bilinear';
 }
 
 /**
  * One entry of `data`. The `type` field selects which fields apply.
  * @discriminator type
  */
-export type DataSourceSpec = OsmDataSourceSpec | CsvDataSourceSpec | JsonDataSourceSpec | CustomDataSourceSpec | HeatmapSourceSpec | JoinSourceSpec;
+export type DataSourceSpec = OsmDataSourceSpec | CsvDataSourceSpec | JsonDataSourceSpec | CustomDataSourceSpec | GeoTiffDataSourceSpec | HeatmapSourceSpec | JoinSourceSpec;
 
 /**
  * A color as `#rrggbb`.
@@ -305,6 +331,12 @@ export type MapLayerSpec = {
      * @exclusiveMinimum 0
      */
     width?: number,
+    /**
+     * Radius of the points of a points layer, in the map's planar units (about meters). Read by the Autark adapter;
+     * the deck.gl adapter ignores it.
+     * @exclusiveMinimum 0
+     */
+    pointSize?: number,
     /** Color the layer by the value read with `getFnv`. */
     isColorMap?: boolean,
     /** Color scheme used when `isColorMap` is set. */
@@ -367,16 +399,54 @@ export type MapLayerSpec = {
 }
 
 /**
+ * Where a map looks from. Each field is optional; an omitted field keeps the view that fits the map's layers.
+ * Read by the Autark adapter; the deck.gl adapter ignores it.
+ */
+export type CameraSpec = {
+    /**
+     * Zoom level: the eye sits at a height of `10000 / 2^(zoom - 10)` workspace units above the point the map
+     * fits to, so each step doubles the scale.
+     * @minimum 0
+     */
+    zoom?: number,
+    /**
+     * Tilt from straight down, in degrees.
+     * @minimum 0
+     * @maximum 90
+     */
+    pitch?: number,
+    /**
+     * Rotation around the vertical axis, in degrees.
+     * @minimum 0
+     * @maximum 360
+     */
+    bearing?: number,
+}
+
+/**
  * A map view.
  */
 export type MapSpec = {
+    /**
+     * Name of the map, which a link in `links` uses as its `target`. Unique among the ids of the maps and plots.
+     * @minLength 1
+     */
+    id?: string,
     /** Map style. */
     style?: string,
+    /** Where the map looks from. */
+    camera?: CameraSpec,
     /** Layers to draw, bottom first. Each names a table with `dataRef`. */
     layerRefs: MapLayerSpec[]
 }
 
 export interface PlotBase {
+    /**
+     * Name of the plot, which a link in `links` uses as its `source`. Unique among the ids of the maps and plots.
+     * Without it a plot is known by its `dataRef`, so two plots of one table need ids to be told apart.
+     * @minLength 1
+     */
+    id?: string,
     /** Name of the table to plot. */
     dataRef: string,
     /**
@@ -398,7 +468,7 @@ export interface PlotBase {
     width?: number,
     height?: number,
     margins?: { left: number; right: number; top: number; bottom: number },
-    /** `dataRef` of the map layer this plot links its selection to. */
+    /** `dataRef` of the map layer this plot links its selection to. A shorthand for a link in `links`. */
     mapRef?: string,
 }
 
@@ -484,7 +554,7 @@ export type FromFeatureDirective = {
     cols?: number;
 }
 
-type ComputeBase = {
+type GpgpuComputeBase = {
     /** Name of the table the shader runs over, one invocation per feature. */
     dataRef: string,
     /** Maps WGSL variable names to feature property paths. */
@@ -497,14 +567,28 @@ type ComputeBase = {
     /** Matrix constants shared by every invocation, written inline or read from a feature. */
     uniformMatrices?: Record<string, { data: number[][]; cols: number } | FromFeatureDirective>,
     /** WGSL body of the compute function. An array is joined with newlines, which keeps long shaders readable in JSON. */
-    wglsFunction: string | string[]
+    wgslFunction: string | string[]
+}
+
+/** Fields every compute pass shares. */
+type ComputeOutput = {
+    /**
+     * Name of a new table that receives the result, so the source table stays as it is and later passes, maps and
+     * plots can read both. Without it, a GPGPU pass writes into its `dataRef` table. A render pass needs it.
+     */
+    outputTableName?: string,
+    /**
+     * How the map draws the new table. Defaults to the type of the table it was computed from. Only used with
+     * `outputTableName`.
+     */
+    layerType?: LayerType,
 }
 
 /**
- * A GPU compute pass over a table. Results are written to `feature.properties.compute.<column>`.
+ * A GPGPU compute pass over a table. Results are written to `feature.properties.compute.<column>`.
  * It needs `outputColumnName` for a single result or `outputColumns` for several.
  */
-export type ComputeSpec = ComputeBase & (
+export type GpgpuComputeSpec = GpgpuComputeBase & ComputeOutput & (
     | {
         /** Column written when the shader returns one value. */
         outputColumnName: string,
@@ -519,7 +603,116 @@ export type ComputeSpec = ComputeBase & (
          */
         outputColumns: string[]
     }
-)
+) & {
+    /** `gpgpu` is the default, so existing specifications need not set it. */
+    type?: 'gpgpu',
+}
+
+/** A table drawn into the frames a render pass samples. */
+export type RenderLayerSpec = {
+    /**
+     * Name given to the layer in the pass. Letters, digits and underscores, not starting with a digit.
+     * @pattern ^[A-Za-z_][A-Za-z0-9_]*$
+     */
+    id: string,
+    /** Name of the table to draw. */
+    dataRef: string,
+    /** How the layer is drawn into the frames. */
+    type: 'surface' | 'parks' | 'water' | 'roads' | 'buildings' | 'points' | 'polygons' | 'polylines',
+    /** Property that holds the object's id, for `aggregation.type` `objects`. */
+    objectIdProperty?: string,
+}
+
+/**
+ * A render-based compute pass: from each viewpoint of a table it renders the layers in several directions on the GPU
+ * and counts what each frame shows (a visibility or sky-view metric). The result is a copy of the viewpoints table
+ * with the metrics in `feature.properties.compute.render`, stored as the table `outputTableName`. Read by the Autark
+ * adapter only.
+ */
+export type RenderComputeSpec = {
+    type: 'render',
+    /** Name of the table that receives the result. Later passes, maps and plots read it by this name. */
+    outputTableName: string,
+    /** How the map draws the new table. Defaults to the type of the viewpoints table. */
+    layerType?: LayerType,
+    /**
+     * Layers to render.
+     * @minItems 1
+     */
+    layers: RenderLayerSpec[],
+    viewpoints: {
+        /** Name of the table whose features are the viewpoints. */
+        dataRef: string,
+        /** Where a feature's viewpoints are: its centroid (the default) or one per floor on a building's windows. */
+        strategy?: { type: 'centroid' } | { type: 'building-windows', floors: number },
+        sampling?: {
+            /** Directions sampled around each viewpoint. */
+            directions?: number,
+            azimuthOffsetDeg?: number,
+            pitchDeg?: number,
+        },
+    },
+    /** `classes` counts the pixels of each layer type, `objects` those of each object. */
+    aggregation:
+        | { type: 'classes', includeBackground?: boolean, backgroundLayerType?: string }
+        | { type: 'objects' },
+    camera?: {
+        fov?: number,
+        clip?: { near?: number, far?: number },
+    },
+    /**
+     * Frame size in pixels.
+     * @minimum 8
+     * @multipleOf 8
+     */
+    tileSize?: number,
+}
+
+/** One entry of `compute`. A pass with `type: 'render'` is a {@link RenderComputeSpec}, any other a {@link GpgpuComputeSpec}. */
+export type ComputeSpec = GpgpuComputeSpec | RenderComputeSpec
+
+/**
+ * How the maps and plots of a specification are arranged on the page.
+ *
+ * The engine does not read it: the host that creates the map canvases and the plot container does.
+ */
+export type LayoutSpec = {
+    /** `vertical` stacks the views, `horizontal` puts them side by side, `grid` fills `columns` columns. Defaults to `vertical`. */
+    type?: 'vertical' | 'horizontal' | 'grid',
+    /**
+     * Number of columns of a `grid`. Defaults to 2.
+     * @minimum 1
+     */
+    columns?: number,
+    /**
+     * Space between views, in pixels.
+     * @minimum 0
+     */
+    gap?: number,
+}
+
+/**
+ * Links a plot to a layer of a map: selecting in the plot highlights the same features on the layer, and picking on
+ * the layer selects them in the plot. Read by the Autark adapter; the deck.gl adapter ignores it.
+ */
+export type LinkSpec = {
+    /**
+     * `id` of the plot, or its `dataRef` when it has no id.
+     * @minLength 1
+     */
+    source: string,
+    /**
+     * `id` of the map that highlights.
+     * @minLength 1
+     */
+    target: string,
+    /**
+     * Layer of the target map, by its `title`, else its `dataRef`. Defaults to the layer that draws the plot's
+     * `dataRef`.
+     * @minLength 1
+     */
+    layer?: string,
+}
 
 /**
  * An Autark grammar specification. It names at least one of `data`, `compute`, `map` or `plot`.
@@ -527,6 +720,8 @@ export type ComputeSpec = ComputeBase & (
 export type UrbanSpec = {
     /** URL of the JSON Schema this specification follows. */
     $schema?: string,
+    /** How the host arranges the maps and plots. */
+    layout?: LayoutSpec,
     /** Tables to load, in order. */
     data?: DataSourceSpec[],
     /** Compute passes, run in order after the data is loaded. */
@@ -534,7 +729,9 @@ export type UrbanSpec = {
     /** One map, or several. */
     map?: MapSpec[] | MapSpec,
     /** One plot, or several. */
-    plot?: PlotSpec[] | PlotSpec
+    plot?: PlotSpec[] | PlotSpec,
+    /** Links between plots and map layers. The engine does not read them; the adapter wires them once the maps and plots exist. */
+    links?: LinkSpec[]
 }
 
 export type EngineOptions = {

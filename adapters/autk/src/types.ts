@@ -1,13 +1,14 @@
 import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import type { AutkMap } from '@urban-toolkit/autk-map';
 import type { AutkPlot } from '@urban-toolkit/autk-plot';
+import type { LayerType } from '@urban-toolkit/the-urban-grammar';
 import type { FeatureCollection } from 'geojson';
 
 export type Targets = {
     compute?: string,
     db?: string,
     map?: string[] | string,
-    plot?: string
+    plot?: string[] | string
 }
 
 export type MapRegistry = Map<string, AutkMap>;
@@ -24,6 +25,8 @@ export interface GrammarMapLayer {
 }
 export type GeoJsonCache = Map<string, FeatureCollection>;
 export type ComputeCache = Map<string, FeatureCollection>;
+/** How the map draws a table a compute pass wrote under `outputTableName`, which the database does not know. */
+export type ComputeLayerTypes = Map<string, LayerType>;
 
 export type AutkGrammarSpec = UrbanSpec;
 

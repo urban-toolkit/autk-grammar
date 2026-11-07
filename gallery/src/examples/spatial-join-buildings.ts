@@ -28,8 +28,8 @@ export const spec: UrbanSpec = {
         },
         {
             type: 'join',
-            tableRootName: 'table_osm_buildings',
-            tableJoinName: 'noise',
+            dataRef: 'table_osm_buildings',
+            joinDataRef: 'noise',
             near: { distance: 1000 },
             groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }],
         },

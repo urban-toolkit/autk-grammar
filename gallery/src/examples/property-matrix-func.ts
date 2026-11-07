@@ -70,7 +70,7 @@ export const spec: UrbanSpec = {
             attributes: { img: 'image' },
             attributeMatrices: { img: { rows: imageHeight, cols: imageWidth } },
             outputColumnName: 'color_percentage',
-            wglsFunction: `
+            wgslFunction: `
                 let targetColor = 128.0;
                 var matchCount = 0u;
                 var totalPixels = img_rows * img_cols;

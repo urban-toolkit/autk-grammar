@@ -21,7 +21,7 @@ export const spec: UrbanSpec = {
             dataRef: 'table_osm_buildings',
             attributes: { x: 'height', y: 'height' },
             outputColumnName: 'height_sq',
-            wglsFunction: 'return x * y;',
+            wgslFunction: 'return x * y;',
         },
     ],
     map: {

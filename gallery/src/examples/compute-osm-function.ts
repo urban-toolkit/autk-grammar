@@ -22,7 +22,7 @@ export const spec: UrbanSpec = {
             dataRef: 'table_osm_roads',
             attributes: { x: 'lanes' },
             outputColumnName: 'result',
-            wglsFunction: `
+            wgslFunction: `
                 if (x <= 0) {
                     return 1;
                 }
