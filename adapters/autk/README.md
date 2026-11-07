@@ -181,6 +181,20 @@ The camera turns around the point the map looks at, which the view that fits the
 map: { id: 'downtown', camera: { zoom: 15, pitch: 50, bearing: 30 }, layerRefs: [{ dataRef: 'buildings' }] }
 ```
 
+A map's `basemap` draws web map tiles under its layers, fetched as the camera moves. The adapter loads them with autk-map's `loadTiles` once the layers are loaded, since the first layer sets the map's origin, in the workspace's World Mercator coordinates.
+
+| Option | Effect |
+|---|---|
+| `source` | Where the tiles come from: a preset of autk-map's `TILE_SOURCES` (`esriWorldImagery`, `openStreetMap`, and `osmLight` and `osmDark`, the OpenStreetMap tiles muted light or dark), or a source of your own, `{ urlTemplate, attribution }` with optionally `minZoom`, `maxZoom`, `tileSize` and `subdomains`. A name that is not a preset is refused. |
+| `title` | The basemap's name in the map's layer list, where it can be hidden and shown. `Basemap` by default. A title that is another layer's id in that map is refused. |
+| `opacity` | From 0 to 1, 1 by default. |
+
+Each provider sets its own terms of use, and the attribution stays visible on the map.
+
+```ts
+map: { layerRefs: [{ dataRef: 'buildings' }], basemap: { source: 'osmLight', opacity: 0.8 } }
+```
+
 ## Layer styling
 
 Besides `dataRef`, a layer of `map.layerRefs` takes these styling options:
