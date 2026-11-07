@@ -10,6 +10,7 @@ import { createDataAdapter } from "./adapters/data";
 import { createMapAdapter } from "./adapters/map";
 import { createPlotAdapter, linkPlotToLayer, plotKey } from "./adapters/plot";
 import { layerIdOf } from "./adapters/map";
+import { enterWorkspace } from "./workspace";
 import { createComputeAdapter } from "./adapters/compute";
 import { Targets, MapRegistry, MapLayerIds, PlotRegistry, PlotMapLinks, GeoJsonCache, ComputeCache, ComputeLayerTypes, GrammarEventEmitter } from "./types";
 import type { GrammarMapLayer, GrammarPlotSelectionEvent } from "./types";
@@ -145,10 +146,12 @@ export class AutkGrammar {
         });
 
         await this.grammarEngine.run();
+        const db = this.grammarEngine.context as AutkDb | undefined;
+        // Leave the database in the default workspace, whose tables `data` lists.
+        if (db) await enterWorkspace(db);
         this._wireLinks(spec);
         this._rewireInteractions();
 
-        const db = this.grammarEngine.context as AutkDb | undefined;
         if (!db) {
             console.warn('Grammar engine produced no data context.');
             this._data = {};

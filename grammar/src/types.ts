@@ -3,11 +3,22 @@ import { BBox, GeoJsonProperties, Geometry } from 'geojson';
 import { DataSourceType, LayerType, ColorMapInterpolator, PlotEvent, PlotTransformPreset, AggregateFunction, NormalizationMode } from "./constants";
 
 /**
+ * Name of a workspace: an isolated set of tables with its own extent. The first source loaded into a workspace sets its
+ * extent and later sources are cut to it, so two areas that must not clip each other go in two workspaces. A table is
+ * found by its name inside its workspace, so two workspaces may hold tables of the same name. Entries without a
+ * workspace use the default one. Read by the Autark adapter only.
+ * @minLength 1
+ */
+export type WorkspaceName = string;
+
+/**
  * Fields every table-producing data source shares.
  */
 export interface TableSourceBase {
     /** Name of the table this source creates. Later sources, compute passes, maps and plots refer to it by this name. */
     outputTableName: string
+    /** Workspace the table is created in. */
+    workspace?: WorkspaceName
 }
 
 /**
@@ -24,6 +35,8 @@ export type TableSourceSpec = TableSourceBase & {
  */
 export interface JoinSourceSpec {
     type: 'join';
+    /** Workspace of the two tables. */
+    workspace?: WorkspaceName;
     /** Table that receives the joined columns. */
     dataRef: string;
     /** Table whose rows are joined onto the root table. */
@@ -432,6 +445,8 @@ export type MapSpec = {
      * @minLength 1
      */
     id?: string,
+    /** Workspace the map reads its layers' tables from. */
+    workspace?: WorkspaceName,
     /** Map style. */
     style?: string,
     /** Where the map looks from. */
@@ -449,6 +464,8 @@ export interface PlotBase {
     id?: string,
     /** Name of the table to plot. */
     dataRef: string,
+    /** Workspace the table is read from. */
+    workspace?: WorkspaceName,
     /**
      * Columns to plot, in axis order. At least one is required.
      * @minItems 1
@@ -555,6 +572,8 @@ export type FromFeatureDirective = {
 }
 
 type GpgpuComputeBase = {
+    /** Workspace of the tables the pass reads and writes. */
+    workspace?: WorkspaceName,
     /** Name of the table the shader runs over, one invocation per feature. */
     dataRef: string,
     /** Maps WGSL variable names to feature property paths. */
@@ -631,6 +650,8 @@ export type RenderLayerSpec = {
  */
 export type RenderComputeSpec = {
     type: 'render',
+    /** Workspace of the tables the pass reads and writes. */
+    workspace?: WorkspaceName,
     /** Name of the table that receives the result. Later passes, maps and plots read it by this name. */
     outputTableName: string,
     /** How the map draws the new table. Defaults to the type of the viewpoints table. */

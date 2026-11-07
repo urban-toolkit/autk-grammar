@@ -127,6 +127,13 @@ expect('render pass with a bad aggregation', { compute: [{ ...render, aggregatio
 const heat = { type: 'heatmap', outputTableName: 'h', joinDataRef: 'n', near: { distance: 500 }, grid: { rows: 10, columns: 10 } };
 expect('heatmap with useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: false } }] }, true);
 expect('heatmap with a non-boolean useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: 'no' } }] }, false);
+expect('workspaces on sources, a map, a plot and a compute pass', {
+    data: [{ type: 'geojson', outputTableName: 'g', geojsonFileUrl: 'g.json', workspace: 'west' }, { type: 'join', dataRef: 'g', joinDataRef: 'g', workspace: 'west' }],
+    compute: [{ dataRef: 'g', attributes: { x: 'a' }, outputColumnName: 'r', wgslFunction: 'return x;', workspace: 'west' }],
+    map: { workspace: 'west', layerRefs: [{ dataRef: 'g' }] },
+    plot: { workspace: 'west', dataRef: 'g', mark: 'scatter', axis: ['a', 'b'] },
+}, true);
+expect('an empty workspace name', { data: [{ type: 'geojson', outputTableName: 'g', geojsonFileUrl: 'g.json', workspace: '' }] }, false);
 expect('geojson without a source', { data: [{ type: 'geojson', outputTableName: 'g' }] }, false);
 expect('geojson with no features', { data: [{ type: 'geojson', outputTableName: 'g', geojsonObject: { type: 'FeatureCollection', features: [] } }] }, false);
 expect('linechart without transform', { plot: { ...plot, mark: 'linechart' } }, false);
