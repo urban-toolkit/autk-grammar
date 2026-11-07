@@ -374,6 +374,16 @@ export type MapLayerSpec = {
     /** Color scheme used when `isColorMap` is set. */
     colorMapInterpolator?: ColorMapInterpolator,
     /**
+     * The layer's own colors for a categorical value, as `#rrggbb`, one per entry of `colorMapDomain` and in its
+     * order: the first color marks the first category. They replace the colors of the named scheme, so a map can use
+     * a fixed palette (for example one color per land-use class) and still be colored, highlighted and legended by
+     * `getFnv`. It needs `colorMapDomain` with as many entries, and it cannot be set with a sequential or diverging
+     * `colorMapInterpolator`; without an interpolator the layer uses a categorical one. Read by the Autark adapter
+     * for vector layers; the deck.gl adapter ignores it.
+     * @minItems 1
+     */
+    colorMapCategoryColors?: HexColor[],
+    /**
      * Ends of the layer's color scale, as `[low, high]` with low less than high. The layer is colored over this
      * range instead of its own lowest and highest values, so layers that set the same range color the same value
      * alike, in one map or in maps side by side. On a raster layer, `colorMapCenter` and `colorMapReverse` apply

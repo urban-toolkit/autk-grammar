@@ -867,6 +867,44 @@ test('refuses a colorMapRange that is not [low, high] with low below high, with 
     await refused({ colorMapRange: [0, 10], colorMapCenter: -1 }, 'colorMapCenter (-1) must lie within colorMapRange [0, 10].');
 });
 
+test('colors each category of a layer in the colorMapCategoryColors it gives, and refuses colors that do not pair with colorMapDomain', async ({ page }) => {
+    const colors = ['#e15759', '#4e79a7', '#59a14f', '#f28e2b'];
+    const domain = ['0', '10', '20', '30'];
+    const colorsOf = (dataRef: string) => page.evaluate((ref) => {
+        const layer = window.grammar.mapLayer(ref);
+        return layer?.map.layerManager.searchByLayerId(layer.layerId)?.layerRenderInfo.colormap.config.colors;
+    }, dataRef);
+
+    // Without an interpolator the layer takes a categorical one, and autk-map gets the colors in domain order.
+    await runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones', getFnv: 'v', colorMapDomain: domain, colorMapCategoryColors: colors }] },
+    });
+    expect((await layerById(page)).zones).toMatchObject({ isColorMap: true, interpolator: 'schemeTableau10', domain });
+    expect(await colorsOf('zones')).toEqual(colors);
+    await expectDrawn(page, 'map0', 4);
+
+    // With a categorical interpolator of its own, the colors still replace its scheme's.
+    await runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones', getFnv: 'v', colorMapInterpolator: scheme('schemeCategory10'), colorMapDomain: domain, colorMapCategoryColors: colors }] },
+    });
+    expect((await layerById(page)).zones).toMatchObject({ interpolator: 'schemeCategory10', domain });
+    expect(await colorsOf('zones')).toEqual(colors);
+
+    const refused = (options: Record<string, unknown>, message: string) => expect(runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones', title: 'Zones', getFnv: 'v', ...options } as MapLayerSpec] },
+    })).rejects.toThrow(`Layer "Zones": ${message}`);
+    await refused({ colorMapCategoryColors: colors }, 'colorMapCategoryColors needs colorMapDomain, which names the category each color marks.');
+    await refused({ colorMapDomain: domain, colorMapCategoryColors: colors.slice(0, 3) },
+        'colorMapCategoryColors has 3 colors for 4 colorMapDomain entries; they pair one to one.');
+    await refused({ colorMapDomain: domain, colorMapCategoryColors: ['red', 'green', 'blue', 'gray'] }, 'colorMapCategoryColors must be a list of #rrggbb colors.');
+    await refused({ colorMapDomain: domain, colorMapCategoryColors: [] }, 'colorMapCategoryColors must be a list of #rrggbb colors.');
+    await refused({ colorMapInterpolator: scheme('interpolateViridis'), colorMapDomain: domain, colorMapCategoryColors: colors },
+        'colorMapCategoryColors need a categorical colorMapInterpolator, not "interpolateViridis".');
+});
+
 // Raster layers: the gallery's 30 x 30 noise heatmap, drawn over its neighborhoods.
 const scheme = (name: string) => name as unknown as ColorMapInterpolator;
 function heatmapWith(options: Partial<MapLayerSpec>): UrbanSpec {

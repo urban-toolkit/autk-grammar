@@ -137,6 +137,26 @@ function checkColorMapRange(layerRef: MapLayerSpec): void {
         throw refuse(`colorMapCenter (${center}) must lie within colorMapRange [${low}, ${high}].`);
 }
 
+/**
+ * Refuses `colorMapCategoryColors` that do not pair with `colorMapDomain` one to one, that are not `#rrggbb`, or that are set
+ * with an interpolator that is not categorical. The schema cannot compare the lengths of two lists.
+ */
+function checkColorMapCategoryColors(layerRef: MapLayerSpec): void {
+    const colors: unknown = layerRef.colorMapCategoryColors;
+    if (colors === undefined) return;
+    const refuse = (message: string) => new Error(`Layer "${layerIdOf(layerRef)}": ${message}`);
+    if (!Array.isArray(colors) || colors.length === 0 || !colors.every((color) => typeof color === 'string' && /^#[0-9a-fA-F]{6}$/.test(color)))
+        throw refuse('colorMapCategoryColors must be a list of #rrggbb colors.');
+    const domain = layerRef.colorMapDomain;
+    if (!domain || domain.length === 0)
+        throw refuse('colorMapCategoryColors needs colorMapDomain, which names the category each color marks.');
+    if (domain.length !== colors.length)
+        throw refuse(`colorMapCategoryColors has ${colors.length} colors for ${domain.length} colorMapDomain entries; they pair one to one.`);
+    const interpolator = layerRef.colorMapInterpolator as unknown as ColorMapConfig['interpolator'] | undefined;
+    if (interpolator !== undefined && !ColorMap.isCategorical(interpolator))
+        throw refuse(`colorMapCategoryColors need a categorical colorMapInterpolator, not "${interpolator}".`);
+}
+
 function buildDomainSpec(
     normalization: MapSpec['layerRefs'][number]['normalization'],
     colorMapDomain?: string[],
@@ -327,14 +347,17 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
             // in its config, where the updateThematic below reads it.
             const range = layerRef.colorMapRange;
             const rasterScale = type === 'raster' && (range != null || layerRef.colorMapCenter != null || layerRef.colorMapReverse === true);
-            if(layerRef.colorMapInterpolator || rasterScale || range) {
+            const customColors = type !== 'raster' ? layerRef.colorMapCategoryColors : undefined;
+            if(layerRef.colorMapInterpolator || customColors || rasterScale || range) {
                 const colormapConfig: ColorMapConfig = {
                     // urban-grammar ColorMapInterpolator values are string-compatible
                     // with autk-core ColorMapInterpolator at runtime
                     interpolator: (layerRef.colorMapInterpolator as unknown as ColorMapConfig['interpolator'] | undefined)
-                        ?? map.layerManager.searchByLayerId(layerId)?.layerRenderInfo.colormap.config.interpolator
+                        ?? (customColors ? ColorMapInterpolator.CAT_TABLEAU10
+                            : map.layerManager.searchByLayerId(layerId)?.layerRenderInfo.colormap.config.interpolator)
                         ?? ColorMapInterpolator.SEQ_REDS,
                     domainSpec: buildDomainSpec(layerRef.normalization, effectiveDomain),
+                    ...(customColors ? { colors: customColors as ColorMapConfig['colors'] } : {}),
                 };
                 let domain: number[] | undefined;
                 if(rasterScale)
@@ -366,6 +389,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 for(const layerRef of spec.layerRefs) {
                     checkColorMapRange(layerRef);
                     checkPointSize(layerRef.pointSize, layerIdOf(layerRef));
+                    checkColorMapCategoryColors(layerRef);
                 }
 
                 let canvas;
