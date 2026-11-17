@@ -5,6 +5,8 @@ import type { LayerRenderInfo } from '@urban-toolkit/autk-map';
 import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator } from '@urban-toolkit/autk-core';
 import type { ColorHEX, ColorMapConfig, ColorMapDomainSpec, ColorRGB, LayerType, TransferFunction } from '@urban-toolkit/autk-core';
 import { AutkDb } from '@urban-toolkit/autk-db';
+import { extentOf } from './data';
+import { checkPointSize, planarPointSize } from '../point-size';
 
 /** The id a layer has in its map: its `title`, else its `dataRef`. */
 export function layerIdOf(layerRef: MapLayerSpec): string {
@@ -215,6 +217,13 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
             if(Object.keys(style).length > 0)
                 map.updateRenderInfo(layerId, style);
 
+            // pointSize is in meters on the ground, and autk-map's in planar units, which Mercator stretches away
+            // from the equator: the layer's points are sized at the middle of its extent.
+            const crs = context.getWorkspaceConfiguration().coordinateFormat;
+            const pointSize = planarPointSize(layerRef.pointSize, type, crs, () => extentOf(data));
+            if(pointSize !== undefined)
+                map.updateRenderInfo(layerId, { pointSize });
+
             // Thematic (getFnv) vector layers are colored by value out of the box: autk-map
             // attaches a default colour ramp to every layer, so this works even when the
             // spec omits colorMapInterpolator (see colorsByValue).
@@ -298,8 +307,10 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
             if(targets && targets.map && context){
 
                 checkLayerIds(spec, index);
-                for(const layerRef of spec.layerRefs)
+                for(const layerRef of spec.layerRefs) {
                     checkColorMapRange(layerRef);
+                    checkPointSize(layerRef.pointSize, layerIdOf(layerRef));
+                }
 
                 let canvas;
 

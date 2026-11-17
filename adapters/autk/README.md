@@ -75,6 +75,7 @@ Besides `dataRef`, a layer of `map.layerRefs` takes these styling options:
 | `color` | The layer's color, `#rrggbb`. The layer is drawn in it rather than by its `getFnv` value, unless `isColorMap` is `true`. |
 | `stroke` | A polygon layer's outline: its color, `#rrggbb`, or `false` for none. |
 | `width` | The width of a polylines or roads layer's lines, in the map's planar units (autk-map's `polylinesWidth`). |
+| `pointSize` | The radius of each point of a points layer, in meters on the ground. The adapter converts it to the workspace's planar units at the middle of the layer, where World Mercator stretches a meter by about 1.34 at Chicago, and passes it as autk-map's `pointSize`. Without it, autk-map draws each point with a radius of 64 planar units, about 48 m at Chicago. Other layers ignore it. |
 | `colorMapInterpolator` | The color scheme. A raster layer's cells and its legend's labels follow it. |
 | `colorMapRange` | The ends of the color scale, `[low, high]` with low less than high. The layer is colored over this range instead of its own lowest and highest values, so layers that set the same range, in one map or in maps side by side, color the same value alike. Raster and vector layers. A categorical scheme ignores it, and a layer cannot set both `colorMapRange` and `colorMapDomain`. On a raster layer, a `transferFunction` still sets opacity from the layer's own values. |
 | `colorMapCenter` | On a raster layer, the value at the middle of the color scale. With `colorMapRange`, the scale runs from the range's low through the center to its high (a sequential scheme keeps only the ends). Without it, the scale runs from the center less the farthest value's distance to it, to the center plus that distance. |
@@ -85,11 +86,12 @@ After a run, `grammar.mapLayer(dataRef)` finds the layer a map draws for a table
 
 ```ts
 await grammar.run({
-  data: [/* tables named routes and parcels, and a heatmap raster named change */],
+  data: [/* tables named routes and parcels, a points table named fixes, and a heatmap raster named change */],
   map: {
     layerRefs: [
       { dataRef: 'parcels', color: '#4e79a7', stroke: false },
       { dataRef: 'routes', title: 'Fastest route', color: '#e15759', width: 30 },
+      { dataRef: 'fixes', title: 'GPS fixes', color: '#f28e2b', pointSize: 2 }, // discs 4 m across
       { dataRef: 'change', title: 'Change', colorMapInterpolator: ColorMapInterpolator.DIV_RED_BLUE, colorMapCenter: 0, colorMapReverse: true },
     ],
   },

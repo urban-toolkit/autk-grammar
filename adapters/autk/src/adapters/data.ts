@@ -52,7 +52,7 @@ function crsAdvice(coordinateFormat: string | undefined): string {
 }
 
 /** The [minX, minY, maxX, maxY] of every position in a collection, or undefined when it has none. */
-function extentOf(collection: FeatureCollection): [number, number, number, number] | undefined {
+export function extentOf(collection: FeatureCollection): [number, number, number, number] | undefined {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const visitPositions = (value: unknown): void => {
         if (!Array.isArray(value)) return;

@@ -305,6 +305,14 @@ export type MapLayerSpec = {
      * @exclusiveMinimum 0
      */
     width?: number,
+    /**
+     * Radius of each point of a points layer, in meters on the ground. The Autark adapter converts it to the
+     * workspace's planar units at the middle of the layer's extent, where World Mercator, the default, stretches a
+     * meter by about 1.34 at Chicago, and passes it as autk-map's `pointSize`. Without it, autk-map's radius of 64
+     * planar units applies. Other layers and the deck.gl adapter ignore it.
+     * @exclusiveMinimum 0
+     */
+    pointSize?: number,
     /** Color the layer by the value read with `getFnv`. */
     isColorMap?: boolean,
     /** Color scheme used when `isColorMap` is set. */
