@@ -341,6 +341,20 @@ const paths: DataSourceSpec = {
         })),
     },
 };
+// `spots`: nine points on a grid around the middle of `area`, 0.004 degrees apart, so that autk-map's default
+// discs, 128 planar units across, stay apart.
+const spots: DataSourceSpec = {
+    type: 'geojson',
+    outputTableName: 'spots',
+    geojsonObject: {
+        type: 'FeatureCollection',
+        features: [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => ({
+            type: 'Feature' as const,
+            properties: { id: i },
+            geometry: { type: 'Point' as const, coordinates: [-73.984 + (i % 3) * 0.004, 40.751 + Math.floor(i / 3) * 0.004] },
+        })),
+    },
+};
 
 function mapLayers(page: Page, canvasId = 'map0'): Promise<LayerState[]> {
     return page.evaluate((id) => window.mapLayers(id), canvasId);
@@ -439,6 +453,74 @@ test('draws a layer in its color, line width and outline', async ({ page }) => {
     expect(layers.blocks.showBorders).toBe(false);
     // width is autk-map's polylinesWidth.
     expect(layers.paths).toMatchObject({ color: { r: 44, g: 160, b: 44, alpha: 1 }, polylinesWidth: 40 });
+});
+
+/** How many World Mercator (EPSG:3395) units a meter on the ground spans at a latitude: sec φ times sqrt(1 - e² sin² φ). */
+function worldMercatorScale(lat: number): number {
+    const phi = (lat * Math.PI) / 180;
+    const s = 0.0818191908426215 * Math.sin(phi);
+    return Math.sqrt(1 - s * s) / Math.cos(phi);
+}
+
+/**
+ * How many pixels of the map on #map0 are drawn in `color`, `#rrggbb`, give or take 8 in each channel. The image is
+ * attached to the test as `<name>.png`.
+ */
+async function pixelsIn(page: Page, color: string, name: string): Promise<number> {
+    await page.waitForTimeout(1500);
+    const dataUrl = await page.evaluate(() => window.readMap('map0'));
+    const image = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
+    await test.info().attach(`${name}.png`, { body: image, contentType: 'image/png' });
+    const png = PNG.sync.read(image);
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16));
+    let count = 0;
+    for (let i = 0; i < png.data.length; i += 4) {
+        if (Math.abs(png.data[i] - r) <= 8 && Math.abs(png.data[i + 1] - g) <= 8 && Math.abs(png.data[i + 2] - b) <= 8) count++;
+    }
+    return count;
+}
+
+test('draws the points of a points layer with a pointSize radius in meters on the ground', async ({ page }) => {
+    const red = '#d62728';
+    const spotsWith = (options: Partial<MapLayerSpec>): UrbanSpec => ({
+        data: [area, spots],
+        map: { layerRefs: [{ dataRef: 'spots', color: red, ...options }] },
+    });
+    // The points lie around 40.755 degrees north, where a meter on the ground spans about 1.32 planar units.
+    const scale = worldMercatorScale(40.755);
+
+    // Without pointSize, autk-map's radius of 64 planar units, about 49 m on the ground here.
+    await runSpec(page, spotsWith({}));
+    expect((await layerById(page)).spots.pointSize).toBe(64);
+    const byDefault = await pixelsIn(page, red, 'default discs');
+    expect(byDefault, 'pixels of the default discs').toBeGreaterThan(100);
+
+    // 12 m is about 16 planar units, a quarter of that radius, so the discs cover about a sixteenth of the pixels.
+    await runSpec(page, spotsWith({ pointSize: 12 }));
+    const small = await pixelsIn(page, red, '12 m discs');
+    expect(small, 'pixels of the 12 m discs').toBeGreaterThan(0);
+    expect(small * 4, `the 12 m discs cover ${small} pixels, the default ones ${byDefault}`).toBeLessThan(byDefault);
+    expect((await layerById(page)).spots.pointSize).toBeCloseTo(12 * scale, 3);
+
+    // 2 m, as for GPS fixes a meter or two apart. A polygon layer ignores pointSize, as it ignores width.
+    await runSpec(page, {
+        data: [area, zones, spots],
+        map: { layerRefs: [{ dataRef: 'zones', pointSize: 2 }, { dataRef: 'spots', pointSize: 2 }] },
+    });
+    const layers = await layerById(page);
+    expect(layers.spots.pointSize).toBeCloseTo(2 * scale, 4);
+    expect(layers.zones.pointSize).toBeUndefined();
+});
+
+test('refuses a pointSize that is not a number of meters greater than 0, on any layer', async ({ page }) => {
+    const refused = (dataRef: string, options: Record<string, unknown>, message: string) => expect(runSpec(page, {
+        data: [area, zones, spots],
+        map: { layerRefs: [{ dataRef, title: 'Named', ...options } as MapLayerSpec] },
+    })).rejects.toThrow(`Layer "Named": ${message}`);
+    await refused('spots', { pointSize: 0 }, 'pointSize must be a number of meters greater than 0, not 0.');
+    await refused('spots', { pointSize: -2 }, 'pointSize must be a number of meters greater than 0, not -2.');
+    await refused('spots', { pointSize: '2' }, 'pointSize must be a number of meters greater than 0, not "2".');
+    await refused('zones', { pointSize: 0 }, 'pointSize must be a number of meters greater than 0, not 0.');
 });
 
 test('colors two vector layers with different value ranges over one colorMapRange', async ({ page }) => {

@@ -73,6 +73,8 @@ expect('scatter selectFields', { plot: { ...plot, mark: 'scatter', events: ['cli
 expect('bar selectFields', { plot: { ...plot, mark: 'bar', events: ['brushX'], selectFields: ['id'] } }, true);
 expect('layer title, color, outline and width', { map: { layerRefs: [{ dataRef: 't', title: 'Trees', color: '#1f77b4', stroke: '#D62728', width: 2.5 }] } }, true);
 expect('layer without an outline', { map: { layerRefs: [{ dataRef: 't', stroke: false }] } }, true);
+expect('points layer pointSize in meters', { map: { layerRefs: [{ dataRef: 't', pointSize: 2 }] } }, true);
+expect('points layer pointSize below a meter', { map: { layerRefs: [{ dataRef: 't', pointSize: 0.5 }] } }, true);
 expect('raster scale centered and reversed', { map: { layerRefs: [{ dataRef: 'r', colorMapInterpolator: 'interpolateRdBu', colorMapCenter: -1.5, colorMapReverse: true }] } }, true);
 expect('raster transfer function', { map: { layerRefs: [{ dataRef: 'r', transferFunction: { mode: 'linear', opacityMin: 0, opacityMax: 1, gamma: 2, zeroCenter: 5 } }] } }, true);
 expect('raster cells opaque', { map: { layerRefs: [{ dataRef: 'r', transferFunction: { opacityMin: 1, opacityMax: 1 } }] } }, true);
@@ -134,6 +136,9 @@ expect('layer stroke by name', layer({ stroke: 'blue' }), false);
 expect('layer width zero', layer({ width: 0 }), false);
 expect('layer width negative', layer({ width: -2 }), false);
 expect('layer width as a string', layer({ width: '2' }), false);
+expect('layer pointSize of 0 m', layer({ pointSize: 0 }), false);
+expect('layer pointSize negative', layer({ pointSize: -2 }), false);
+expect('layer pointSize as a string', layer({ pointSize: '2' }), false);
 expect('colorMapCenter as a string', layer({ colorMapCenter: '0' }), false);
 expect('colorMapReverse as a string', layer({ colorMapReverse: 'yes' }), false);
 expect('transferFunction as a number', layer({ transferFunction: 1 }), false);
@@ -169,7 +174,7 @@ expect('osm queryArea without bbox or geocodeArea', osmIn({}), false);
 
 // Each layer styling option is documented in the schema.
 const layerProperties = schema.definitions?.MapLayerSpec?.properties ?? {};
-for (const key of ['title', 'color', 'width', 'stroke', 'colorMapCenter', 'colorMapReverse', 'colorMapRange', 'transferFunction']) {
+for (const key of ['title', 'color', 'width', 'pointSize', 'stroke', 'colorMapCenter', 'colorMapReverse', 'colorMapRange', 'transferFunction']) {
     const description = layerProperties[key]?.description;
     if (typeof description !== 'string' || description.trim() === '') {
         failures++;

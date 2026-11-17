@@ -16,6 +16,7 @@ export type LayerState = {
     strokeColor?: ColorRGB;
     showBorders?: boolean;
     polylinesWidth?: number;
+    pointSize?: number;
     isColorMap?: boolean;
     isPick?: boolean;
     interpolator: string;
@@ -150,6 +151,7 @@ window.mapLayers = (canvasId: string) => mapOn(canvasId).layerManager.layers.map
         strokeColor: info.strokeColor,
         showBorders: info.showBorders,
         polylinesWidth: info.polylinesWidth,
+        pointSize: info.pointSize,
         isColorMap: info.isColorMap,
         isPick: info.isPick,
         interpolator: info.colormap.config.interpolator,
