@@ -4,7 +4,7 @@ import { Targets, PlotRegistry, GeoJsonCache, ComputeCache } from '../types';
 import { addPlotLink, exportOf } from '../drawn';
 import type { DrawnLayer, DrawnLayers, LayerExports, PlotLinks, PlotRows } from '../drawn';
 import { rowKeys, translateIds } from '../rows';
-import { AutkDb } from '@urban-toolkit/autk-db';
+import { AutkDb, isRenderableTable } from '@urban-toolkit/autk-db';
 import { AutkPlot, PlotEvent as AutkPlotEvent } from '@urban-toolkit/autk-plot';
 import type { PlotEventData, PlotType, PlotTransformConfig } from '@urban-toolkit/autk-plot';
 import { MapEvent } from '@urban-toolkit/autk-map';
@@ -51,6 +51,21 @@ export function linkPlotToLayer(plot: AutkPlot, rows: readonly string[], events:
 }
 
 /**
+ * A table's rows as a plot reads them from autk-db: the export of a table with a geometry, the one the maps of the run
+ * draw, and for a table without one, such as a CSV or JSON table loaded without `geometryColumns`, which autk-db does
+ * not export as a layer, its rows, each a feature without a geometry. autk-plot reads only the features' properties.
+ */
+async function tableRows(db: AutkDb, name: string, key: string, exports?: LayerExports): Promise<FeatureCollection> {
+    const table = db.getTablesMetadata().find((candidate) => candidate.name === name);
+    if (table && !isRenderableTable(table)) {
+        const rows = await db.getTable(name);
+        // A feature without a geometry, which GeoJSON allows and the plot does not read.
+        return { type: 'FeatureCollection', features: rows.map((properties) => ({ type: 'Feature', geometry: null, properties })) } as unknown as FeatureCollection;
+    }
+    return exportOf(exports, key, () => db.getLayer(name));
+}
+
+/**
  * The plot adapter `AutkGrammar` runs. Each plot it draws goes in `plotRegistry`, and the keys of the rows it draws in
  * `plotRows`, by the plot's `id`, else its `dataRef`. A table it reads from autk-db is the export the maps of the run
  * draw, from `exports`.
@@ -73,7 +88,7 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
 
             await enterWorkspace(db, spec.workspace);
             const key = tableKey(spec.workspace, spec.dataRef);
-            const geojson: FeatureCollection = computeCache?.get(key) ?? cache?.get(key) ?? await exportOf(exports, key, () => db.getLayer(spec.dataRef));
+            const geojson: FeatureCollection = computeCache?.get(key) ?? cache?.get(key) ?? await tableRows(db, spec.dataRef, key, exports);
 
             const events = (spec.events ?? []) as unknown as AutkPlotEvent[];
 

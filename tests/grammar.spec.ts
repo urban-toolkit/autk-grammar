@@ -268,6 +268,20 @@ test('links a plot to the map', async ({ page }) => {
     });
 });
 
+test('draws a bar chart of a CSV table without coordinates, from its rows', async ({ page }) => {
+    // autk-db exports a table as a layer only when it has a geometry, and the plot always asked for that export, so a
+    // chart of a CSV or JSON table loaded without geometryColumns failed: "Table sales is not a renderable layer".
+    const { plotSvgs } = await runSpec(page, {
+        data: [{ type: 'csv', outputTableName: 'sales', csvObject: [['month', 'total'], ['Jan', 3], ['Feb', 5], ['Mar', 2]] }],
+        plot: { dataRef: 'sales', mark: 'bar', axis: ['month', 'total'] },
+    });
+    expect(plotSvgs).toBe(1);
+    const bars = await page.evaluate(() => [...document.querySelectorAll('#plot rect.autkMark')]
+        .map((bar) => (bar as Element & { __data__?: { month?: string; total?: number } }).__data__)
+        .map((datum) => `${datum?.month} ${datum?.total}`));
+    expect(bars.sort()).toEqual(['Feb 5', 'Jan 3', 'Mar 2']);
+});
+
 test('draws a layer and a plot that name selectFields, and still reports feature ids', async ({ page }) => {
     // interaction-external names nta2020 as the key of its pickable layer and of its plot.
     // Neither adapter reads selectFields: the spec draws as before, and a click on a plot mark
