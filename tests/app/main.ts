@@ -4,7 +4,6 @@ import { ColorMap } from '@urban-toolkit/autk-core';
 import type { ColorMapInterpolator, ColorRGB } from '@urban-toolkit/autk-core';
 import { AutkMap } from '@urban-toolkit/autk-map';
 import type { FeatureCollection, Geometry } from 'geojson';
-import { createPanes } from '../../gallery/src/views';
 
 export type TableSummary = { features: number; properties: string[] };
 export type RunSummary = { tables: Record<string, TableSummary>; plotSvgs: number };
@@ -130,9 +129,10 @@ window.runSpec = async (spec: UrbanSpec, plotTargets: 'one' | 'each' = 'one') =>
 /**
  * Runs a spec in the panes the gallery hub builds for a spec with a layout (gallery/src/views.ts, which places each
  * view as `arrangeViews` says), in a stage of `width` by `height` pixels. Returns the grammar's targets and each pane's
- * box, once the views are drawn.
+ * box, once the views are drawn. The hub's code is loaded here, so only the tests that ask for it depend on it.
  */
 window.runInPanes = async (spec: UrbanSpec, width: number, height: number) => {
+    const { createPanes } = await import('../../gallery/src/views');
     window.grammar?.destroy();
     const stage = document.getElementById('stage')!;
     stage.innerHTML = '';
