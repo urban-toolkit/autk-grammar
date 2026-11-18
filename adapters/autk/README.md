@@ -79,6 +79,15 @@ await grammar.run({
 });
 ```
 
+### Heatmap `normalize`
+
+An entry of a heatmap's `groupBy` with `normalize: true` asks for its band's values rescaled from 0 to 1 across the grid's cells, as a join's `normalize` rescales a value across the features. It needs an autk-db with urban-toolkit/autark#132, which also adds `_norm` to the band's label, so a layer names it as `<aggregateFn>.<joinDataRef>_norm`. autk-db 4.1.1 builds the band from the values as they are, under the label it would have without `normalize`. A layer can also name a band by its id, `band_1`, `band_2` and so on, one per entry of `groupBy`, in order.
+
+```ts
+{ type: 'heatmap', outputTableName: 'heat', joinDataRef: 'noise', near: { distance: 1000 }, grid: { rows: 20, columns: 20 },
+  groupBy: [{ column: 'Unique Key', aggregateFn: 'count', normalize: true }] }
+```
+
 ### `sql` sources
 
 A `sql` source saves the rows of a query over the tables of its workspace as a new table, `outputTableName`:

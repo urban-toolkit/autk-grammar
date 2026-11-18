@@ -148,6 +148,8 @@ expect('heatmap with a non-boolean useCentroid', { data: [{ ...heat, near: { dis
 expect('heatmap groupBy with count', { data: [{ ...heat, groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }] }] }, true);
 expect('heatmap groupBy with collect, which lists rows while a cell holds one value', { data: [{ ...heat, groupBy: [{ column: 'date', aggregateFn: 'collect' }] }] }, false);
 expect('join groupBy with collect', { data: [{ type: 'join', dataRef: 't', joinDataRef: 'n', groupBy: [{ column: 'date', aggregateFn: 'collect' }] }] }, true);
+expect('heatmap groupBy with normalize', { data: [{ ...heat, groupBy: [{ column: 'Unique Key', aggregateFn: 'count', normalize: true }] }] }, true);
+expect('heatmap groupBy with normalize as a string', { data: [{ ...heat, groupBy: [{ column: 'Unique Key', aggregateFn: 'count', normalize: 'yes' }] }] }, false);
 expect('workspaces on sources, a map, a plot and a compute pass', {
     data: [{ type: 'geojson', outputTableName: 'g', geojsonFileUrl: 'g.json', workspace: 'west' }, { type: 'join', dataRef: 'g', joinDataRef: 'g', workspace: 'west' }],
     compute: [{ dataRef: 'g', attributes: { x: 'a' }, outputColumnName: 'r', wgslFunction: 'return x;', workspace: 'west' }],
@@ -333,6 +335,7 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['workspaces', 'workspaces.name', 'workspaces.coordinateFormat', 'workspaces.precisionGrid']],
     ['WorkspaceSpec', ['']],
     ['SqlSourceSpec', ['', 'query', 'layerType']],
+    ['HeatmapSourceSpec', ['groupBy.normalize']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

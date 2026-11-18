@@ -103,6 +103,12 @@ export interface HeatmapSourceSpec extends TableSourceBase {
         column: string;
         /** How the rows combine into the cell's value: any aggregate but `collect`, which lists rows, while a cell holds one value. */
         aggregateFn?: HeatmapAggregateFunction;
+        /**
+         * Rescale the band's values from 0 to 1 across the grid's cells. It needs an autk-db with
+         * urban-toolkit/autark#132, which also adds `_norm` to the band's label; autk-db 4.1.1 builds the band from the
+         * values as they are.
+         */
+        normalize?: boolean;
     }>;
     /** Grid resolution. */
     grid: {

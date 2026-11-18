@@ -163,6 +163,18 @@ test("a sql source saved under a GeoJSON table's name takes its rows out of the 
     assert.deepEqual([...cache.keys()], ['west/zones']);
 });
 
+// A heatmap's bands, each from an entry of groupBy.
+test("a heatmap hands autk-db each band's normalize", async () => {
+    const groupBy = [
+        { column: 'Unique Key', aggregateFn: 'count' },
+        { column: 'Unique Key', aggregateFn: 'count', normalize: true },
+    ];
+    const heatmap = { type: 'heatmap', outputTableName: 'heat', joinDataRef: 'noise', near: { distance: 500 }, grid: { rows: 4, columns: 4 }, groupBy };
+    assert.deepEqual(await callsFor(heatmap), [
+        ['buildHeatmap', { tableJoinName: 'noise', near: { distance: 500 }, outputTableName: 'heat', grid: { rows: 4, columns: 4 }, groupBy }],
+    ]);
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
     try { await fn(); console.log(`ok ${name}`); }

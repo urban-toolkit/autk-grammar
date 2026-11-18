@@ -1314,6 +1314,22 @@ test('accepts useCentroid on a heatmap', async ({ page }) => {
     expect((await heatmapLayer(page)).finite).toEqual(byDefault.finite);
 });
 
+test('builds a heatmap band with normalize, which autk-db 4.1.1 draws from the raw counts', async ({ page }) => {
+    // This test encodes autk-db 4.1.1. urban-toolkit/autark#132 rescales a normalized band from 0 to 1 and adds _norm to
+    // its label; once an autk-db with it is released, the `latest` leg fails here, and the test moves to those values.
+    const [neighborhoods, noise, source] = heatmapGeojson.data!;
+    const heatmap = source as HeatmapSourceSpec;
+    await runSpec(page, heatmapGeojson);
+    const raw = (await heatmapLayer(page)).finite;
+    await runSpec(page, {
+        ...heatmapGeojson,
+        data: [neighborhoods, noise, { ...heatmap, groupBy: heatmap.groupBy!.map((group) => ({ ...group, normalize: true })) }],
+    });
+    const normalized = (await heatmapLayer(page)).finite;
+    expect(Math.max(...raw), 'the busiest cell counts many complaints').toBeGreaterThan(1);
+    expect(normalized).toEqual(raw);
+});
+
 test('saves the rows of a sql source as a table, drawn as its layerType says, or plotted without one', async ({ page }) => {
     const { tables } = await runSpec(page, {
         data: [
