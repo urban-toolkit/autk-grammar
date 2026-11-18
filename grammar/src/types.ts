@@ -12,6 +12,28 @@ import { DataSourceType, LayerType, ColorMapInterpolator, PlotEvent, PlotTransfo
 export type WorkspaceName = string;
 
 /**
+ * How a workspace stores its tables: the coordinate system they are kept in, and the grid their coordinates are rounded
+ * to. Read by the Autark adapter only.
+ */
+export type WorkspaceSpec = {
+    /** The workspace, by the name sources, compute passes, maps and plots give as their `workspace`. Without it, the default workspace. */
+    name?: WorkspaceName,
+    /**
+     * CRS the workspace stores its tables in, as an EPSG string such as `'EPSG:3857'`. Each source is transformed to
+     * it as it loads, its maps draw in its units, and so are the lengths given in workspace units, such as a join's
+     * `near.distance`. autk-db's default is `'EPSG:3395'`, World Mercator, in meters.
+     * @minLength 1
+     */
+    coordinateFormat: string,
+    /**
+     * Grid every stored coordinate is rounded to, in the CRS's units. autk-db's default is `0.01`, a centimeter in World
+     * Mercator. A geometry the grid collapses is refused as it loads.
+     * @exclusiveMinimum 0
+     */
+    precisionGrid: number,
+}
+
+/**
  * Fields every table-producing data source shares.
  */
 export interface TableSourceBase {
@@ -859,6 +881,11 @@ export type UrbanSpec = {
     $schema?: string,
     /** How the host arranges the maps and plots. */
     layout?: LayoutSpec,
+    /**
+     * How workspaces store their tables, one entry per workspace, set before the first source loads. A workspace
+     * without an entry keeps autk-db's CRS and grid. Read by the Autark adapter only.
+     */
+    workspaces?: WorkspaceSpec[],
     /** Tables to load, in order. */
     data?: DataSourceSpec[],
     /** Compute passes, run in order after the data is loaded. */

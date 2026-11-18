@@ -1436,6 +1436,55 @@ test('keeps two areas in two workspaces, each with its own extent and its own ma
     expect(await page.evaluate(() => Object.keys(window.grammar.data))).toEqual([]);
 });
 
+/** A point given in degrees, in Web Mercator (EPSG:3857) meters, on its sphere. */
+function webMercator(lon: number, lat: number): [number, number] {
+    const a = 6378137;
+    return [(a * lon * Math.PI) / 180, a * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))];
+}
+
+test('stores the tables of each workspace in the CRS and on the grid its workspaces entry sets', async ({ page }) => {
+    // The default workspace in Web Mercator on a 10 m grid, "web" in Web Mercator on autk-db's 1 cm grid, and "plain",
+    // which has no entry, as autk-db keeps a workspace: in World Mercator.
+    const into = (workspace: string, source: DataSourceSpec) => ({ ...source, workspace }) as DataSourceSpec;
+    await runSpec(page, {
+        workspaces: [
+            { coordinateFormat: 'EPSG:3857', precisionGrid: 10 },
+            { name: 'web', coordinateFormat: 'EPSG:3857', precisionGrid: 0.01 },
+        ],
+        data: [area, zones, into('web', area), into('plain', area)],
+        map: [
+            { layerRefs: [{ dataRef: 'zones' }] },
+            { workspace: 'web', layerRefs: [{ dataRef: 'area' }] },
+            { workspace: 'plain', layerRefs: [{ dataRef: 'area' }] },
+        ],
+    });
+
+    // The default workspace's zones, in Web Mercator meters, each coordinate on the 10 m grid.
+    const extents = await page.evaluate(() => window.featureExtents('zones'));
+    expect(extents).toHaveLength(4);
+    expect(extents.flat().filter((value) => value % 10 !== 0), 'coordinates off the 10 m grid').toEqual([]);
+    const side = (i: number, pick: (...values: number[]) => number) => pick(...extents.map((extent) => extent[i]));
+    const [west, south] = webMercator(-73.99, 40.75);
+    const [east, north] = webMercator(-73.975, 40.753);
+    [[side(0, Math.min), west], [side(1, Math.min), south], [side(2, Math.max), east], [side(3, Math.max), north]]
+        .forEach(([actual, expected], i) => expect(Math.abs(actual - expected), `zones extent ${i}, in meters`).toBeLessThan(6));
+
+    // A map's origin is the middle of its first layer's extent: area's, in Web Mercator in "web" and in World Mercator,
+    // autk-db's default, in "plain". The two lie about 33 km apart at this latitude.
+    const middle = (project: (lon: number, lat: number) => [number, number]) => {
+        const [x0, y0] = project(-74.0, 40.735);
+        const [x1, y1] = project(-73.96, 40.775);
+        return [(x0 + x1) / 2, (y0 + y1) / 2];
+    };
+    const origins = await page.evaluate(() => window.grammar.maps.map((map) => [...map.layerManager.origin]));
+    expect(origins).toHaveLength(3);
+    const expected: Array<[string, number[], number[]]> = [['web', origins[1], middle(webMercator)], ['plain', origins[2], middle(worldMercator)]];
+    for (const [name, origin, [x, y]] of expected) {
+        expect(Math.abs(origin[0] - x), `${name} origin x`).toBeLessThan(2);
+        expect(Math.abs(origin[1] - y), `${name} origin y`).toBeLessThan(2);
+    }
+});
+
 // The gallery examples of the keys 5.0.0 adds, each run as the gallery runs it, and checked for what it draws or computes.
 
 /** A gallery example's spec, loaded in the page (see window.exampleSpec), to run it changed. */

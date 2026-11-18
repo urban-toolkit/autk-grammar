@@ -1,5 +1,5 @@
-import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec } from '@urban-toolkit/the-urban-grammar';
-import { AutkDb, DEFAULT_WORKSPACE_COORDINATE_FORMAT } from '@urban-toolkit/autk-db';
+import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec, WorkspaceSpec } from '@urban-toolkit/the-urban-grammar';
+import { AutkDb, DEFAULT_WORKSPACE_NAME } from '@urban-toolkit/autk-db';
 import type { LoadGeojsonParams } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Geometry } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
@@ -86,6 +86,19 @@ function crsAdvice(coordinateFormat: string | undefined): string {
     return `${assumed}. Verify that coordinateFormat matches the actual CRS of the input data.`;
 }
 
+/** How a message names a workspace: the default one, or another by its name. */
+function workspaceLabel(name: string | undefined): string {
+    return name === undefined || name === DEFAULT_WORKSPACE_NAME ? 'the default workspace' : `the workspace "${name}"`;
+}
+
+/** The database a source loads into: `context`, else a new one. */
+async function database(context: AutkDb | undefined): Promise<AutkDb> {
+    if (context) return context;
+    const db = new AutkDb();
+    await db.init();
+    return db;
+}
+
 /** The [minX, minY, maxX, maxY] of every position in a collection, or undefined when it has none. */
 export function extentOf(collection: FeatureCollection): [number, number, number, number] | undefined {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -113,14 +126,15 @@ export function extentOf(collection: FeatureCollection): [number, number, number
 /**
  * The data adapter `AutkGrammar` runs. Its `resolveSource(db, source)` loads one entry of a spec's `data` into the
  * autk-db database `db` (a new one when `db` is undefined), in the entry's workspace, which it leaves current, and
- * returns the database.
+ * returns the database. Its `resolveWorkspaces(db, workspaces)` sets each workspace a spec's `workspaces` lists to its
+ * CRS and precision grid, before the first source loads, leaves the default workspace current and returns the database.
  *
  * A host calls it to load a spec's tables exactly as the grammar does, for example on a server without a map: the
  * `./data` entry exports it with autk-db as its only import. `targets.db` names an element that lists the tables
  * after each load. `cache`, when given, receives each GeoJSON table and each table a join wrote, under
  * {@link tableKey}.
  */
-export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): DataAdapter {
+export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Required<DataAdapter> {
 
     function print(db: AutkDb, targets?: Targets): void {
         if(!targets || !targets.db)
@@ -141,14 +155,30 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
     }
 
     return {
-        async resolveSource(context: AutkDb | undefined, spec: DataSourceSpec): Promise<AutkDb | undefined> {
-
-            let db = context;
-
-            if(!db){
-                db = new AutkDb();
-                await db.init();
+        async resolveWorkspaces(context: AutkDb | undefined, workspaces: WorkspaceSpec[]): Promise<AutkDb> {
+            const db = await database(context);
+            const named = new Set<string>();
+            for (const { name, coordinateFormat, precisionGrid } of workspaces) {
+                const workspace = name ?? DEFAULT_WORKSPACE_NAME;
+                if (named.has(workspace))
+                    throw new Error(`workspaces sets ${workspaceLabel(name)} twice; give each workspace one entry.`);
+                named.add(workspace);
+                // autk-db creates the workspace with this configuration, or sets it on the one that exists while it
+                // holds no table, the default workspace among them.
+                try {
+                    await db.setWorkspace(workspace, { coordinateFormat, precisionGrid });
+                } catch (err) {
+                    throw new Error(`workspaces, ${workspaceLabel(name)}: ${err instanceof Error ? err.message : String(err)}`);
+                }
             }
+            // Each source, compute pass, map and plot enters its own workspace.
+            await enterWorkspace(db);
+            return db;
+        },
+
+        async resolveSource(context: AutkDb | undefined, spec: DataSourceSpec): Promise<AutkDb> {
+
+            const db = await database(context);
 
             const { workspace } = spec as { workspace?: string };
             await enterWorkspace(db, workspace);
@@ -211,7 +241,7 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                     // A bounding box outside the valid world extent indicates a CRS mismatch.
                     try {
                         const bbox = await db.getBoundingBoxFromLayer(loadSpec.outputTableName);
-                        const WORLD_EXTENT = 25_000_000; // generous bound for DEFAULT_WORKSPACE_COORDINATE_FORMAT (EPSG:3395)
+                        const WORLD_EXTENT = 25_000_000; // generous bound for World Mercator (EPSG:3395), autk-db's default CRS
                         if (
                             !isFinite(bbox.minLon) || !isFinite(bbox.minLat) ||
                             !isFinite(bbox.maxLon) || !isFinite(bbox.maxLat) ||
@@ -222,7 +252,7 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                                 `Geometry bounding box after transform is invalid for layer "${loadSpec.outputTableName}" ` +
                                 `(bbox: [${bbox.minLon}, ${bbox.minLat}, ${bbox.maxLon}, ${bbox.maxLat}]). ` +
                                 `${crsAdvice(loadSpec.coordinateFormat)} ` +
-                                `The workspace uses ${DEFAULT_WORKSPACE_COORDINATE_FORMAT}; input is expected in EPSG:4326 by default.`
+                                `The workspace uses ${db.getWorkspaceConfiguration().coordinateFormat}; input is expected in EPSG:4326 by default.`
                             );
                         }
                     } catch (bboxErr) {

@@ -155,6 +155,16 @@ expect('workspaces on sources, a map, a plot and a compute pass', {
     plot: { workspace: 'west', dataRef: 'g', mark: 'scatter', axis: ['a', 'b'] },
 }, true);
 expect('an empty workspace name', { data: [{ type: 'geojson', outputTableName: 'g', geojsonFileUrl: 'g.json', workspace: '' }] }, false);
+const crs = { coordinateFormat: 'EPSG:3857', precisionGrid: 1 };
+expect('workspaces, the default one and a named one', { workspaces: [crs, { name: 'west', coordinateFormat: 'EPSG:32618', precisionGrid: 0.1 }], data: [csv] }, true);
+expect('a workspace without a precision grid', { workspaces: [{ coordinateFormat: 'EPSG:3857' }] }, false);
+expect('a workspace without a CRS', { workspaces: [{ precisionGrid: 1 }] }, false);
+expect('a workspace with an empty CRS', { workspaces: [{ ...crs, coordinateFormat: '' }] }, false);
+expect('a workspace with a precision grid of 0', { workspaces: [{ ...crs, precisionGrid: 0 }] }, false);
+expect('a workspace with a negative precision grid', { workspaces: [{ ...crs, precisionGrid: -1 }] }, false);
+expect('a workspace with a precision grid as a string', { workspaces: [{ ...crs, precisionGrid: '1' }] }, false);
+expect('a workspaces entry with an empty name', { workspaces: [{ ...crs, name: '' }] }, false);
+expect('workspaces as an object', { workspaces: crs }, false);
 expect('geojson without a source', { data: [{ type: 'geojson', outputTableName: 'g' }] }, false);
 expect('geojson with no features', { data: [{ type: 'geojson', outputTableName: 'g', geojsonObject: { type: 'FeatureCollection', features: [] } }] }, false);
 expect('linechart without transform', { plot: { ...plot, mark: 'linechart' } }, false);
@@ -312,6 +322,8 @@ const newKeys: Array<[string, string[]]> = [
     ['OsmDataSourceSpec', ['tagSets', 'tagSets.name', 'tagSets.type', 'tagSets.tags', 'tagSets.tags.key', 'tagSets.tags.value']],
     ['OsmTagSet', ['']],
     ['OsmTagFilter', ['']],
+    ['UrbanSpec', ['workspaces', 'workspaces.name', 'workspaces.coordinateFormat', 'workspaces.precisionGrid']],
+    ['WorkspaceSpec', ['']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

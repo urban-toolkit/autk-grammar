@@ -99,6 +99,41 @@ test('refuses tag sets with a PBF extract, naming the source, before autk-db run
     assert.deepEqual((await loadOsmParams({ ...osm, pbfFileUrl: 'area.osm.pbf', tagSets: [] })).tagSets, []);
 });
 
+// workspaces: each workspace's CRS and precision grid, set before the first source loads.
+const webMercator = { coordinateFormat: 'EPSG:3857', precisionGrid: 1 };
+const utm = { coordinateFormat: 'EPSG:32618', precisionGrid: 0.1 };
+
+test('workspaces sets each workspace to its CRS and grid, then leaves the default workspace current', async () => {
+    const { db, calls } = fakeDb();
+    assert.equal(await createDataAdapter().resolveWorkspaces(db, [webMercator, { name: 'west', ...utm }]), db);
+    assert.deepEqual(calls, [
+        ['setWorkspace', DEFAULT_WORKSPACE_NAME, webMercator],
+        ['setWorkspace', 'west', utm],
+        ['setWorkspace', DEFAULT_WORKSPACE_NAME],
+    ]);
+});
+
+test('refuses a workspace that workspaces sets twice', async () => {
+    const adapter = createDataAdapter();
+    await assert.rejects(
+        adapter.resolveWorkspaces(fakeDb().db, [{ name: 'west', ...utm }, { name: 'west', ...webMercator }]),
+        { message: 'workspaces sets the workspace "west" twice; give each workspace one entry.' },
+    );
+    await assert.rejects(
+        adapter.resolveWorkspaces(fakeDb().db, [webMercator, { name: DEFAULT_WORKSPACE_NAME, ...utm }]),
+        { message: 'workspaces sets the default workspace twice; give each workspace one entry.' },
+    );
+});
+
+test("names the workspace whose configuration autk-db refuses", async () => {
+    const { db } = fakeDb();
+    Object.assign(db, { setWorkspace: async () => { throw new Error('precisionGrid must be a finite number greater than zero.'); } });
+    await assert.rejects(
+        createDataAdapter().resolveWorkspaces(db, [{ name: 'west', coordinateFormat: 'EPSG:3857', precisionGrid: 0 }]),
+        { message: 'workspaces, the workspace "west": precisionGrid must be a finite number greater than zero.' },
+    );
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
     try { await fn(); console.log(`ok ${name}`); }

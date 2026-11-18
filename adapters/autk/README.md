@@ -84,6 +84,26 @@ A workspace is an isolated set of tables with its own extent. The first source l
 
 `workspace` names one, on a source (where its table goes), a compute pass (where it reads and writes), a map or a plot (where it reads its tables). An entry without one uses the default workspace.
 
+### `workspaces`
+
+A spec's `workspaces` sets how a workspace stores its tables, one entry per workspace, before the first source loads:
+
+| Field | Effect |
+|---|---|
+| `name` | The workspace, by the name its entries give as their `workspace`. Without it, the default workspace. |
+| `coordinateFormat` | The CRS the workspace stores its tables in, as an EPSG string such as `EPSG:3857`. Each source is transformed to it as it loads, and its maps draw in its units. autk-db's default is `EPSG:3395`, World Mercator, in meters. |
+| `precisionGrid` | The grid every stored coordinate is rounded to, in the CRS's units, greater than 0. autk-db's default is 0.01, a centimeter in World Mercator. A geometry the grid collapses is refused as it loads. |
+
+Both fields are required, and a run refuses two entries for one workspace. A workspace without an entry keeps autk-db's defaults. The lengths given in workspace units are in the CRS's units: a `near.distance`, a layer's `width`, a camera's `zoom`. A layer's `pointSize`, in meters, is converted for World Mercator and Web Mercator, and read as planar units in any other CRS.
+
+```ts
+await grammar.run({
+  workspaces: [{ coordinateFormat: 'EPSG:3857', precisionGrid: 1 }],  // the default workspace, in Web Mercator to the meter
+  data: [{ type: 'geojson', outputTableName: 'parcels', geojsonFileUrl: 'parcels.geojson' }],
+  map: { layerRefs: [{ dataRef: 'parcels' }] },
+});
+```
+
 ## OpenStreetMap areas
 
 An `osm` source's `queryArea` names the area to load in one of two ways, never both:
@@ -356,7 +376,7 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 
 | Export | Effect |
 |---|---|
-| `createDataAdapter(targets?, cache?)` | The data adapter. Its `resolveSource(db, source)` loads one `data` entry into an autk-db database, a new one when `db` is undefined, and returns it. `cache` receives each GeoJSON table and each table a join wrote. |
+| `createDataAdapter(targets?, cache?)` | The data adapter. Its `resolveWorkspaces(db, workspaces)` sets up a spec's `workspaces` before the first source loads, and its `resolveSource(db, source)` loads one `data` entry. Each takes an autk-db database, a new one when `db` is undefined, and returns it. `cache` receives each GeoJSON table and each table a join wrote. |
 | `createComputeAdapter(cache?, types?)` | The compute adapter. Its `resolveCompute(db, pass)` runs one `compute` entry on the GPU. The results are kept only in `cache`, and `types` receives the layer type of each table a pass wrote under its own `outputTableName`. |
 | `enterWorkspace(db, workspace?)` | Makes an entry's workspace (the default one without a name) the one autk-db works in, and switches only when another is current. Every adapter calls it before it reads or writes an entry's tables. |
 | `tableKey(workspace, name)` | The key of a table in those caches: its name in the default workspace, `<workspace>/<name>` in another. |
@@ -369,7 +389,8 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 import { createDataAdapter } from '@urban-toolkit/autk-grammar/data';
 
 const adapter = createDataAdapter();
-let db: unknown; // the AutkDb the first source creates
+let db: unknown; // the AutkDb the first call creates
+if (spec.workspaces) db = await adapter.resolveWorkspaces(db, spec.workspaces);
 for (const source of spec.data ?? []) db = await adapter.resolveSource(db, source);
 ```
 
