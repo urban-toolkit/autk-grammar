@@ -183,7 +183,7 @@ export class AutkGrammar {
 
     /**
      * Highlights features on the map layer that draws the table `dataRef` (see {@link mapLayer}).
-     * If that layer is linked to a plot via `mapRef`, the plot selection is updated too.
+     * If a plot is linked to that layer, by a link or its `mapRef`, the plot selection is updated too.
      */
     highlightOnMap(dataRef: string, featureIds: number[]): void {
         const layer = this.mapLayer(dataRef);
@@ -195,7 +195,7 @@ export class AutkGrammar {
 
     /**
      * Clears highlighted features on the map layer that draws the table `dataRef` (see {@link mapLayer}).
-     * If that layer is linked to a plot via `mapRef`, the plot selection is cleared too.
+     * If a plot is linked to that layer, by a link or its `mapRef`, the plot selection is cleared too.
      */
     clearHighlightOnMap(dataRef: string): void {
         const layer = this.mapLayer(dataRef);
@@ -206,8 +206,8 @@ export class AutkGrammar {
     }
 
     /**
-     * Clears the selection on the plot identified by `plotId` (its dataRef).
-     * If that plot is linked to a map via `mapRef`, the map highlight is cleared too.
+     * Clears the selection on the plot `plotId` names: its `id`, else its `dataRef`.
+     * If that plot is linked to a map layer, by a link or its `mapRef`, the layer's highlight is cleared too.
      */
     clearHighlightOnPlot(plotId: string): void {
         this._plotRegistry.get(plotId)?.setSelection([]);
@@ -217,8 +217,8 @@ export class AutkGrammar {
     }
 
     /**
-     * Applies a selection to the plot identified by `plotId` (its dataRef).
-     * If that plot is linked to a map via `mapRef`, the map highlight is updated too.
+     * Applies a selection to the plot `plotId` names: its `id`, else its `dataRef`.
+     * If that plot is linked to a map layer, by a link or its `mapRef`, the layer's highlight is updated too.
      */
     setPlotSelection(plotId: string, featureIds: number[]): void {
         this._plotRegistry.get(plotId)?.setSelection(featureIds);
@@ -258,13 +258,10 @@ export class AutkGrammar {
         for (const cleanup of this._fwdCleanups) cleanup();
         this._fwdCleanups = [];
 
-        // Wire each unique map → grammar bus
-        // Multiple layerRefs can share one AutkMap instance; deduplicate to avoid double-subscription
-        const seenMaps = new Set<AutkMap>();
-        for (const [layerId, map] of this._mapRegistry) {
-            if (seenMaps.has(map)) continue;
-            seenMaps.add(map);
-            const handler = ({ selection }: MapEventData) => {
+        // Wire each map to the grammar bus once, though several layers can share it. autk-map names the picked layer
+        // by its id in the map, which is its title, else its dataRef.
+        for (const map of new Set<AutkMap>(this._mapRegistry.values())) {
+            const handler = ({ layerId, selection }: MapEventData) => {
                 this.interactions.emit('map:picking', { layerId, selection });
             };
             map.events.on(MapEvent.PICKING, handler);

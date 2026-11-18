@@ -432,6 +432,40 @@ test('links plots to a map by id: two plots of one table, a named layer, and a p
     expect(await page.evaluate(() => [...(window.grammar as any)._plotRegistry.get('second').selection])).toEqual([2]);
 });
 
+test('names the picked layer in map:picking by its id, with two layers on one map', async ({ page }) => {
+    await runSpec(page, {
+        data: [area, blocks, zones],
+        map: { layerRefs: [{ dataRef: 'blocks', isPick: true }, { dataRef: 'zones', title: 'Zones', isPick: true }] },
+    });
+    // autk-map reports a pick with the id of the layer picked: a feature of the titled layer, then one of the other.
+    const reported = await page.evaluate(() => {
+        const events: unknown[] = [];
+        window.grammar.interactions.on('map:picking', (event) => { events.push(event); });
+        const map = window.grammar.maps[0];
+        map.events.emit('picking' as never, { selection: [2], layerId: 'Zones' } as never);
+        map.events.emit('picking' as never, { selection: [1], layerId: 'blocks' } as never);
+        return events;
+    });
+    expect(reported).toEqual([{ layerId: 'Zones', selection: [2] }, { layerId: 'blocks', selection: [1] }]);
+});
+
+test('selects in a linked plot only what is picked on its own layer', async ({ page }) => {
+    await runSpec(page, {
+        data: [area, blocks, zones],
+        map: { id: 'm', layerRefs: [{ dataRef: 'blocks', isPick: true }, { dataRef: 'zones', title: 'Zones' }] },
+        plot: { id: 'p', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], events: ['click'] },
+        links: [{ source: 'p', target: 'm', layer: 'Zones' }],
+    });
+    const selection = () => page.evaluate(() => [...(window.grammar as any)._plotRegistry.get('p').selection]);
+    const pick = (layerId: string, ids: number[]) => page.evaluate(([layer, selected]) =>
+        window.grammar.maps[0].events.emit('picking' as never, { selection: selected, layerId: layer } as never), [layerId, ids] as const);
+    await pick('Zones', [3]);
+    expect(await selection()).toEqual([3]);
+    // A pick on the other layer of the map leaves the plot as it was.
+    await pick('blocks', [1]);
+    expect(await selection()).toEqual([3]);
+});
+
 test('draws each plot in its own target when the plot targets are a list', async ({ page }) => {
     const plots: PlotSpec[] = [
         { dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'] },
@@ -928,6 +962,42 @@ test('runs a render compute pass into a new table', async ({ page }) => {
     expect(render, 'compute.render of the first viewpoint').toMatchObject({ sampleCount: 4, classes: { buildings: expect.any(Number), background: expect.any(Number) } });
     expect(await page.evaluate(() => window.valueAt('box_buildings', 0, 'compute.render'))).toBeUndefined();
     expect((await page.evaluate(() => window.mapLayers('map0'))).map((layer) => [layer.id, layer.type])).toEqual([['box_surface', 'surface'], ['visibility', 'buildings']]);
+});
+
+test('draws the windows of a building-windows render pass as points', async ({ page }) => {
+    const { tables } = await runSpec(page, {
+        ...boxSpec({ bbox: BOX }),
+        compute: [{
+            type: 'render',
+            outputTableName: 'windows',
+            layers: [{ id: 'buildings', dataRef: 'box_buildings', type: 'buildings' }],
+            viewpoints: { dataRef: 'box_buildings', strategy: { type: 'building-windows', floors: 1 } },
+            aggregation: { type: 'classes', includeBackground: true },
+            tileSize: 8,
+        }],
+        map: { layerRefs: [{ dataRef: 'box_surface' }, { dataRef: 'windows' }] },
+    });
+    // The result is one point per window, each looking out from its facade and 30 degrees to either side.
+    expect(tables.windows.features).toBeGreaterThan(tables.box_buildings.features);
+    const [first] = await page.evaluate(() => window.featureExtents('windows'));
+    expect([first[0], first[1]], 'the first window is a point').toEqual([first[2], first[3]]);
+    expect(await page.evaluate(() => window.valueAt('windows', 0, 'compute.render.sampleCount'))).toBe(3);
+    // So the map draws it as points, though the viewpoints table is drawn as buildings.
+    expect((await page.evaluate(() => window.mapLayers('map0'))).map((layer) => [layer.id, layer.type])).toEqual([['box_surface', 'surface'], ['windows', 'points']]);
+});
+
+test('refuses a points layer in a render pass, and names the layer', async ({ page }) => {
+    // autk-compute would skip it with only a warning. The schema refuses the type too.
+    await expect(runSpec(page, {
+        data: [area, zones, spots],
+        compute: [{
+            type: 'render',
+            outputTableName: 'seen',
+            layers: [{ id: 'zones', dataRef: 'zones', type: 'polygons' }, { id: 'spots', dataRef: 'spots', type: 'points' as never }],
+            viewpoints: { dataRef: 'spots' },
+            aggregation: { type: 'classes' },
+        }],
+    })).rejects.toThrow('Render pass "seen": layer "spots" has the type "points", which a render pass cannot draw.');
 });
 
 test('accepts useCentroid on a heatmap', async ({ page }) => {

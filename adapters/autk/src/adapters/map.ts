@@ -187,8 +187,11 @@ function rasterBand(collection: { features?: { properties?: unknown }[] }, getFn
 /**
  * Moves a map's camera as `camera` says, from the view that fits the map's layers. The camera reports each change,
  * so the map redraws without a request.
+ *
+ * The map adapter calls it once the map's layers are loaded and before the map's first `draw()`. A host that builds
+ * its own map from a spec's `map` entry calls it at the same point, so the map looks from where the grammar's would.
  */
-function applyCamera(map: AutkMap, camera: CameraSpec): void {
+export function applyCamera(map: AutkMap, camera: CameraSpec): void {
     if(camera.zoom === undefined && !camera.pitch && !camera.bearing) return;
 
     // Turn the view around the point it looks at: the eye moves on a sphere around that point, so the data stays

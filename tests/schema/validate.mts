@@ -126,6 +126,9 @@ expect('render pass without outputTableName', { compute: [(({ outputTableName, .
 expect('render pass without layers', { compute: [{ ...render, layers: [] }] }, false);
 expect('render pass with a tile size that is not a multiple of 8', { compute: [{ ...render, tileSize: 30 }] }, false);
 expect('render pass with a bad aggregation', { compute: [{ ...render, aggregation: { type: 'sum' } }] }, false);
+const drawnTypes = ['surface', 'parks', 'water', 'roads', 'buildings', 'polygons', 'polylines'];
+expect('render pass with a layer of each type it draws', { compute: [{ ...render, layers: drawnTypes.map((type) => ({ id: type, dataRef: type, type })) }] }, true);
+expect('render pass with a points layer, which it cannot draw', { compute: [{ ...render, layers: [{ id: 'p', dataRef: 'p', type: 'points' }] }] }, false);
 const heat = { type: 'heatmap', outputTableName: 'h', joinDataRef: 'n', near: { distance: 500 }, grid: { rows: 10, columns: 10 } };
 expect('heatmap with useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: false } }] }, true);
 expect('heatmap with a non-boolean useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: 'no' } }] }, false);
@@ -232,6 +235,60 @@ const bboxDescription = schema.definitions?.OsmBoundingBoxArea?.properties?.bbox
 if (typeof bboxDescription !== 'string' || bboxDescription.trim() === '') {
     failures++;
     console.error('FAIL OsmBoundingBoxArea.bbox has no description in the schema');
+}
+// So is every key 5.0.0 adds or renames. A path of keys from a definition is followed through `$ref`, each branch of
+// `anyOf` and `allOf` (a discriminated union's `then`) and an array's `items`. The key must be reached at least once,
+// and carry a description everywhere it is reached; an empty path checks the definition itself.
+type SchemaNode = Record<string, any>;
+function objectsOf(node: SchemaNode | SchemaNode[] | undefined): SchemaNode[] {
+    if (Array.isArray(node)) return node.flatMap(objectsOf);
+    if (!node || typeof node !== 'object') return [];
+    if (typeof node.$ref === 'string')
+        return objectsOf(schema.definitions?.[decodeURIComponent(node.$ref.replace('#/definitions/', ''))]);
+    const branches = [...(node.anyOf ?? []), ...(node.allOf ?? []), node.then, node.else, node.items];
+    return [...(node.properties ? [node] : []), ...branches.flatMap(objectsOf)];
+}
+function keysAt(definition: string, path: string): SchemaNode[] {
+    let nodes: SchemaNode[] = [schema.definitions?.[definition]].filter((node) => node !== undefined);
+    for (const key of path ? path.split('.') : [])
+        nodes = objectsOf(nodes).map((node) => node.properties?.[key]).filter((node) => node !== undefined);
+    return nodes;
+}
+const newKeys: Array<[string, string[]]> = [
+    ['UrbanSpec', [
+        'layout', 'layout.type', 'layout.columns', 'layout.gap',
+        'links', 'links.source', 'links.target', 'links.layer',
+        'map.id', 'map.workspace', 'map.camera', 'map.camera.zoom', 'map.camera.pitch', 'map.camera.bearing',
+        'plot.id', 'plot.workspace', 'data.workspace', 'compute.workspace',
+    ]],
+    ['WorkspaceName', ['']],
+    ['CustomDataSourceSpec', ['layerType']],
+    ['GeoTiffDataSourceSpec', ['geotiffFileUrl', 'coordinateFormat', 'maxRasterCells', 'resampleMethod']],
+    ['JoinSourceSpec', ['dataRef', 'joinDataRef', 'near.useCentroid']],
+    ['HeatmapSourceSpec', ['joinDataRef', 'near.useCentroid']],
+    ['GpgpuComputeSpec', ['type', 'wgslFunction', 'outputTableName', 'layerType']],
+    ['RenderComputeSpec', [
+        'type', 'outputTableName', 'layerType', 'tileSize',
+        'layers', 'layers.id', 'layers.dataRef', 'layers.type', 'layers.objectIdProperty',
+        'viewpoints', 'viewpoints.dataRef', 'viewpoints.strategy', 'viewpoints.strategy.floors',
+        'viewpoints.sampling', 'viewpoints.sampling.directions', 'viewpoints.sampling.azimuthOffsetDeg',
+        'viewpoints.sampling.pitchDeg',
+        'aggregation', 'aggregation.includeBackground', 'aggregation.backgroundLayerType',
+        'camera', 'camera.fov', 'camera.clip', 'camera.clip.near', 'camera.clip.far',
+    ]],
+];
+for (const [definition, paths] of newKeys) {
+    for (const path of paths) {
+        const name = path ? `${definition}.${path}` : definition;
+        const nodes = keysAt(definition, path);
+        if (nodes.length === 0) {
+            failures++;
+            console.error(`FAIL ${name} is not in the schema`);
+        } else if (nodes.some((node) => typeof node.description !== 'string' || node.description.trim() === '')) {
+            failures++;
+            console.error(`FAIL ${name} has no description in the schema`);
+        }
+    }
 }
 
 if (checked === 0) {
