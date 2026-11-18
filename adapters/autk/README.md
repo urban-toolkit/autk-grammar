@@ -273,7 +273,7 @@ const grammar = new AutkGrammar({ map: ['before', 'after'], plot: ['heights', 'a
 
 ## Lifecycle
 
-`destroy()` releases what the last run made: it destroys each map (its GPU device and event handlers) and clears the grammar's registries, caches and event forwarding. `run()` calls it before it starts, so running a new spec on the same instance does not leak the maps of the old one. Call it yourself before the page or the canvases go away.
+`destroy()` releases what the last run made: it destroys each map (its layers' GPU buffers, its textures, its canvas context, the controls it adds to the page and its event handlers) and clears the grammar's registries, caches and event forwarding. autk-map's maps share one GPU device, which stays for the maps of the next run. `run()` calls it before it starts, so running a new spec on the same instance does not leak the maps of the old one. Call it yourself before the page or the canvases go away.
 
 ## JSON Schema
 

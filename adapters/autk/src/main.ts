@@ -99,9 +99,11 @@ export class AutkGrammar {
     }
 
     /**
-     * Releases what the last run created: every map (its GPU device and event handlers) and the grammar's own
-     * registries, caches and event forwarding. Call it before the page or the container goes away; `run` calls it
-     * before it starts, so running a new spec on the same instance does not leak the maps of the old one.
+     * Releases what the last run created: every map (its layers' GPU buffers, its textures, its canvas context, the
+     * controls it adds to the page and its event handlers) and the grammar's own registries, caches and event
+     * forwarding. autk-map's maps share one GPU device, which stays for the maps of the next run. Call it before the
+     * page or the container goes away; `run` calls it before it starts, so running a new spec on the same instance
+     * does not leak the maps of the old one.
      */
     destroy(): void {
         for (const cleanup of this._fwdCleanups) cleanup();
