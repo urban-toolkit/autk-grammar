@@ -1,8 +1,9 @@
-import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec } from '@urban-toolkit/the-urban-grammar';
+import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec } from '@urban-toolkit/the-urban-grammar';
 import { AutkDb, DEFAULT_WORKSPACE_COORDINATE_FORMAT } from '@urban-toolkit/autk-db';
 import type { LoadGeojsonParams } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Geometry } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
+import { enterWorkspace, tableKey } from '../workspace';
 
 /**
  * The query area autk-db reads: `{ bbox }` or `{ geocodeArea, areas }`. autk-db takes any area with a
@@ -105,7 +106,10 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                 await db.init();
             }
 
-            let {type, ...rest_spec} = spec;
+            const { workspace } = spec as { workspace?: string };
+            await enterWorkspace(db, workspace);
+
+            let {type, workspace: _workspace, ...rest_spec} = spec as DataSourceSpec & { workspace?: string };
 
             switch (type) {
                 case 'osm':
@@ -132,7 +136,7 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                         geojsonData = geojsonSpec.geojsonObject as FeatureCollection | undefined;
                     }
 
-                    if (cache && geojsonData) cache.set(geojsonSpec.outputTableName, geojsonData);
+                    if (cache && geojsonData) cache.set(tableKey(workspace, geojsonSpec.outputTableName), geojsonData);
 
                     // Pass the fetched object directly so autk-db doesn't need to re-fetch
                     const loadSpec = (geojsonData
@@ -182,11 +186,15 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                     print(db, targets);
                     return db;
                 }
+                case 'geotiff':
+                    await db.loadGeoTiff(rest_spec as GeoTiffDataSourceSpec);
+                    print(db, targets);
+                    return db;
                 case 'heatmap': {
                     const hm = rest_spec as HeatmapSourceSpec;
                     await db.buildHeatmap({
-                        tableJoinName: hm.tableJoinName,
-                        near: { distance: hm.near.distance },
+                        tableJoinName: hm.joinDataRef,
+                        near: hm.near,
                         outputTableName: hm.outputTableName,
                         grid: hm.grid,
                         ...(hm.groupBy && { groupBy: hm.groupBy as any }),
@@ -197,14 +205,14 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                 case 'join': {
                     const jn = rest_spec as JoinSourceSpec;
                     await db.spatialQuery({
-                        tableRootName: jn.tableRootName,
-                        tableJoinName: jn.tableJoinName,
+                        tableRootName: jn.dataRef,
+                        tableJoinName: jn.joinDataRef,
                         ...(jn.near && { near: jn.near }),
                         ...(jn.groupBy && { groupBy: jn.groupBy }),
                     });
                     if (cache) {
-                        const updated = await db.getLayer(jn.tableRootName);
-                        cache.set(jn.tableRootName, updated);
+                        const updated = await db.getLayer(jn.dataRef);
+                        cache.set(tableKey(workspace, jn.dataRef), updated);
                     }
                     print(db, targets);
                     return db;

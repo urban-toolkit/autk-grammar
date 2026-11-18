@@ -27,7 +27,7 @@ export const spec: UrbanSpec = {
                 y: 'shape_leng',
             },
             outputColumnName: 'result',
-            wglsFunction: 'return (4.0 * 3.1415927 * x) / (y * y);',
+            wgslFunction: 'return (4.0 * 3.1415927 * x) / (y * y);',
         },
     ],
     map: {

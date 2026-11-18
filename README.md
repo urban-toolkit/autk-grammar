@@ -126,7 +126,7 @@ npm run dev --prefix gallery
 An adapter implements four interfaces exported by the core grammar in [`grammar/`](grammar/):
 
 - `DataAdapter`: resolves data sources into a shared context
-- `ComputeAdapter`: runs GPU or CPU compute operations on the context. The Autark adapter's `runCompute` and `resolveComputeParams` resolve `fromFeature` uniforms, iteration and multi-line `wglsFunction` bodies into compute parameters
+- `ComputeAdapter`: runs GPU or CPU compute operations on the context. The Autark adapter's `runCompute` and `resolveComputeParams` resolve `fromFeature` uniforms, iteration and multi-line `wgslFunction` bodies into compute parameters
 - `MapAdapter`: renders map layers from the context
 - `PlotAdapter`: renders plots from the context
 

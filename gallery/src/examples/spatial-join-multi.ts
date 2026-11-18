@@ -30,14 +30,14 @@ export const spec: UrbanSpec = {
         },
         {
             type: 'join',
-            tableRootName: 'neighborhoods',
-            tableJoinName: 'noise',
+            dataRef: 'neighborhoods',
+            joinDataRef: 'noise',
             groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }],
         },
         {
             type: 'join',
-            tableRootName: 'neighborhoods',
-            tableJoinName: 'parking',
+            dataRef: 'neighborhoods',
+            joinDataRef: 'parking',
             groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }],
         },
     ],

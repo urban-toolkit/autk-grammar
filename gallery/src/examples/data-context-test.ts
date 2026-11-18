@@ -21,7 +21,7 @@ export const spec: UrbanSpec = {
             dataRef: 'neighborhoods',
             attributes: { x: 'shape_area', y: 'shape_leng' },
             outputColumnName: 'compactness',
-            wglsFunction: 'return (4.0 * 3.1415927 * x) / (y * y);',
+            wgslFunction: 'return (4.0 * 3.1415927 * x) / (y * y);',
         },
     ],
 };
