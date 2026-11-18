@@ -1,7 +1,8 @@
 import type { FeatureCollection } from 'geojson';
 import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
-import { Targets, MapRegistry, MapLayerIds, ComputeCache, ComputeLayerTypes } from '../types';
+import { Targets, ComputeCache, ComputeLayerTypes } from '../types';
+import { DrawnLayers, mapIdOf } from '../drawn';
 import { AutkMap } from '@urban-toolkit/autk-map';
 import type { LayerRenderInfo } from '@urban-toolkit/autk-map';
 import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator } from '@urban-toolkit/autk-core';
@@ -210,7 +211,11 @@ export function applyCamera(map: AutkMap, camera: CameraSpec): void {
     view.resetCamera([Math.sin(bearing), Math.cos(bearing), 0], [x, y, 0], eye);
 }
 
-export function createMapAdapter(targets?: Targets, registry?: MapRegistry, computeCache?: ComputeCache, maps?: AutkMap[], layerIds?: MapLayerIds, computeTypes?: ComputeLayerTypes): MapAdapter {
+/**
+ * The map adapter `AutkGrammar` runs. Each map it draws goes in `maps` at its index, and each of its layers in `layers`,
+ * so every map stays known, though several draw one table.
+ */
+export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, computeCache?: ComputeCache, maps?: AutkMap[], computeTypes?: ComputeLayerTypes): MapAdapter {
 
     async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<void> {
         let tableToTypeMap: {[tableName: string]: string} = {};
@@ -363,10 +368,9 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
                 await enterWorkspace(context, spec.workspace);
                 await loadLayers(map, context, spec);
 
-                for(const layerRef of spec.layerRefs) {
-                    registry?.set(layerRef.dataRef, map);
-                    layerIds?.set(layerRef.dataRef, layerIdOf(layerRef));
-                }
+                const mapId = mapIdOf(spec, index);
+                for(const layerRef of spec.layerRefs)
+                    layers?.push({ map, mapIndex: index, mapId, layerId: layerIdOf(layerRef), dataRef: layerRef.dataRef });
 
                 if(maps)
                     maps[index] = map;

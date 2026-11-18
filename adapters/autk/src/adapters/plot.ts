@@ -1,6 +1,7 @@
 import { PlotAdapter, PlotSpec, PlotMark } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
-import { Targets, MapRegistry, MapLayerIds, PlotRegistry, PlotMapLinks, GeoJsonCache, ComputeCache } from '../types';
+import { Targets, PlotRegistry, PlotMapLinks, GeoJsonCache, ComputeCache } from '../types';
+import type { DrawnLayers } from '../drawn';
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkPlot, PlotEvent as AutkPlotEvent } from '@urban-toolkit/autk-plot';
 import type { PlotEventData, PlotType, PlotTransformConfig } from '@urban-toolkit/autk-plot';
@@ -45,7 +46,7 @@ export function linkPlotToLayer(plot: AutkPlot, events: AutkPlotEvent[], map: Au
     }
 }
 
-export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, plotRegistry?: PlotRegistry, plotMapLinks?: PlotMapLinks, cache?: GeoJsonCache, layerIds?: MapLayerIds, computeCache?: ComputeCache): PlotAdapter {
+export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotRegistry?: PlotRegistry, plotMapLinks?: PlotMapLinks, cache?: GeoJsonCache, computeCache?: ComputeCache): PlotAdapter {
 
     return {
         async resolvePlot(context: unknown, spec: PlotSpec, index: number = 0): Promise<void> {
@@ -82,12 +83,10 @@ export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, plo
             plotRegistry?.set(plotKey(spec), plot);
             if (spec.mapRef) plotMapLinks?.set(plotKey(spec), spec.mapRef);
 
-            // mapRef names the table of the layer to link to; the layer's id in its map is its title, else that name.
-            if(spec.mapRef && registry) {
-                const map: AutkMap | undefined = registry.get(spec.mapRef);
-                if(map)
-                    linkPlotToLayer(plot, events, map, layerIds?.get(spec.mapRef) ?? spec.mapRef);
-            }
+            // mapRef names the table of the layer to link to: the last layer that draws it.
+            const layer = spec.mapRef ? layers?.filter((drawn) => drawn.dataRef === spec.mapRef).pop() : undefined;
+            if(layer)
+                linkPlotToLayer(plot, events, layer.map, layer.layerId);
         }
     }
 }

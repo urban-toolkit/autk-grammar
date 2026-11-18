@@ -12,8 +12,9 @@ import { createPlotAdapter, linkPlotToLayer, plotKey } from "./adapters/plot";
 import { layerIdOf } from "./adapters/map";
 import { enterWorkspace } from "./workspace";
 import { createComputeAdapter } from "./adapters/compute";
-import { Targets, MapRegistry, MapLayerIds, PlotRegistry, PlotMapLinks, GeoJsonCache, ComputeCache, ComputeLayerTypes, GrammarEventEmitter } from "./types";
+import { Targets, PlotRegistry, PlotMapLinks, GeoJsonCache, ComputeCache, ComputeLayerTypes, GrammarEventEmitter } from "./types";
 import type { GrammarMapLayer, GrammarPlotSelectionEvent } from "./types";
+import { DrawnLayers, mapIdOf } from "./drawn";
 
 function asList<T>(value: T[] | T | undefined): T[] {
     return value === undefined ? [] : Array.isArray(value) ? value : [value];
@@ -39,8 +40,7 @@ export class AutkGrammar {
     private _computeCache: ComputeCache = new Map();
     private _computeTypes: ComputeLayerTypes = new Map();
     private _data: Record<string, Promise<FeatureCollection>> = {};
-    private _mapRegistry: MapRegistry = new Map();
-    private _mapLayerIds: MapLayerIds = new Map();
+    private _layers: DrawnLayers = [];
     private _maps: AutkMap[] = [];
     private _plotRegistry: PlotRegistry = new Map();
     private _fwdCleanups: Array<() => void> = [];
@@ -51,8 +51,8 @@ export class AutkGrammar {
     constructor(targets?: Targets) {
         const cache: GeoJsonCache = new Map();
         this.dataAdapter = createDataAdapter(targets, cache);
-        this.mapAdapter = createMapAdapter(targets, this._mapRegistry, this._computeCache, this._maps, this._mapLayerIds, this._computeTypes);
-        this.plotAdapter = createPlotAdapter(targets, this._mapRegistry, this._plotRegistry, this._plotMapLinks, cache, this._mapLayerIds, this._computeCache);
+        this.mapAdapter = createMapAdapter(targets, this._layers, this._computeCache, this._maps, this._computeTypes);
+        this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotMapLinks, cache, this._computeCache);
         this.computeAdapter = createComputeAdapter(this._computeCache, this._computeTypes);
     }
 
@@ -94,8 +94,8 @@ export class AutkGrammar {
      * layer?.map.updateRenderInfo(layer.layerId, { opacity: 0.5 });
      */
     mapLayer(dataRef: string): GrammarMapLayer | undefined {
-        const map = this._mapRegistry.get(dataRef);
-        return map ? { map, layerId: this._mapLayerIds.get(dataRef) ?? dataRef } : undefined;
+        const layer = this._layers.filter((drawn) => drawn.dataRef === dataRef).pop();
+        return layer ? { map: layer.map, layerId: layer.layerId } : undefined;
     }
 
     /**
@@ -110,8 +110,7 @@ export class AutkGrammar {
         this._fwdCleanups = [];
         for (const map of this._maps) map.destroy();
         this._maps.length = 0;
-        this._mapRegistry.clear();
-        this._mapLayerIds.clear();
+        this._layers.length = 0;
         this._plotRegistry.clear();
         this._plotMapLinks.clear();
         this._computeCache.clear();
@@ -152,7 +151,7 @@ export class AutkGrammar {
         // Leave the database in the default workspace, whose tables `data` lists.
         if (db) await enterWorkspace(db);
         this._wireLinks(spec);
-        this._rewireInteractions();
+        this._rewireInteractions(spec);
 
         if (!db) {
             console.warn('Grammar engine produced no data context.');
@@ -256,19 +255,21 @@ export class AutkGrammar {
         }
     }
 
-    private _rewireInteractions(): void {
+    private _rewireInteractions(spec: UrbanSpec): void {
         for (const cleanup of this._fwdCleanups) cleanup();
         this._fwdCleanups = [];
 
-        // Wire each map to the grammar bus once, though several layers can share it. autk-map names the picked layer
-        // by its id in the map, which is its title, else its dataRef.
-        for (const map of new Set<AutkMap>(this._mapRegistry.values())) {
+        // Wire every map to the grammar bus once, though several maps can draw one table, and name the map in each
+        // pick. autk-map names the picked layer by its id in the map, which is its title, else its dataRef.
+        const maps = asList(spec.map);
+        this._maps.forEach((map, index) => {
+            const mapId = mapIdOf(maps[index], index);
             const handler = ({ layerId, selection }: MapEventData) => {
-                this.interactions.emit('map:picking', { layerId, selection });
+                this.interactions.emit('map:picking', { mapId, layerId, selection });
             };
             map.events.on(MapEvent.PICKING, handler);
             this._fwdCleanups.push(() => map.events.off(MapEvent.PICKING, handler));
-        }
+        });
 
         // Wire each plot → grammar bus (all four event types)
         for (const [plotId, plot] of this._plotRegistry) {

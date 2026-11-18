@@ -19,8 +19,12 @@ export type Targets = {
     plot?: string[] | string
 }
 
-export type MapRegistry = Map<string, AutkMap>;
-export type MapLayerIds = Map<string, string>; // dataRef → id of the layer that draws it in the map the MapRegistry holds for it
+/**
+ * How the grammar names a map of the spec: its `id`, else its index in the spec's `map` list (0 for a single map).
+ * `map:picking` events name the map by it.
+ */
+export type MapId = string | number;
+
 export type PlotRegistry = Map<string, AutkPlot>;
 export type PlotMapLinks = Map<string, string>; // plotId (dataRef) → mapRef (dataRef of a map layer)
 
@@ -40,6 +44,8 @@ export type AutkGrammarSpec = UrbanSpec;
 
 // Grammar-level interaction payloads: no autk internals leak through the public API
 export interface GrammarPickingEvent {
+    /** The map the pick was made on, by its {@link MapId}: its `id`, else its index in the spec's `map` list. */
+    mapId: MapId;
     /** The picked layer's id in its map: its `title`, else its `dataRef`. */
     layerId: string;
     selection: number[];

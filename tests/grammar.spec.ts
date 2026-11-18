@@ -446,7 +446,33 @@ test('names the picked layer in map:picking by its id, with two layers on one ma
         map.events.emit('picking' as never, { selection: [1], layerId: 'blocks' } as never);
         return events;
     });
-    expect(reported).toEqual([{ layerId: 'Zones', selection: [2] }, { layerId: 'blocks', selection: [1] }]);
+    expect(reported).toEqual([{ mapId: 0, layerId: 'Zones', selection: [2] }, { mapId: 0, layerId: 'blocks', selection: [1] }]);
+});
+
+test('forwards the picks of both maps of multi-map, each naming its map by its id, else its index', async ({ page }) => {
+    // Both maps draw one table. The grammar kept one map per table, the last, and forwarded the picks of that map only.
+    const picks = () => page.evaluate(() => {
+        const events: unknown[] = [];
+        window.grammar.interactions.on('map:picking', (event) => { events.push(event); });
+        window.grammar.maps.forEach((map, index) =>
+            map.events.emit('picking' as never, { selection: [index + 2], layerId: 'neighborhoods' } as never));
+        return events;
+    });
+    await run(page, 'multi-map');
+    expect(await page.evaluate(() => window.grammar.maps.length)).toBe(2);
+    expect(await picks()).toEqual([
+        { mapId: 0, layerId: 'neighborhoods', selection: [2] },
+        { mapId: 1, layerId: 'neighborhoods', selection: [3] },
+    ]);
+
+    // A map with an id is named by it.
+    const spec = await exampleSpec(page, 'multi-map');
+    const [first, second] = spec.map as MapSpec[];
+    await runSpec(page, { ...spec, map: [{ ...first, id: 'areas' }, second] });
+    expect(await picks()).toEqual([
+        { mapId: 'areas', layerId: 'neighborhoods', selection: [2] },
+        { mapId: 1, layerId: 'neighborhoods', selection: [3] },
+    ]);
 });
 
 test('selects in a linked plot only what is picked on its own layer', async ({ page }) => {
