@@ -12,6 +12,16 @@ function layerTypeOf(db: AutkDb, name: string, workspace: string | undefined, ty
     return types?.get(tableKey(workspace, name)) ?? db.getTablesMetadata().find((table) => table.name === name)?.type as LayerType | undefined;
 }
 
+/**
+ * The compute adapter `AutkGrammar` runs. Its `resolveCompute(db, pass)` runs one entry of a spec's `compute`, a
+ * GPGPU pass or a render pass, on autk-compute, in the pass's workspace, which it leaves current. It does nothing
+ * without a database.
+ *
+ * A host calls it to run compute passes exactly as the grammar does. The passes need WebGPU, and their results are
+ * kept only in the caches: `cache` receives each pass's result under {@link tableKey} of its `outputTableName`, or of
+ * the table it computed over, and a later pass reads a table from it first. `types` receives the layer type of each
+ * table a pass wrote under its own `outputTableName`, which a map needs to draw it.
+ */
 export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerTypes): ComputeAdapter {
 
     /** Reads a table, from the cache when an earlier pass wrote it there. */

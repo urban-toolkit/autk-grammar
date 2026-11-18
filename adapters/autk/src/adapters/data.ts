@@ -76,6 +76,16 @@ export function extentOf(collection: FeatureCollection): [number, number, number
     return minX <= maxX ? [minX, minY, maxX, maxY] : undefined;
 }
 
+/**
+ * The data adapter `AutkGrammar` runs. Its `resolveSource(db, source)` loads one entry of a spec's `data` into the
+ * autk-db database `db` (a new one when `db` is undefined), in the entry's workspace, which it leaves current, and
+ * returns the database.
+ *
+ * A host calls it to load a spec's tables exactly as the grammar does, for example on a server without a map: the
+ * `./data` entry exports it with autk-db as its only import. `targets.db` names an element that lists the tables
+ * after each load. `cache`, when given, receives each GeoJSON table and each table a join wrote, under
+ * {@link tableKey}.
+ */
 export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): DataAdapter {
 
     function print(db: AutkDb, targets?: Targets): void {
