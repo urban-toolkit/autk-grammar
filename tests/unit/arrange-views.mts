@@ -2,13 +2,22 @@
 // every host arranges a spec's views alike. Run after `make build` (the last test reads the built main entry):
 //   npm run test:unit
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { arrangeViews } from '../../grammar/src/layout.ts';
 import type { MapSpec, PlotSpec, UrbanSpec } from '../../grammar/src/types.ts';
 
-const adapterDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'adapters', 'autk');
+const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const adapterDir = join(root, 'adapters', 'autk');
+
+// The gallery's specs, by example name: the hub arranges each one's views with arrangeViews.
+const examplesDir = join(root, 'gallery', 'src', 'examples');
+const gallery = new Map<string, UrbanSpec>();
+for (const file of readdirSync(examplesDir).filter((name) => name.endsWith('.ts'))) {
+    const module = await import(pathToFileURL(join(examplesDir, file)).href);
+    if ('spec' in module) gallery.set(file.replace(/\.ts$/, ''), module.spec as UrbanSpec);
+}
 
 const map = (id?: string): MapSpec => ({ ...(id !== undefined && { id }), layerRefs: [{ dataRef: 'zones' }] });
 const plot = (dataRef: string, id?: string): PlotSpec => ({ ...(id !== undefined && { id }), dataRef, mark: 'scatter', axis: ['a', 'b'] });
@@ -80,6 +89,19 @@ test('refuses a layout it cannot arrange, and names the value', () => {
     refused({ type: 'grid', columns: 0 }, 'Layout columns must be a whole number, 1 or more, not 0.');
     refused({ type: 'grid', columns: 2.5 }, 'Layout columns must be a whole number, 1 or more, not 2.5.');
     refused({ type: 'grid', columns: '3' }, 'Layout columns must be a whole number, 1 or more, not "3".');
+});
+
+test("every gallery example arranges, and the examples of two maps, and interaction-external's map and plot, stand side by side", () => {
+    assert.ok(gallery.size > 50, `${gallery.size} gallery specs`);
+    for (const spec of gallery.values()) arrangeViews(spec);
+    for (const name of ['multi-map', 'osm-layers-api-multi', 'workspaces', 'interaction-external', 'linked-views']) {
+        const { type, rows, panes } = arrangeViews(gallery.get(name)!);
+        assert.deepEqual({ type, rows, panes: panes.length }, { type: 'horizontal', rows: 1, panes: 2 }, name);
+    }
+    // Every other example of two maps stands side by side too.
+    for (const [name, spec] of gallery) {
+        if (Array.isArray(spec.map) && spec.map.length > 1) assert.equal(arrangeViews(spec).type, 'horizontal', name);
+    }
 });
 
 test('the main entry exports arrangeViews and its types', () => {

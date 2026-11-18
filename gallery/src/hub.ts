@@ -40,40 +40,7 @@ async function updateSpecOverlay(exampleId: string) {
     }
 }
 
-// ── Drag helper ───────────────────────────────────────────────────────────────
-
-function makeDraggable(panel: HTMLElement, handle: HTMLElement) {
-    let newX = 0, newY = 0, startX = 0, startY = 0;
-
-    handle.addEventListener('mousedown', mouseDown);
-
-    function mouseDown(e: MouseEvent) {
-        startX = e.clientX;
-        startY = e.clientY;
-        document.addEventListener('mousemove', mouseMove);
-        document.addEventListener('mouseup', mouseUp);
-    }
-
-    function mouseMove(e: MouseEvent) {
-        newX = startX - e.clientX;
-        newY = startY - e.clientY;
-        startX = e.clientX;
-        startY = e.clientY;
-        panel.style.top = panel.offsetTop - newY + 'px';
-        panel.style.left = panel.offsetLeft - newX + 'px';
-        panel.style.right = 'auto';
-        e.preventDefault();
-        e.stopPropagation();
-    }
-
-    function mouseUp() {
-        document.removeEventListener('mousemove', mouseMove);
-    }
-}
-
 // ── Stage setup ───────────────────────────────────────────────────────────────
-
-let floatingPlotPanel: HTMLElement | null = null;
 
 /**
  * The grammar of the last run. An AutkGrammar is destroyed before the next run, so its maps release their GPU textures
@@ -113,35 +80,13 @@ function updateAdapterOptions(exampleId: string) {
     }
 }
 
-function createMapEl(adapter: AdapterName, id: string): HTMLElement {
-    if (adapter === 'autk') {
-        const canvas = document.createElement('canvas');
-        canvas.id = id;
-        canvas.className = 'map-el';
-        return canvas;
-    }
-    const div = document.createElement('div');
-    div.id = id;
-    div.className = 'map-el';
-    return div;
-}
-
-function createMapSlot(adapter: AdapterName, id: string): HTMLElement {
-    const slot = document.createElement('div');
-    slot.className = 'map-slot';
-    slot.appendChild(createMapEl(adapter, id));
-    return slot;
-}
-
 /**
- * Builds the stage for an example and returns the grammar's targets. A spec with a `layout` gets a pane for each of its
- * views, placed as `arrangeViews` says, as every host arranges them (see `createPanes`). Without one, a stage keeps the
- * gallery's own presentation: two maps sit side by side, and a plot floats over its map.
+ * Builds the stage for an example and returns the grammar's targets: a pane for each of the spec's views, placed as
+ * `arrangeViews` says, as every host arranges them (see `createPanes`). Without a `layout`, the panes stack. An
+ * example that draws nothing lists the tables it loads instead.
  */
 function setupStage(layout: Layout, adapter: AdapterName, spec: UrbanSpec): Record<string, string | string[]> {
     stage.innerHTML = '';
-    floatingPlotPanel?.remove();
-    floatingPlotPanel = null;
     for (const element of afterRunElements) element.remove();
     afterRunElements = [];
 
@@ -153,68 +98,9 @@ function setupStage(layout: Layout, adapter: AdapterName, spec: UrbanSpec): Reco
         return { db: 'debug-output' };
     }
 
-    if (spec.layout) {
-        const panes = createPanes(spec, adapter === 'autk' ? 'canvas' : 'div');
-        stage.appendChild(panes.element);
-        return panes.targets;
-    }
-
-    if (layout === 'multi-map') {
-        const wrap = document.createElement('div');
-        wrap.className = 'maps-wrap multi';
-
-        const id0 = adapter === 'autk' ? 'map-canvas-0' : 'map-container-0';
-        const id1 = adapter === 'autk' ? 'map-canvas-1' : 'map-container-1';
-        wrap.appendChild(createMapSlot(adapter, id0));
-        wrap.appendChild(createMapSlot(adapter, id1));
-
-        stage.appendChild(wrap);
-        return { map: [id0, id1] };
-    }
-
-    if (layout === 'map+plot') {
-        const wrap = document.createElement('div');
-        wrap.className = 'maps-wrap single';
-        const mapId = adapter === 'autk' ? 'map-canvas' : 'map-container';
-        wrap.appendChild(createMapEl(adapter, mapId));
-        stage.appendChild(wrap);
-
-        const plotPanel = document.createElement('div');
-        plotPanel.className = 'floating-panel plot-panel';
-        const toolbarH = toolbar.offsetHeight;
-        plotPanel.style.right = '16px';
-        plotPanel.style.top = `${toolbarH + 16}px`;
-
-        const plotBar = document.createElement('div');
-        plotBar.className = 'plot-bar';
-        const grip = document.createElement('div');
-        grip.className = 'plot-bar-grip';
-        grip.appendChild(document.createElement('span'));
-        grip.appendChild(document.createElement('span'));
-        grip.appendChild(document.createElement('span'));
-        plotBar.appendChild(grip);
-        plotBar.appendChild(document.createTextNode('Plot'));
-
-        const plotBody = document.createElement('div');
-        plotBody.id = 'plot-body';
-        plotBody.className = 'plot-body';
-
-        plotPanel.appendChild(plotBar);
-        plotPanel.appendChild(plotBody);
-        document.body.appendChild(plotPanel);
-        makeDraggable(plotPanel, plotBar);
-        floatingPlotPanel = plotPanel;
-
-        return { map: mapId, plot: 'plot-body' };
-    }
-
-    // layout === 'map'
-    const wrap = document.createElement('div');
-    wrap.className = 'maps-wrap single';
-    const mapId = adapter === 'autk' ? 'map-canvas' : 'map-container';
-    wrap.appendChild(createMapEl(adapter, mapId));
-    stage.appendChild(wrap);
-    return { map: mapId };
+    const panes = createPanes(spec, adapter === 'autk' ? 'canvas' : 'div');
+    stage.appendChild(panes.element);
+    return panes.targets;
 }
 
 // ── Run ───────────────────────────────────────────────────────────────────────

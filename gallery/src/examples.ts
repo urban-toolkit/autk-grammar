@@ -1,5 +1,9 @@
 import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 
+/**
+ * What an example shows. The hub arranges every example's views by its spec (`arrangeViews`), whatever this says; a
+ * `data-only` example, which draws nothing, lists the tables it loads instead.
+ */
 export type Layout = 'map' | 'map+plot' | 'multi-map' | 'data-only';
 export type AdapterName = 'autk' | 'deckgl';
 

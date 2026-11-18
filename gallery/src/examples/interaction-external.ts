@@ -2,6 +2,8 @@ import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import type { AutkGrammar } from '@urban-toolkit/autk-grammar';
 
 export const spec: UrbanSpec = {
+    // The console panel sits over the bottom left of the page, where it would cover a plot stacked under the map.
+    layout: { type: 'horizontal' },
     data: [
         {
             type: 'geojson',
