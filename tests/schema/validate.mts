@@ -126,6 +126,9 @@ expect('render pass without outputTableName', { compute: [(({ outputTableName, .
 expect('render pass without layers', { compute: [{ ...render, layers: [] }] }, false);
 expect('render pass with a tile size that is not a multiple of 8', { compute: [{ ...render, tileSize: 30 }] }, false);
 expect('render pass with a bad aggregation', { compute: [{ ...render, aggregation: { type: 'sum' } }] }, false);
+const drawnTypes = ['surface', 'parks', 'water', 'roads', 'buildings', 'polygons', 'polylines'];
+expect('render pass with a layer of each type it draws', { compute: [{ ...render, layers: drawnTypes.map((type) => ({ id: type, dataRef: type, type })) }] }, true);
+expect('render pass with a points layer, which it cannot draw', { compute: [{ ...render, layers: [{ id: 'p', dataRef: 'p', type: 'points' }] }] }, false);
 const heat = { type: 'heatmap', outputTableName: 'h', joinDataRef: 'n', near: { distance: 500 }, grid: { rows: 10, columns: 10 } };
 expect('heatmap with useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: false } }] }, true);
 expect('heatmap with a non-boolean useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: 'no' } }] }, false);

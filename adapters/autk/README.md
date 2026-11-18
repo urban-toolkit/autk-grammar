@@ -131,7 +131,7 @@ A render pass renders tables on the GPU from each viewpoint, in several directio
 |---|---|
 | `outputTableName` | The new table. Required. |
 | `layerType` | How a map draws it. Defaults to the type of the viewpoints table, or to `points` with the `building-windows` strategy, whose result holds one point per window. |
-| `layers` | The tables drawn into the frames: `{ id, dataRef, type, objectIdProperty }`. `id` names the layer in the pass, `type` sets how it is drawn, and `objectIdProperty` names the property that holds an object's id. |
+| `layers` | The tables drawn into the frames: `{ id, dataRef, type, objectIdProperty }`. `id` names the layer in the pass, `type` sets how it is drawn (`surface`, `parks`, `water`, `roads`, `buildings`, `polygons` or `polylines`: a render pass draws no points, and a run refuses any other type), and `objectIdProperty` names the property that holds an object's id. |
 | `viewpoints.dataRef` | The table whose features the frames are rendered from. |
 | `viewpoints.strategy` | `{ type: 'centroid' }`, the default: a viewpoint at each feature's centroid. `{ type: 'building-windows', floors }`: windows along each building's facades, `floors` rows of them up its height, each looking out from the facade and 30 degrees to either side. The result then holds one point per window instead of the table's features. |
 | `viewpoints.sampling` | With `centroid`, the directions each viewpoint looks in: `directions` of them (1 by default), evenly spaced around the horizon, the first at `azimuthOffsetDeg` degrees counterclockwise from east (0 by default), all at `pitchDeg` degrees above the horizontal (0 by default). |

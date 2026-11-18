@@ -1,11 +1,17 @@
 import { ComputeAdapter, ComputeSpec, GpgpuComputeSpec, RenderComputeSpec } from '@urban-toolkit/the-urban-grammar';
-import type { LayerType } from '@urban-toolkit/the-urban-grammar';
+import type { LayerType, RenderLayerSpec } from '@urban-toolkit/the-urban-grammar';
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkComputeEngine } from '@urban-toolkit/autk-compute';
 import { FeatureCollection } from 'geojson';
 import { ComputeCache, ComputeLayerTypes } from '../types';
 import { computeLayerNames, runCompute } from '../compute-params';
 import { enterWorkspace, tableKey } from '../workspace';
+
+/**
+ * The layer types a render pass draws. autk-compute skips a layer of any other type, points among them, with only a
+ * warning, so the adapter refuses one.
+ */
+const RENDER_LAYER_TYPES: ReadonlyArray<RenderLayerSpec['type']> = ['surface', 'parks', 'water', 'roads', 'buildings', 'polygons', 'polylines'];
 
 /** The type of the table `name`, which the database knows or an earlier pass wrote. */
 function layerTypeOf(db: AutkDb, name: string, workspace: string | undefined, types?: ComputeLayerTypes): LayerType | undefined {
@@ -42,6 +48,11 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
     }
 
     async function resolveRender(db: AutkDb, spec: RenderComputeSpec): Promise<void> {
+        for (const layer of spec.layers) {
+            if (!(RENDER_LAYER_TYPES as readonly string[]).includes(layer.type))
+                throw new Error(`Render pass "${spec.outputTableName}": layer "${layer.id}" has the type "${layer.type}", which a render pass cannot draw. A layer's type is one of ${RENDER_LAYER_TYPES.join(', ')}.`);
+        }
+
         const layers = await Promise.all(spec.layers.map(async (layer) => ({
             id: layer.id,
             collection: await read(db, layer.dataRef, spec.workspace),

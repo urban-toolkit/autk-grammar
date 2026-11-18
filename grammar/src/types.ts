@@ -653,8 +653,8 @@ export type RenderLayerSpec = {
     id: string,
     /** Name of the table to draw. */
     dataRef: string,
-    /** How the layer is drawn into the frames. */
-    type: 'surface' | 'parks' | 'water' | 'roads' | 'buildings' | 'points' | 'polygons' | 'polylines',
+    /** How the layer is drawn into the frames. A render pass draws no points. */
+    type: 'surface' | 'parks' | 'water' | 'roads' | 'buildings' | 'polygons' | 'polylines',
     /** Property that holds the object's id, for `aggregation.type` `objects`. */
     objectIdProperty?: string,
 }

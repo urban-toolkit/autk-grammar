@@ -949,6 +949,20 @@ test('draws the windows of a building-windows render pass as points', async ({ p
     expect((await page.evaluate(() => window.mapLayers('map0'))).map((layer) => [layer.id, layer.type])).toEqual([['box_surface', 'surface'], ['windows', 'points']]);
 });
 
+test('refuses a points layer in a render pass, and names the layer', async ({ page }) => {
+    // autk-compute would skip it with only a warning. The schema refuses the type too.
+    await expect(runSpec(page, {
+        data: [area, zones, spots],
+        compute: [{
+            type: 'render',
+            outputTableName: 'seen',
+            layers: [{ id: 'zones', dataRef: 'zones', type: 'polygons' }, { id: 'spots', dataRef: 'spots', type: 'points' as never }],
+            viewpoints: { dataRef: 'spots' },
+            aggregation: { type: 'classes' },
+        }],
+    })).rejects.toThrow('Render pass "seen": layer "spots" has the type "points", which a render pass cannot draw.');
+});
+
 test('accepts useCentroid on a heatmap', async ({ page }) => {
     const [neighborhoods, noise, heatmap] = heatmapGeojson.data!;
     const withNear = (near: object): UrbanSpec => ({
