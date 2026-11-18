@@ -220,7 +220,7 @@ map.updateRenderInfo(layerId, { opacity: 0.5 });
 
 A plot's `id` names it: as the `source` of a link, as the `plotId` of its `plot:selection` events, and for `setPlotSelection` and `clearHighlightOnPlot`. Without an id, a plot is known by its `dataRef`, so two plots of one table need ids to be told apart.
 
-`links` connect a plot to a layer of a map. Picking on the layer selects the same features in the plot, and a selection in the plot, by an event its `events` lists, highlights them on the layer. The link makes the layer pickable.
+`links` connect a plot to a layer of a map. Picking on the layer selects the same features in the plot (a pick on another layer of the map does not), and a selection in the plot, by an event its `events` lists, highlights them on the layer. The link makes the layer pickable.
 
 | Field | Effect |
 |---|---|

@@ -33,8 +33,9 @@ export function plotKey(spec: PlotSpec): string {
 export function linkPlotToLayer(plot: AutkPlot, events: AutkPlotEvent[], map: AutkMap, layerId: string): void {
     map.updateRenderInfo(layerId, { isPick: true });
 
-    map.events.on(MapEvent.PICKING, ({ selection }: MapEventData) => {
-        plot.setSelection(selection);
+    // A pick names the layer it was made on, so a pick on another layer of the map leaves the plot alone.
+    map.events.on(MapEvent.PICKING, ({ layerId: picked, selection }: MapEventData) => {
+        if (picked === layerId) plot.setSelection(selection);
     });
 
     for(const event of events) {

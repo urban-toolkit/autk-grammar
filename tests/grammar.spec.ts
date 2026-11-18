@@ -446,6 +446,23 @@ test('names the picked layer in map:picking by its id, with two layers on one ma
     expect(reported).toEqual([{ layerId: 'Zones', selection: [2] }, { layerId: 'blocks', selection: [1] }]);
 });
 
+test('selects in a linked plot only what is picked on its own layer', async ({ page }) => {
+    await runSpec(page, {
+        data: [area, blocks, zones],
+        map: { id: 'm', layerRefs: [{ dataRef: 'blocks', isPick: true }, { dataRef: 'zones', title: 'Zones' }] },
+        plot: { id: 'p', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], events: ['click'] },
+        links: [{ source: 'p', target: 'm', layer: 'Zones' }],
+    });
+    const selection = () => page.evaluate(() => [...(window.grammar as any)._plotRegistry.get('p').selection]);
+    const pick = (layerId: string, ids: number[]) => page.evaluate(([layer, selected]) =>
+        window.grammar.maps[0].events.emit('picking' as never, { selection: selected, layerId: layer } as never), [layerId, ids] as const);
+    await pick('Zones', [3]);
+    expect(await selection()).toEqual([3]);
+    // A pick on the other layer of the map leaves the plot as it was.
+    await pick('blocks', [1]);
+    expect(await selection()).toEqual([3]);
+});
+
 test('draws each plot in its own target when the plot targets are a list', async ({ page }) => {
     const plots: PlotSpec[] = [
         { dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'] },
