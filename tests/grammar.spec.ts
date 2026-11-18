@@ -1,6 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import type { CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, MapLayerSpec, MapSpec, PlotSpec, UrbanSpec } from '@urban-toolkit/the-urban-grammar';
+import type {
+    CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, MapLayerSpec, MapSpec, PlotSpec, RenderComputeSpec, UrbanSpec,
+} from '@urban-toolkit/the-urban-grammar';
 import type { LayerState, RunSummary } from './app/main';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
 import { spec as heatmapGeojson } from '../gallery/src/examples/heatmap-vis-geojson';
@@ -1133,5 +1135,36 @@ test('writes the pass of compute-output-table into a new table drawn as polygons
     expect(sourceComputed, 'buildings with a compute column').toBe(0);
     // The map draws the new table flat, as its layerType says, though it was computed from a buildings table.
     expect((await layerById(page))['Building height (ft)']).toMatchObject({ type: 'polygons', isColorMap: true, interpolator: 'interpolateViridis' });
+    await expectDrawn(page, 'map0');
+});
+
+test('renders the sky each street of compute-render sees into a new table, every pixel of its frames in one class', async ({ page }) => {
+    const pass = (await exampleSpec(page, 'compute-render')).compute![0] as RenderComputeSpec;
+    const directions = pass.viewpoints.sampling!.directions!;
+    const { tables } = await run(page, 'compute-render');
+    expect(tables.street_sky.features).toBeGreaterThan(0);
+    expect(tables.street_sky.features).toBe(tables.wall_st_roads.features);
+    const { renders, sourceRendered } = await page.evaluate(async () => ({
+        renders: (await window.grammar.data.street_sky).features.map((feature) => feature.properties?.compute?.render),
+        sourceRendered: (await window.grammar.data.wall_st_roads).features.filter((feature) => feature.properties?.compute?.render !== undefined).length,
+    }));
+    // Each street is seen from its middle once in every direction, and each pixel of a frame is a building or, as
+    // includeBackground and backgroundLayerType say, the sky: the two shares of a street add up to 1.
+    const wrong = renders.filter((render) => {
+        const classes = Object.entries(render?.classes ?? {}) as Array<[string, number]>;
+        const total = classes.reduce((sum, [, share]) => sum + share, 0);
+        return render?.sampleCount !== directions
+            || classes.map(([name]) => name).join() !== 'buildings,sky'
+            || classes.some(([, share]) => !(share >= 0 && share <= 1))
+            || Math.abs(total - 1) > 1e-6;
+    });
+    expect(wrong).toEqual([]);
+    // Streets see buildings, some more sky than others.
+    expect(renders.some((render) => render.classes.buildings > 0)).toBe(true);
+    const sky = renders.map((render) => render.classes.sky as number);
+    expect(Math.max(...sky)).toBeGreaterThan(Math.min(...sky));
+    expect(sourceRendered, 'streets with a render result').toBe(0);
+    // The new table is drawn as its viewpoints' table is, as roads, colored by its share of sky.
+    expect((await layerById(page))['Share of sky seen from the street']).toMatchObject({ type: 'roads', isColorMap: true, interpolator: 'interpolateBlues' });
     await expectDrawn(page, 'map0');
 });

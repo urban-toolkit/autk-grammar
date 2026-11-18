@@ -334,4 +334,10 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         supportedAdapters: ['autk'],
         load: () => import('./examples/compute-output-table'),
     },
+    'compute-render': {
+        title: 'Compute: Render Pass (Sky Seen from the Street)',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/compute-render'),
+    },
 };
