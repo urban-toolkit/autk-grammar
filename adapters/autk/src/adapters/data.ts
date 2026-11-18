@@ -3,6 +3,7 @@ import { AutkDb, DEFAULT_WORKSPACE_COORDINATE_FORMAT } from '@urban-toolkit/autk
 import type { LoadGeojsonParams } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Geometry } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
+import { enterWorkspace, tableKey } from '../workspace';
 
 /**
  * The query area autk-db reads: `{ bbox }` or `{ geocodeArea, areas }`. autk-db takes any area with a
@@ -105,7 +106,10 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                 await db.init();
             }
 
-            let {type, ...rest_spec} = spec;
+            const { workspace } = spec as { workspace?: string };
+            await enterWorkspace(db, workspace);
+
+            let {type, workspace: _workspace, ...rest_spec} = spec as DataSourceSpec & { workspace?: string };
 
             switch (type) {
                 case 'osm':
@@ -132,7 +136,7 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                         geojsonData = geojsonSpec.geojsonObject as FeatureCollection | undefined;
                     }
 
-                    if (cache && geojsonData) cache.set(geojsonSpec.outputTableName, geojsonData);
+                    if (cache && geojsonData) cache.set(tableKey(workspace, geojsonSpec.outputTableName), geojsonData);
 
                     // Pass the fetched object directly so autk-db doesn't need to re-fetch
                     const loadSpec = (geojsonData
@@ -208,7 +212,7 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                     });
                     if (cache) {
                         const updated = await db.getLayer(jn.dataRef);
-                        cache.set(jn.dataRef, updated);
+                        cache.set(tableKey(workspace, jn.dataRef), updated);
                     }
                     print(db, targets);
                     return db;

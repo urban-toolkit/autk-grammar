@@ -47,7 +47,7 @@ function runSpec(page: Page, spec: UrbanSpec, plotTargets?: 'one' | 'each'): Pro
  * itself (window.readMap), in the frame that draws the map, so the map's controls and
  * watermark on top of it are not counted.
  */
-async function expectDrawn(page: Page, canvasId: string) {
+async function expectDrawn(page: Page, canvasId: string, minColors = 8) {
     await page.waitForTimeout(1500);
     const dataUrl = await page.evaluate((id) => window.readMap(id), canvasId);
     const image = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
@@ -57,7 +57,7 @@ async function expectDrawn(page: Page, canvasId: string) {
     for (let i = 0; i < png.data.length && colors.size < 16; i += 4 * 97) {
         colors.add((png.data[i] << 16) | (png.data[i + 1] << 8) | png.data[i + 2]);
     }
-    expect(colors.size, `#${canvasId} looks blank`).toBeGreaterThan(8);
+    expect(colors.size, `#${canvasId} looks blank`).toBeGreaterThan(minColors);
 }
 
 test('loads CSV and JSON sources', async ({ page }) => {
@@ -902,4 +902,40 @@ test('destroy releases the maps and the registries of a run', async ({ page }) =
         return { before, after: map._isDestroyed, maps: window.grammar.maps.length, layer: window.grammar.mapLayer('n') ?? null };
     });
     expect(result).toEqual({ before: false, after: true, maps: 0, layer: null });
+});
+
+test('keeps two areas in two workspaces, each with its own extent and its own map', async ({ page }) => {
+    // The same table name in each workspace. Without workspaces the second area would be cut to the first one's extent.
+    const area = (workspace: string, bbox: number[]) => ({
+        type: 'osm', outputTableName: 'osm', workspace, pbfFileUrl: '/data/lower_mnt.osm.pbf',
+        queryArea: { bbox }, autoLoadLayers: { layers: ['roads'] },
+    }) as DataSourceSpec;
+    const west = [-74.0155, 40.703, -74.0105, 40.7075];
+    const east = [-74.0020, 40.7125, -73.9975, 40.7170];
+    await runSpec(page, {
+        data: [area('west', west), area('east', east)],
+        map: [
+            { workspace: 'west', layerRefs: [{ dataRef: 'osm_roads', title: 'west roads' }] },
+            { workspace: 'east', layerRefs: [{ dataRef: 'osm_roads', title: 'east roads' }] },
+        ],
+    });
+    expect((await mapLayers(page, 'map0')).map((layer) => layer.id)).toEqual(['west roads']);
+    expect((await mapLayers(page, 'map1')).map((layer) => layer.id)).toEqual(['east roads']);
+    // Thin roads on a flat background give few colors, so count the pixels that differ from the background instead.
+    const images: string[] = [];
+    for (const canvasId of ['map0', 'map1']) {
+        const url = await page.evaluate((id) => window.readMap(id), canvasId);
+        images.push(url);
+        const png = PNG.sync.read(Buffer.from(url.split(',')[1], 'base64'));
+        let painted = 0;
+        for (let i = 4; i < png.data.length; i += 4) {
+            if (png.data[i] !== png.data[0] || png.data[i + 1] !== png.data[1] || png.data[i + 2] !== png.data[2]) painted++;
+        }
+        expect(painted, `#${canvasId} draws its roads`).toBeGreaterThan(200);
+    }
+    // Two different areas, two different pictures.
+    expect(images[0]).not.toEqual(images[1]);
+
+    // `data` lists the default workspace's tables, which are none here.
+    expect(await page.evaluate(() => Object.keys(window.grammar.data))).toEqual([]);
 });

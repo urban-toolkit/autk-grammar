@@ -5,32 +5,33 @@ import { AutkComputeEngine } from '@urban-toolkit/autk-compute';
 import { FeatureCollection } from 'geojson';
 import { ComputeCache, ComputeLayerTypes } from '../types';
 import { computeLayerNames, runCompute } from '../compute-params';
+import { enterWorkspace, tableKey } from '../workspace';
 
 /** The type of the table `name`, which the database knows or an earlier pass wrote. */
-function layerTypeOf(db: AutkDb, name: string, types?: ComputeLayerTypes): LayerType | undefined {
-    return types?.get(name) ?? db.getTablesMetadata().find((table) => table.name === name)?.type as LayerType | undefined;
+function layerTypeOf(db: AutkDb, name: string, workspace: string | undefined, types?: ComputeLayerTypes): LayerType | undefined {
+    return types?.get(tableKey(workspace, name)) ?? db.getTablesMetadata().find((table) => table.name === name)?.type as LayerType | undefined;
 }
 
 export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerTypes): ComputeAdapter {
 
     /** Reads a table, from the cache when an earlier pass wrote it there. */
-    async function read(db: AutkDb, name: string): Promise<FeatureCollection> {
-        return cache?.get(name) ?? await db.getLayer(name);
+    async function read(db: AutkDb, name: string, workspace?: string): Promise<FeatureCollection> {
+        return cache?.get(tableKey(workspace, name)) ?? await db.getLayer(name);
     }
 
     /** Stores a pass's result under `outputTableName`, or, without it, in place of the table `source`. */
     function store(db: AutkDb, result: FeatureCollection, source: string, spec: GpgpuComputeSpec | RenderComputeSpec): void {
         if (!cache) return;
         const name = spec.outputTableName ?? source;
-        cache.set(name, result);
-        const type = spec.layerType ?? layerTypeOf(db, source, types);
-        if (spec.outputTableName && type) types?.set(name, type);
+        cache.set(tableKey(spec.workspace, name), result);
+        const type = spec.layerType ?? layerTypeOf(db, source, spec.workspace, types);
+        if (spec.outputTableName && type) types?.set(tableKey(spec.workspace, name), type);
     }
 
     async function resolveRender(db: AutkDb, spec: RenderComputeSpec): Promise<void> {
         const layers = await Promise.all(spec.layers.map(async (layer) => ({
             id: layer.id,
-            collection: await read(db, layer.dataRef),
+            collection: await read(db, layer.dataRef, spec.workspace),
             type: layer.type,
             objectIdProperty: layer.objectIdProperty,
         })));
@@ -38,7 +39,7 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
         const result = await new AutkComputeEngine().renderPipeline({
             layers,
             viewpoints: {
-                collection: await read(db, spec.viewpoints.dataRef),
+                collection: await read(db, spec.viewpoints.dataRef, spec.workspace),
                 strategy: spec.viewpoints.strategy,
                 sampling: spec.viewpoints.sampling,
             },
@@ -56,7 +57,7 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
         // falls back to the directive's `default`.
         const layers: Record<string, FeatureCollection | undefined> = {};
         for (const name of computeLayerNames(spec)) {
-            const cached = cache?.get(name);
+            const cached = cache?.get(tableKey(spec.workspace, name));
             if (cached) layers[name] = cached;
             else if (name === spec.dataRef) layers[name] = await db.getLayer(name);
             else {
@@ -74,6 +75,7 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
     return {
         async resolveCompute(context: AutkDb | undefined, spec: ComputeSpec): Promise<AutkDb | undefined> {
             if (!context) return;
+            await enterWorkspace(context, spec.workspace);
             if (spec.type === 'render') await resolveRender(context, spec);
             else await resolveGpgpu(context, spec);
             return context;

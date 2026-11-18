@@ -1,4 +1,5 @@
 import { PlotAdapter, PlotSpec, PlotMark } from '@urban-toolkit/the-urban-grammar';
+import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, MapRegistry, MapLayerIds, PlotRegistry, PlotMapLinks, GeoJsonCache, ComputeCache } from '../types';
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkPlot, PlotEvent as AutkPlotEvent } from '@urban-toolkit/autk-plot';
@@ -59,7 +60,9 @@ export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, plo
             const db = context as AutkDb | undefined;
             if(!db) throw new Error('No data context available for plot.');
 
-            const geojson: FeatureCollection = computeCache?.get(spec.dataRef) ?? cache?.get(spec.dataRef) ?? await db.getLayer(spec.dataRef);
+            await enterWorkspace(db, spec.workspace);
+            const key = tableKey(spec.workspace, spec.dataRef);
+            const geojson: FeatureCollection = computeCache?.get(key) ?? cache?.get(key) ?? await db.getLayer(spec.dataRef);
 
             const events = (spec.events ?? []) as unknown as AutkPlotEvent[];
 

@@ -1,5 +1,6 @@
 import type { FeatureCollection } from 'geojson';
 import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
+import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, MapRegistry, MapLayerIds, ComputeCache, ComputeLayerTypes } from '../types';
 import { AutkMap } from '@urban-toolkit/autk-map';
 import type { LayerRenderInfo } from '@urban-toolkit/autk-map';
@@ -213,15 +214,14 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
         for(const table of context.getTablesMetadata()) {
             if(table.type !== undefined) tableToTypeMap[table.name] = table.type;
         }
-        for(const [name, type] of computeTypes ?? []) tableToTypeMap[name] = type;
 
         for(const layerRef of spec.layerRefs){
             const name     = layerRef.dataRef;
             const layerId  = layerIdOf(layerRef);
-            const type     = tableToTypeMap[name] as LayerType;
+            const type     = (computeTypes?.get(tableKey(spec.workspace, name)) ?? tableToTypeMap[name]) as LayerType;
             const getFnv   = layerRef.getFnv;
 
-            const rawData = computeCache?.get(name) ?? (type === 'raster' ? await context.getRaster(name) as unknown as FeatureCollection : await context.getLayer(name));
+            const rawData = computeCache?.get(tableKey(spec.workspace, name)) ?? (type === 'raster' ? await context.getRaster(name) as unknown as FeatureCollection : await context.getLayer(name));
             // Raster tables (e.g. heatmaps) are a single feature with no geometry, so keep them as-is.
             const data = type === 'raster' ? rawData : {
                 ...rawData,
@@ -348,6 +348,7 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
                     map.style.setPredefinedStyle(spec.style)
 
                 await map.init();
+                await enterWorkspace(context, spec.workspace);
                 await loadLayers(map, context, spec);
 
                 for(const layerRef of spec.layerRefs) {
