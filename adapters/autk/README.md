@@ -193,6 +193,14 @@ await grammar.run({
 });
 ```
 
+### `forceRefresh`
+
+autk-db keeps the Overpass API's answer for an `osm` source in the browser's cache for 24 hours, by its area, its layers and its tag sets, and a later run of the same source reads it from there. `forceRefresh: true` queries the API again, and caches the new answer. A source with `pbfFileUrl` reads its file each time, and ignores it.
+
+```ts
+{ type: 'osm', outputTableName: 'loop', queryArea: { geocodeArea: 'Chicago', areas: ['Loop'] }, autoLoadLayers: { layers: ['roads'] }, forceRefresh: true }
+```
+
 ## Compute
 
 Each entry of `compute` runs on the GPU with autk-compute, in order, once the data is loaded. Its `type` is `gpgpu`, the default, or `render`.

@@ -100,6 +100,11 @@ test('refuses tag sets with a PBF extract, naming the source, before autk-db run
     assert.deepEqual((await loadOsmParams({ ...osm, pbfFileUrl: 'area.osm.pbf', tagSets: [] })).tagSets, []);
 });
 
+test('an OSM source hands autk-db its forceRefresh', async () => {
+    assert.equal((await loadOsmParams({ ...osm, forceRefresh: true })).forceRefresh, true);
+    assert.equal('forceRefresh' in await loadOsmParams(osm), false);
+});
+
 // workspaces: each workspace's CRS and precision grid, set before the first source loads.
 const webMercator = { coordinateFormat: 'EPSG:3857', precisionGrid: 1 };
 const utm = { coordinateFormat: 'EPSG:32618', precisionGrid: 0.1 };

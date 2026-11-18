@@ -218,6 +218,12 @@ export interface OsmDataSourceSpec extends TableSourceBase {
      * @maxItems 8
      */
     tagSets?: OsmTagSet[];
+    /**
+     * Query the Overpass API again rather than read the answer the browser cached for this area, its layers and its tag
+     * sets, which autk-db keeps for 24 hours. A source with `pbfFileUrl` reads its file each time and ignores it. Read
+     * by the Autark adapter only.
+     */
+    forceRefresh?: boolean;
     /** Split the raw OSM table into one table per layer, named `<outputTableName>_<layer>`. */
     autoLoadLayers?: {
         /** Currently ignored by both adapters. */

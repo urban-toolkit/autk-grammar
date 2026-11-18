@@ -231,6 +231,20 @@ test('loads the features each tag set chooses from Overpass, one table of one ge
     ]);
 });
 
+test('queries Overpass again with forceRefresh, and reads the answer the browser cached without it', async ({ page }) => {
+    const queries = await answerOverpass(page, TAGGED);
+    // The queries sent by the end of each run: a first run, the same spec again, then with forceRefresh.
+    const sent: number[] = [];
+    for (const fields of [{}, {}, { forceRefresh: true }]) {
+        const { tables } = await runSpec(page, { data: [taggedSource(fields)] });
+        expect(tables.osm_cafes_points?.features, 'the same tables each run').toBe(2);
+        sent.push(queries.length);
+    }
+    expect(sent[0]).toBeGreaterThan(0);
+    expect(sent[1], 'the second run reads the cached answer').toBe(sent[0]);
+    expect(sent[2], 'forceRefresh queries the API again').toBe(2 * sent[0]);
+});
+
 test('refuses tag sets with a PBF extract, naming the source', async ({ page }) => {
     // autk-db reads tag sets from the Overpass API only, and refused them with a PBF extract without naming the source.
     await expect(runSpec(page, { data: [taggedSource({ pbfFileUrl: '/data/lower_mnt.osm.pbf' })] }))

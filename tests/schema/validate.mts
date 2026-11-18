@@ -106,6 +106,8 @@ expect('osm tag sets of each geometry type, without autoLoadLayers', withTagSets
 ]), true);
 expect('osm tag sets with layers', withTagSets([tagSet({})], { autoLoadLayers: { layers: ['roads'] } }), true);
 expect('osm with a pbf and no tag sets', withTagSets([], { pbfFileUrl: 'downtown.osm.pbf' }), true);
+expect('osm with forceRefresh', { data: [{ ...osm, forceRefresh: true }] }, true);
+expect('osm with forceRefresh as a string', { data: [{ ...osm, forceRefresh: 'yes' }] }, false);
 
 // Documents the runtime cannot draw.
 expect('unknown data type', { data: [{ ...osm, type: 'shapefile' }] }, false);
@@ -336,6 +338,7 @@ const newKeys: Array<[string, string[]]> = [
     ['WorkspaceSpec', ['']],
     ['SqlSourceSpec', ['', 'query', 'layerType']],
     ['HeatmapSourceSpec', ['groupBy.normalize']],
+    ['OsmDataSourceSpec', ['forceRefresh']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {
