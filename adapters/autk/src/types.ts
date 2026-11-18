@@ -21,12 +21,13 @@ export type Targets = {
 
 /**
  * How the grammar names a map of the spec: its `id`, else its index in the spec's `map` list (0 for a single map).
- * `map:picking` events name the map by it.
+ * `map:picking` events name the map by it, and the calls that take a `mapId` (`mapLayers`, `mapLayer`,
+ * `highlightOnMap`, `clearHighlightOnMap`, `setPlotSelection`, `clearHighlightOnPlot`) address one map with it: a
+ * string names a map by its `id`, a number by its index.
  */
 export type MapId = string | number;
 
 export type PlotRegistry = Map<string, AutkPlot>;
-export type PlotMapLinks = Map<string, string>; // plotId (dataRef) → mapRef (dataRef of a map layer)
 
 /** A layer a map of the last run draws, as `AutkGrammar.mapLayer` finds it by its table's name. */
 export interface GrammarMapLayer {

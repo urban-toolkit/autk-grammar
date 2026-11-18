@@ -1,7 +1,8 @@
 import { PlotAdapter, PlotSpec, PlotMark } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
-import { Targets, PlotRegistry, PlotMapLinks, GeoJsonCache, ComputeCache } from '../types';
-import type { DrawnLayers } from '../drawn';
+import { Targets, PlotRegistry, GeoJsonCache, ComputeCache } from '../types';
+import { addPlotLink } from '../drawn';
+import type { DrawnLayers, PlotLinks } from '../drawn';
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkPlot, PlotEvent as AutkPlotEvent } from '@urban-toolkit/autk-plot';
 import type { PlotEventData, PlotType, PlotTransformConfig } from '@urban-toolkit/autk-plot';
@@ -46,7 +47,7 @@ export function linkPlotToLayer(plot: AutkPlot, events: AutkPlotEvent[], map: Au
     }
 }
 
-export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotRegistry?: PlotRegistry, plotMapLinks?: PlotMapLinks, cache?: GeoJsonCache, computeCache?: ComputeCache): PlotAdapter {
+export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotRegistry?: PlotRegistry, plotLinks?: PlotLinks, cache?: GeoJsonCache, computeCache?: ComputeCache): PlotAdapter {
 
     return {
         async resolvePlot(context: unknown, spec: PlotSpec, index: number = 0): Promise<void> {
@@ -81,12 +82,14 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
             });
 
             plotRegistry?.set(plotKey(spec), plot);
-            if (spec.mapRef) plotMapLinks?.set(plotKey(spec), spec.mapRef);
 
-            // mapRef names the table of the layer to link to: the last layer that draws it.
-            const layer = spec.mapRef ? layers?.filter((drawn) => drawn.dataRef === spec.mapRef).pop() : undefined;
-            if(layer)
+            // mapRef names the table of the layers to link to: every layer that draws it, in every map. The maps are
+            // drawn before the plots.
+            for(const layer of layers ?? []) {
+                if(!spec.mapRef || layer.dataRef !== spec.mapRef) continue;
                 linkPlotToLayer(plot, events, layer.map, layer.layerId);
+                addPlotLink(plotLinks, plotKey(spec), layer);
+            }
         }
     }
 }

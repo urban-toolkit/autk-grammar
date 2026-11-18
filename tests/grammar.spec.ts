@@ -552,6 +552,66 @@ test('highlights a titled layer, and links it to a plot, by its data name', asyn
     expect(await highlighted()).toEqual(clicked);
 });
 
+test('highlights every map that draws a table, or the one a map key names, and links a plot to each', async ({ page }) => {
+    // The grammar kept one map per table, the last: the first map's layer was never found, lit or linked.
+    await runSpec(page, {
+        data: [area, zones],
+        map: [
+            { id: 'left', layerRefs: [{ dataRef: 'zones', title: 'Zones' }] },
+            { layerRefs: [{ dataRef: 'zones' }] },
+        ],
+        plot: { id: 'sc', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], events: ['click'], mapRef: 'zones' },
+    });
+    const lit = async () => [(await layerById(page, 'map0')).Zones?.highlightedIds, (await layerById(page, 'map1')).zones?.highlightedIds];
+    const selection = () => page.evaluate(() => [...(window.grammar as any)._plotRegistry.get('sc').selection]);
+
+    // The lookups find the layer of each map, and a map key, an id or an index, names one map.
+    expect(await page.evaluate(() => {
+        const where = (layer?: { map: unknown; layerId: string }) =>
+            layer ? [window.grammar.maps.indexOf(layer.map as never), layer.layerId] : null;
+        return {
+            all: window.grammar.mapLayers('zones').map(where),
+            last: where(window.grammar.mapLayer('zones')),
+            byId: where(window.grammar.mapLayer('zones', 'left')),
+            byIndex: where(window.grammar.mapLayer('zones', 1)),
+            missing: where(window.grammar.mapLayer('zones', 'right')),
+        };
+    })).toEqual({ all: [[0, 'Zones'], [1, 'zones']], last: [1, 'zones'], byId: [0, 'Zones'], byIndex: [1, 'zones'], missing: null });
+
+    // A highlight reaches both maps and selects in the plot, and a map key keeps it to one map.
+    await page.evaluate(() => window.grammar.highlightOnMap('zones', [1, 2]));
+    expect(await lit()).toEqual([[1, 2], [1, 2]]);
+    expect(await selection()).toEqual([1, 2]);
+    await page.evaluate(() => window.grammar.highlightOnMap('zones', [3], 1));
+    expect(await lit()).toEqual([[1, 2], [3]]);
+    await page.evaluate(() => window.grammar.clearHighlightOnMap('zones', 'left'));
+    expect(await lit()).toEqual([[], [3]]);
+
+    // The plot's mapRef links it to the layer of each map: its selection lights both, or the map a key names.
+    await page.evaluate(() => window.grammar.setPlotSelection('sc', [0]));
+    expect(await lit()).toEqual([[0], [0]]);
+    await page.evaluate(() => window.grammar.setPlotSelection('sc', [2], 'left'));
+    expect(await lit()).toEqual([[2], [0]]);
+    await page.evaluate(() => window.grammar.clearHighlightOnPlot('sc', 1));
+    expect(await lit()).toEqual([[2], []]);
+    await page.evaluate(() => window.grammar.clearHighlightOnPlot('sc'));
+    expect(await lit()).toEqual([[], []]);
+
+    // A pick on the first map's layer selects in the plot too.
+    await page.evaluate(() => window.grammar.maps[0].events.emit('picking' as never, { selection: [3], layerId: 'Zones' } as never));
+    expect(await selection()).toEqual([3]);
+
+    // A link names its map: the plot's selection lights that map's layer only, though the other map draws the table too.
+    await runSpec(page, {
+        data: [area, zones],
+        map: [{ id: 'left', layerRefs: [{ dataRef: 'zones', title: 'Zones' }] }, { layerRefs: [{ dataRef: 'zones' }] }],
+        plot: { id: 'sc', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], events: ['click'] },
+        links: [{ source: 'sc', target: 'left' }],
+    });
+    await page.evaluate(() => window.grammar.setPlotSelection('sc', [1]));
+    expect(await lit()).toEqual([[1], []]);
+});
+
 test('draws a layer in its color, line width and outline', async ({ page }) => {
     await runSpec(page, {
         data: [area, zones, blocks, paths],

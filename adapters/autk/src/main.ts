@@ -12,9 +12,9 @@ import { createPlotAdapter, linkPlotToLayer, plotKey } from "./adapters/plot";
 import { layerIdOf } from "./adapters/map";
 import { enterWorkspace } from "./workspace";
 import { createComputeAdapter } from "./adapters/compute";
-import { Targets, PlotRegistry, PlotMapLinks, GeoJsonCache, ComputeCache, ComputeLayerTypes, GrammarEventEmitter } from "./types";
-import type { GrammarMapLayer, GrammarPlotSelectionEvent } from "./types";
-import { DrawnLayers, mapIdOf } from "./drawn";
+import { Targets, PlotRegistry, GeoJsonCache, ComputeCache, ComputeLayerTypes, GrammarEventEmitter } from "./types";
+import type { GrammarMapLayer, GrammarPlotSelectionEvent, MapId } from "./types";
+import { DrawnLayer, DrawnLayers, PlotLinks, addPlotLink, isOnMap, mapIdOf } from "./drawn";
 
 function asList<T>(value: T[] | T | undefined): T[] {
     return value === undefined ? [] : Array.isArray(value) ? value : [value];
@@ -44,7 +44,7 @@ export class AutkGrammar {
     private _maps: AutkMap[] = [];
     private _plotRegistry: PlotRegistry = new Map();
     private _fwdCleanups: Array<() => void> = [];
-    private _plotMapLinks: PlotMapLinks = new Map();
+    private _plotLinks: PlotLinks = new Map();
 
     readonly interactions = new GrammarEventEmitter();
 
@@ -52,7 +52,7 @@ export class AutkGrammar {
         const cache: GeoJsonCache = new Map();
         this.dataAdapter = createDataAdapter(targets, cache);
         this.mapAdapter = createMapAdapter(targets, this._layers, this._computeCache, this._maps, this._computeTypes);
-        this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotMapLinks, cache, this._computeCache);
+        this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, cache, this._computeCache);
         this.computeAdapter = createComputeAdapter(this._computeCache, this._computeTypes);
     }
 
@@ -85,17 +85,39 @@ export class AutkGrammar {
     }
 
     /**
+     * Every layer the maps of the last {@link run} draw for a table, found by the table's name (a layer's `dataRef`):
+     * for each, the map that draws it and the layer's id in that map, which is its `title`, else its `dataRef`. The
+     * maps come in the spec's order, each map's layers bottom first. Empty when no map draws the table.
+     *
+     * @param dataRef The table's name.
+     * @param mapId The map to look in, by its {@link MapId}: a string names a map by its `id`, a number by its index in
+     * the spec's `map` list. Without it, every map.
+     */
+    mapLayers(dataRef: string, mapId?: MapId): GrammarMapLayer[] {
+        return this._layersOf(dataRef, mapId).map(({ map, layerId }) => ({ map, layerId }));
+    }
+
+    /**
      * The layer a map of the last {@link run} draws for a table, found by the table's name (a layer's `dataRef`):
      * the map that draws it, and the layer's id in that map, which is its `title`, else its `dataRef`.
-     * `undefined` when no map draws the table. When several layers draw it, the last one.
+     * `undefined` when no map draws the table. When several layers draw it, the last one, which is the last map's;
+     * {@link mapLayers} lists them all.
+     *
+     * @param dataRef The table's name.
+     * @param mapId The map to look in, by its {@link MapId}: a string names a map by its `id`, a number by its index in
+     * the spec's `map` list. Without it, every map.
      *
      * @example
      * const layer = grammar.mapLayer('buildings');
      * layer?.map.updateRenderInfo(layer.layerId, { opacity: 0.5 });
      */
-    mapLayer(dataRef: string): GrammarMapLayer | undefined {
-        const layer = this._layers.filter((drawn) => drawn.dataRef === dataRef).pop();
-        return layer ? { map: layer.map, layerId: layer.layerId } : undefined;
+    mapLayer(dataRef: string, mapId?: MapId): GrammarMapLayer | undefined {
+        return this.mapLayers(dataRef, mapId).pop();
+    }
+
+    /** The drawn layers of a table, on every map or on the one `mapId` names. */
+    private _layersOf(dataRef: string, mapId?: MapId): DrawnLayer[] {
+        return this._layers.filter((layer) => layer.dataRef === dataRef && isOnMap(layer, mapId));
     }
 
     /**
@@ -112,7 +134,7 @@ export class AutkGrammar {
         this._maps.length = 0;
         this._layers.length = 0;
         this._plotRegistry.clear();
-        this._plotMapLinks.clear();
+        this._plotLinks.clear();
         this._computeCache.clear();
         this._computeTypes.clear();
         this.grammarEngine = undefined;
@@ -183,49 +205,74 @@ export class AutkGrammar {
     }
 
     /**
-     * Highlights features on the map layer that draws the table `dataRef` (see {@link mapLayer}).
-     * If a plot is linked to that layer, by a link or its `mapRef`, the plot selection is updated too.
+     * Highlights features on every layer that draws the table `dataRef`, in every map (see {@link mapLayers}), or only
+     * in the map `mapId` names. If a plot is linked to one of those layers, by a link or its `mapRef`, the plot
+     * selection is updated too.
+     *
+     * @param dataRef The table's name.
+     * @param featureIds The features to highlight: their positions among those the layer draws.
+     * @param mapId The map to highlight on, by its {@link MapId}: a string names a map by its `id`, a number by its
+     * index in the spec's `map` list. Without it, every map that draws the table.
      */
-    highlightOnMap(dataRef: string, featureIds: number[]): void {
-        const layer = this.mapLayer(dataRef);
-        layer?.map.setHighlightedIds(layer.layerId, featureIds);
-        for (const [plotId, mapRef] of this._plotMapLinks) {
-            if (mapRef === dataRef) this._plotRegistry.get(plotId)?.setSelection(featureIds);
-        }
+    highlightOnMap(dataRef: string, featureIds: number[], mapId?: MapId): void {
+        const layers = this._layersOf(dataRef, mapId);
+        for (const { map, layerId } of layers) map.setHighlightedIds(layerId, featureIds);
+        this._selectInLinkedPlots(layers, featureIds);
     }
 
     /**
-     * Clears highlighted features on the map layer that draws the table `dataRef` (see {@link mapLayer}).
-     * If a plot is linked to that layer, by a link or its `mapRef`, the plot selection is cleared too.
+     * Clears highlighted features on every layer that draws the table `dataRef`, in every map (see {@link mapLayers}),
+     * or only in the map `mapId` names. If a plot is linked to one of those layers, by a link or its `mapRef`, the plot
+     * selection is cleared too.
+     *
+     * @param dataRef The table's name.
+     * @param mapId The map to clear, by its {@link MapId}: a string names a map by its `id`, a number by its index in
+     * the spec's `map` list. Without it, every map that draws the table.
      */
-    clearHighlightOnMap(dataRef: string): void {
-        const layer = this.mapLayer(dataRef);
-        layer?.map.clearHighlightedIds(layer.layerId);
-        for (const [plotId, mapRef] of this._plotMapLinks) {
-            if (mapRef === dataRef) this._plotRegistry.get(plotId)?.setSelection([]);
-        }
+    clearHighlightOnMap(dataRef: string, mapId?: MapId): void {
+        const layers = this._layersOf(dataRef, mapId);
+        for (const { map, layerId } of layers) map.clearHighlightedIds(layerId);
+        this._selectInLinkedPlots(layers, []);
     }
 
     /**
      * Clears the selection on the plot `plotId` names: its `id`, else its `dataRef`.
-     * If that plot is linked to a map layer, by a link or its `mapRef`, the layer's highlight is cleared too.
+     * If that plot is linked to map layers, by links or its `mapRef`, their highlights are cleared too: on every map,
+     * or only on the map `mapId` names.
+     *
+     * @param plotId The plot: its `id`, else its `dataRef`.
+     * @param mapId The map whose linked layers to clear, by its {@link MapId}: a string names a map by its `id`, a
+     * number by its index in the spec's `map` list. Without it, every linked layer.
      */
-    clearHighlightOnPlot(plotId: string): void {
+    clearHighlightOnPlot(plotId: string, mapId?: MapId): void {
         this._plotRegistry.get(plotId)?.setSelection([]);
-        const mapRef = this._plotMapLinks.get(plotId);
-        const layer = mapRef ? this.mapLayer(mapRef) : undefined;
-        layer?.map.clearHighlightedIds(layer.layerId);
+        for (const layer of this._plotLinks.get(plotId) ?? []) {
+            if (isOnMap(layer, mapId)) layer.map.clearHighlightedIds(layer.layerId);
+        }
     }
 
     /**
      * Applies a selection to the plot `plotId` names: its `id`, else its `dataRef`.
-     * If that plot is linked to a map layer, by a link or its `mapRef`, the layer's highlight is updated too.
+     * If that plot is linked to map layers, by links or its `mapRef`, their highlights are updated too: on every map,
+     * or only on the map `mapId` names.
+     *
+     * @param plotId The plot: its `id`, else its `dataRef`.
+     * @param featureIds The features to select: their positions among those the plot draws.
+     * @param mapId The map whose linked layers to highlight, by its {@link MapId}: a string names a map by its `id`, a
+     * number by its index in the spec's `map` list. Without it, every linked layer.
      */
-    setPlotSelection(plotId: string, featureIds: number[]): void {
+    setPlotSelection(plotId: string, featureIds: number[], mapId?: MapId): void {
         this._plotRegistry.get(plotId)?.setSelection(featureIds);
-        const mapRef = this._plotMapLinks.get(plotId);
-        const layer = mapRef ? this.mapLayer(mapRef) : undefined;
-        layer?.map.setHighlightedIds(layer.layerId, featureIds);
+        for (const layer of this._plotLinks.get(plotId) ?? []) {
+            if (isOnMap(layer, mapId)) layer.map.setHighlightedIds(layer.layerId, featureIds);
+        }
+    }
+
+    /** Applies a selection made on `layers` to every plot linked to one of them. */
+    private _selectInLinkedPlots(layers: DrawnLayer[], featureIds: number[]): void {
+        for (const [plotId, linked] of this._plotLinks) {
+            if (linked.some((layer) => layers.includes(layer))) this._plotRegistry.get(plotId)?.setSelection(featureIds);
+        }
     }
 
     /** Wires each entry of `links` between a plot and a layer of a map, both now drawn. */
@@ -250,8 +297,11 @@ export class AutkGrammar {
                     ? `Link from "${link.source}": map "${link.target}" has no layer "${link.layer}".`
                     : `Link from "${link.source}": map "${link.target}" draws no layer of the table "${plotSpec.dataRef}"; name the layer.`);
 
-            linkPlotToLayer(plot, (plotSpec.events ?? []) as unknown as PlotEvent[], map, layerIdOf(layerRef));
-            this._plotMapLinks.set(link.source, layerRef.dataRef);
+            // The link names its map, so it is that map's layer that it links, though other maps draw the table too.
+            const layer = this._layers.find((drawn) => drawn.mapIndex === mapIndex && drawn.layerId === layerIdOf(layerRef));
+            if (!layer) continue;
+            linkPlotToLayer(plot, (plotSpec.events ?? []) as unknown as PlotEvent[], map, layer.layerId);
+            addPlotLink(this._plotLinks, link.source, layer);
         }
     }
 

@@ -19,7 +19,25 @@ export interface DrawnLayer {
 /** Every layer the maps of the last run draw, one entry per layer of each map: the maps in order, layers bottom first. */
 export type DrawnLayers = DrawnLayer[];
 
+/** The layers each plot is linked to, by a link or its `mapRef`, keyed by the plot's `id`, else its `dataRef`. */
+export type PlotLinks = Map<string, DrawnLayer[]>;
+
 /** A map's {@link MapId}: its `id`, else its index in the spec's `map` list. */
 export function mapIdOf(spec: MapSpec | undefined, index: number): MapId {
     return spec?.id ?? index;
+}
+
+/**
+ * Whether a layer is on the map `mapId` names: a string names a map by its `id`, a number by its index. Without one,
+ * every layer is.
+ */
+export function isOnMap(layer: DrawnLayer, mapId?: MapId): boolean {
+    if (mapId === undefined) return true;
+    return typeof mapId === 'number' ? layer.mapIndex === mapId : layer.mapId === mapId;
+}
+
+/** Records that a plot is linked to a layer, once. */
+export function addPlotLink(links: PlotLinks | undefined, plotKey: string, layer: DrawnLayer): void {
+    const linked = links?.get(plotKey) ?? [];
+    if (!linked.includes(layer)) links?.set(plotKey, [...linked, layer]);
 }

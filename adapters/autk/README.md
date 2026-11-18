@@ -198,7 +198,7 @@ Besides `dataRef`, a layer of `map.layerRefs` takes these styling options:
 | `colorMapReverse` | On a raster layer, runs the color scale from the highest value to the lowest, or from `colorMapRange`'s high to its low. |
 | `transferFunction` | On a raster layer, how opaque its cells are by value: autk-map's transfer function (`mode`, `opacityMin`, `opacityMax`, `gamma`, `zeroCenter`). `{ opacityMin: 1, opacityMax: 1 }` draws every cell with a value fully opaque. |
 
-After a run, `grammar.mapLayer(dataRef)` finds the layer a map draws for a table: the `AutkMap` and the layer's id in it. `highlightOnMap`, `clearHighlightOnMap` and a plot's `mapRef` also name a layer by its `dataRef`.
+After a run, `grammar.mapLayer(dataRef)` finds the layer a map draws for a table: the `AutkMap` and the layer's id in it, the last map's when several maps draw the table. `grammar.mapLayers(dataRef)` lists every layer that draws it, in every map. `highlightOnMap`, `clearHighlightOnMap` and a plot's `mapRef` also name layers by their `dataRef` (see [Interactions](#interactions)).
 
 ```ts
 await grammar.run({
@@ -228,7 +228,7 @@ A plot's `id` names it: as the `source` of a link, as the `plotId` of its `plot:
 | `target` | The map: its `id`. |
 | `layer` | The layer of the target map, by its `title`, else its `dataRef`. Defaults to the layer that draws the plot's `dataRef`. |
 
-A run refuses a link that names no plot, map or layer of the spec. A plot's `mapRef` is a shorthand for a link: it names the table (`dataRef`) of a map layer, and links the plot to the layer that draws it, if a map does.
+A run refuses a link that names no plot, map or layer of the spec. A plot's `mapRef` is a shorthand for links: it names the table (`dataRef`) of map layers, and links the plot to every layer that draws it, in every map.
 
 ```ts
 await grammar.run({
@@ -256,6 +256,25 @@ A layer with `isPick` and a plot with `events` report what the user selects on `
 ```ts
 grammar.interactions.on('map:picking', ({ mapId, layerId, selection }) => { /* feature ids */ });
 grammar.interactions.on('plot:selection', ({ plotId, event, selection }) => { /* feature ids */ });
+```
+
+An app sets selections with these calls, which take feature ids as the events give them. Each reaches every map that draws the table, or only the map its last argument, `mapId`, names:
+
+| Call | Effect |
+|---|---|
+| `mapLayers(dataRef, mapId?)` | Every layer that draws the table, each as `{ map, layerId }`: the maps in the spec's order, each map's layers bottom first. |
+| `mapLayer(dataRef, mapId?)` | The last of those: the last map's layer when several maps draw the table. |
+| `highlightOnMap(dataRef, featureIds, mapId?)` | Highlights the features on each of those layers, and selects them in the plots linked to the layers. |
+| `clearHighlightOnMap(dataRef, mapId?)` | Clears those highlights, and the linked plots' selections. |
+| `setPlotSelection(plotId, featureIds, mapId?)` | Selects the features in the plot (its `id`, else its `dataRef`), and highlights them on the layers it is linked to. |
+| `clearHighlightOnPlot(plotId, mapId?)` | Clears the plot's selection, and the highlights on the layers it is linked to. |
+
+`mapId` names one map: a string by its `id`, a number by its index in `map`. The `mapId` of a `map:picking` event names the map it came from, so it can be passed back as it is.
+
+```ts
+grammar.highlightOnMap('buildings', [3, 7]);           // every map that draws buildings
+grammar.highlightOnMap('buildings', [3, 7], 'after');  // the map whose id is 'after'
+grammar.clearHighlightOnMap('buildings', 0);           // the first map
 ```
 
 ## Page layout
