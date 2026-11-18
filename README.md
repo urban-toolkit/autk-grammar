@@ -48,7 +48,7 @@ const validate = new Ajv({ allowUnionTypes: true }).compile(schema);
 if (!validate(spec)) console.error(validate.errors);
 ```
 
-Keys the schema does not name are allowed. `make build` regenerates the schema, and `npm run test:schema` validates every gallery spec against it.
+Keys the schema does not name are allowed, and its descriptions are the comments in `types.ts`. `make build` regenerates the schema, and `npm run test:schema` validates every gallery spec against it, checks that it refuses specs the adapter cannot run, and checks that the keys it lists have descriptions.
 
 ## Example gallery
 
