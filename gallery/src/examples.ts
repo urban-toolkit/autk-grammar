@@ -316,4 +316,10 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         supportedAdapters: ['autk'],
         load: () => import('./examples/map-camera'),
     },
+    'linked-views': {
+        title: 'Linked Views: Map and Plot Side by Side',
+        layout: 'map+plot',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/linked-views'),
+    },
 };

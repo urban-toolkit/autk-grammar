@@ -1052,3 +1052,26 @@ test('tilts the view of map-camera to its zoom, pitch and bearing around the poi
     expect(view.eye[2] - view.lookAt[2]).toBeCloseTo(distance * Math.cos(tilt), 3);
     await expectDrawn(page, 'map0');
 });
+
+test('links the plot of linked-views to its map by their ids: a click in the plot highlights the layer, a pick selects in the plot', async ({ page }) => {
+    const { tables, plotSvgs } = await run(page, 'linked-views');
+    expect(plotSvgs).toBeGreaterThan(0);
+    await expectDrawn(page, 'map0');
+    const layer = async () => (await layerById(page))['Neighborhood area'];
+    // The link makes the layer it names pickable, and nothing is highlighted yet.
+    expect(await layer()).toMatchObject({ isPick: true, highlightedIds: [] });
+
+    // A click on a mark of the plot highlights its feature on that layer.
+    const clicked = await page.evaluate(() => {
+        const mark = document.querySelector('#plot .autkMark') as Element & { __data__?: { autkIds?: number[] } };
+        mark.dispatchEvent(new MouseEvent('click'));
+        return mark.__data__?.autkIds;
+    });
+    expect(clicked).toEqual([expect.any(Number)]);
+    expect((await layer()).highlightedIds).toEqual(clicked);
+
+    // A pick on the layer selects the feature in the plot, which the grammar knows by its id.
+    const picked = (clicked![0] + 1) % tables.neighborhoods.features;
+    await page.evaluate((id) => window.grammar.maps[0].events.emit('picking' as never, { selection: [id], layerId: 'Neighborhood area' } as never), picked);
+    expect(await page.evaluate(() => [...(window.grammar as any)._plotRegistry.get('shapePlot').selection])).toEqual([picked]);
+});
