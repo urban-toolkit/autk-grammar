@@ -384,12 +384,24 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
 
                 const map = new AutkMap(canvas);
 
-                if(spec.style)
-                    map.style.setPredefinedStyle(spec.style)
+                // A map is known to the grammar, which destroys it, once its layers are loaded. One that fails before
+                // is destroyed here, so its controls, event handlers and GPU buffers do not outlive the failed run.
+                let drawn: string[][];
+                try {
+                    if(spec.style)
+                        map.style.setPredefinedStyle(spec.style)
 
-                await map.init();
-                await enterWorkspace(context, spec.workspace);
-                const drawn = await loadLayers(map, context, spec);
+                    await map.init();
+                    await enterWorkspace(context, spec.workspace);
+                    drawn = await loadLayers(map, context, spec);
+                } catch(error) {
+                    try {
+                        map.destroy();
+                    } catch {
+                        // The run reports the load's error, not the teardown's.
+                    }
+                    throw error;
+                }
 
                 const mapId = mapIdOf(spec, index);
                 spec.layerRefs.forEach((layerRef, at) => layers?.push({

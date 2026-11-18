@@ -1206,6 +1206,23 @@ test('destroy releases the maps and the registries of a run', async ({ page }) =
     expect(result).toEqual({ before: false, after: true, maps: 0, layer: null });
 });
 
+test('destroys a map whose layers fail to load, so none of its controls stay on the page', async ({ page }) => {
+    // A map joined the grammar's list, which destroy() empties, only once its layers loaded. A map whose layers failed was
+    // never destroyed: its menu, legend and watermark stayed on the page, with its event handlers and GPU buffers.
+    await expect(runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones' }, { dataRef: 'nowhere' }] },
+    })).rejects.toThrow('nowhere');
+    expect(await page.evaluate(() => ({
+        maps: window.grammar.maps.length,
+        controls: document.querySelectorAll('#stage .autk-map-branding, #stage #autkMapUi, #stage #autkMapSubMenu, #stage #autkMapLegend').length,
+    }))).toEqual({ maps: 0, controls: 0 });
+
+    // The same map with its layers loaded leaves its controls in place.
+    await runSpec(page, { data: [area, zones], map: { layerRefs: [{ dataRef: 'zones' }] } });
+    expect(await page.evaluate(() => document.querySelectorAll('#stage .autk-map-branding, #stage #autkMapUi').length)).toBe(2);
+});
+
 test('keeps two areas in two workspaces, each with its own extent and its own map', async ({ page }) => {
     // The same table name in each workspace. Without workspaces the second area would be cut to the first one's extent.
     const area = (workspace: string, bbox: number[]) => ({
