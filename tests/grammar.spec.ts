@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import type { ColorMapInterpolator, DataSourceSpec, MapLayerSpec, MapSpec, PlotSpec, UrbanSpec } from '@urban-toolkit/the-urban-grammar';
+import type { CameraSpec, ColorMapInterpolator, DataSourceSpec, MapLayerSpec, MapSpec, PlotSpec, UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import type { LayerState, RunSummary } from './app/main';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
 import { spec as heatmapGeojson } from '../gallery/src/examples/heatmap-vis-geojson';
@@ -1022,4 +1022,33 @@ test('keeps two areas in two workspaces, each with its own extent and its own ma
 
     // `data` lists the default workspace's tables, which are none here.
     expect(await page.evaluate(() => Object.keys(window.grammar.data))).toEqual([]);
+});
+
+// The gallery examples of the keys 5.0.0 adds, each run as the gallery runs it, and checked for what it draws or computes.
+
+/** A gallery example's spec, loaded in the page (see window.exampleSpec), to run it changed. */
+function exampleSpec(page: Page, name: string): Promise<UrbanSpec> {
+    return page.evaluate((example) => window.exampleSpec(example), name);
+}
+
+test('tilts the view of map-camera to its zoom, pitch and bearing around the point the map fits', async ({ page }) => {
+    const spec = await exampleSpec(page, 'map-camera');
+    const { camera, ...untilted } = spec.map as MapSpec;
+    // The same map without a camera: the view that fits its layers, looking straight down.
+    await runSpec(page, { ...spec, map: untilted });
+    const fitted = await page.evaluate(() => window.cameraState('map0'));
+
+    await run(page, 'map-camera');
+    const view = await page.evaluate(() => window.cameraState('map0'));
+    const { zoom, pitch, bearing } = camera as Required<CameraSpec>;
+    const distance = 10000 / 2 ** (zoom - 10);
+    const [tilt, heading] = [pitch, bearing].map((degrees) => (degrees * Math.PI) / 180);
+    // The map still looks at the point it fits, from `distance` away, tilted `pitch` from the vertical and facing `bearing`
+    // clockwise from north, so the eye is south-west of that point.
+    expect(view.lookAt[0]).toBeCloseTo(fitted.lookAt[0], 3);
+    expect(view.lookAt[1]).toBeCloseTo(fitted.lookAt[1], 3);
+    expect(view.eye[0] - view.lookAt[0]).toBeCloseTo(-distance * Math.sin(tilt) * Math.sin(heading), 3);
+    expect(view.eye[1] - view.lookAt[1]).toBeCloseTo(-distance * Math.sin(tilt) * Math.cos(heading), 3);
+    expect(view.eye[2] - view.lookAt[2]).toBeCloseTo(distance * Math.cos(tilt), 3);
+    await expectDrawn(page, 'map0');
 });

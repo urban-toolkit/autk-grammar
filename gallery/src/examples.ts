@@ -310,4 +310,10 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         supportedAdapters: ['autk'],
         load: () => import('./examples/data-context-test'),
     },
+    'map-camera': {
+        title: 'Camera: Tilted View of the Financial District',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/map-camera'),
+    },
 };
