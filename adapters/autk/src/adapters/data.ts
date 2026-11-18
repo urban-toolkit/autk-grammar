@@ -65,10 +65,13 @@ function queryAreaOf(spec: OsmDataSourceSpec): OsmDataSourceSpec['queryArea'] {
 
 /**
  * Maps an OSM source onto autk-db's parameters, which always expect
- * `autoLoadLayers` and no longer take `dropOsmTable`.
+ * `autoLoadLayers` and no longer take `dropOsmTable`. autk-db reads `tagSets` from the Overpass API only, so a source
+ * that also names a PBF extract is refused here, by its name.
  */
 function toLoadOsmParams(spec: OsmDataSourceSpec) {
     const { autoLoadLayers, ...rest } = spec;
+    if (spec.pbfFileUrl !== undefined && (spec.tagSets?.length ?? 0) > 0)
+        throw new Error(`OSM source "${spec.outputTableName}": tagSets are read from the Overpass API only, so a source with pbfFileUrl cannot take them.`);
     return { ...rest, queryArea: queryAreaOf(spec), autoLoadLayers: { layers: autoLoadLayers?.layers ?? [] } };
 }
 

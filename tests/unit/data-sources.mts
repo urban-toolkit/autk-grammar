@@ -66,6 +66,39 @@ test('a CSV source still loads into the database it is given', async () => {
     assert.deepEqual(calls, [['loadCsv', { outputTableName: 'c', csvFileUrl: 'rows.csv' }]]);
 });
 
+// OpenStreetMap sources, for a box around Wall Street.
+const osm = { type: 'osm', outputTableName: 'osm', queryArea: { bbox: [-74.0125, 40.705, -74.008, 40.7085] } };
+
+/** The parameters of the one `loadOsm` call loading `source` makes. */
+async function loadOsmParams(source: unknown): Promise<Record<string, unknown>> {
+    const calls = await callsFor(source);
+    assert.deepEqual(calls.map(([method]) => method), ['loadOsm']);
+    return calls[0][1] as Record<string, unknown>;
+}
+
+const tagSets = [
+    { name: 'cafes', type: 'points', tags: [{ key: 'amenity', value: 'cafe' }] },
+    { name: 'paths', type: 'polylines', tags: [{ key: 'highway' }, { key: 'footway', value: 'sidewalk' }] },
+];
+
+test('an OSM source hands autk-db its tag sets', async () => {
+    const params = await loadOsmParams({ ...osm, tagSets });
+    assert.deepEqual(params.tagSets, tagSets);
+    // A tag-only source asks for no layer.
+    assert.deepEqual(params.autoLoadLayers, { layers: [] });
+});
+
+test('refuses tag sets with a PBF extract, naming the source, before autk-db runs', async () => {
+    const { db, calls } = fakeDb();
+    await assert.rejects(
+        createDataAdapter().resolveSource(db, { ...osm, pbfFileUrl: 'area.osm.pbf', tagSets } as DataSourceSpec),
+        { message: 'OSM source "osm": tagSets are read from the Overpass API only, so a source with pbfFileUrl cannot take them.' },
+    );
+    assert.deepEqual(calls, []);
+    // An empty list asks for no tag set, so a source with a PBF extract may give one.
+    assert.deepEqual((await loadOsmParams({ ...osm, pbfFileUrl: 'area.osm.pbf', tagSets: [] })).tagSets, []);
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
     try { await fn(); console.log(`ok ${name}`); }

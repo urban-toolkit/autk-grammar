@@ -93,6 +93,19 @@ const box = [-87.66415, 41.858, -87.61232, 41.89966];
 const osmIn = (queryArea: unknown) => ({ data: [{ ...osm, queryArea }] });
 expect('osm with a bbox', osmIn({ bbox: box }), true);
 expect('osm with a bbox and a pbf', { data: [{ ...osm, pbfFileUrl: 'downtown.osm.pbf', queryArea: { bbox: box } }] }, true);
+// OSM tag sets, as autk-db's checkTagSets takes them: at most 8 sets, each a name, a geometry type and 1 to 64 tags.
+// A field given as undefined is left out.
+const tagSet = (fields: Record<string, unknown>) => Object.fromEntries(Object.entries({
+    name: 'cafes', type: 'points', tags: [{ key: 'amenity', value: 'cafe' }], ...fields,
+}).filter(([, value]) => value !== undefined));
+const withTagSets = (tagSets: unknown, fields: Record<string, unknown> = {}) => ({ data: [{ ...osm, tagSets, ...fields }] });
+expect('osm tag sets of each geometry type, without autoLoadLayers', withTagSets([
+    tagSet({}),
+    tagSet({ name: 'paths_2', type: 'polylines', tags: [{ key: 'highway' }] }),
+    tagSet({ name: 'parks', type: 'polygons', tags: [{ key: 'leisure', value: 'park' }, { key: 'addr:street' }] }),
+]), true);
+expect('osm tag sets with layers', withTagSets([tagSet({})], { autoLoadLayers: { layers: ['roads'] } }), true);
+expect('osm with a pbf and no tag sets', withTagSets([], { pbfFileUrl: 'downtown.osm.pbf' }), true);
 
 // Documents the runtime cannot draw.
 expect('unknown data type', { data: [{ ...osm, type: 'shapefile' }] }, false);
@@ -209,6 +222,22 @@ expect('osm bbox with geocodeArea and areas', osmIn({ bbox: box, geocodeArea: 'C
 expect('osm bbox with geocodeArea', osmIn({ bbox: box, geocodeArea: 'Chicago' }), false);
 expect('osm bbox with areas', osmIn({ bbox: box, areas: ['Loop'] }), false);
 expect('osm queryArea without bbox or geocodeArea', osmIn({}), false);
+expect('osm tag sets with a pbf, which autk-db refuses', withTagSets([tagSet({})], { pbfFileUrl: 'downtown.osm.pbf' }), false);
+expect('osm tag sets as an object', withTagSets(tagSet({})), false);
+expect('osm nine tag sets', withTagSets(Array.from({ length: 9 }, (_, i) => tagSet({ name: `set_${i}` }))), false);
+expect('osm tag set of an unknown type', withTagSets([tagSet({ type: 'lines' })]), false);
+expect('osm tag set without a type', withTagSets([tagSet({ type: undefined })]), false);
+expect('osm tag set without a name', withTagSets([tagSet({ name: undefined })]), false);
+expect('osm tag set name with a capital', withTagSets([tagSet({ name: 'Cafes' })]), false);
+expect('osm tag set name starting with a digit', withTagSets([tagSet({ name: '1cafes' })]), false);
+expect('osm tag set name of 33 characters', withTagSets([tagSet({ name: `c${'a'.repeat(32)}` })]), false);
+expect('osm tag set without tags', withTagSets([tagSet({ tags: [] })]), false);
+expect('osm tag set of 65 tags', withTagSets([tagSet({ tags: Array.from({ length: 65 }, (_, i) => ({ key: `k${i}` })) })]), false);
+expect('osm tag without a key', withTagSets([tagSet({ tags: [{ value: 'cafe' }] })]), false);
+expect('osm tag key with a space', withTagSets([tagSet({ tags: [{ key: 'amenity type' }] })]), false);
+expect('osm tag key starting with a colon', withTagSets([tagSet({ tags: [{ key: ':amenity' }] })]), false);
+expect('osm tag with an empty value', withTagSets([tagSet({ tags: [{ key: 'amenity', value: '' }] })]), false);
+expect('osm tag value of 256 characters', withTagSets([tagSet({ tags: [{ key: 'name', value: 'x'.repeat(256) }] })]), false);
 expect('camera pitch above 90', { map: { ...layers, camera: { pitch: 91 } } }, false);
 expect('camera pitch below 0', { map: { ...layers, camera: { pitch: -1 } } }, false);
 expect('camera bearing above 360', { map: { ...layers, camera: { bearing: 361 } } }, false);
@@ -240,7 +269,7 @@ if (typeof bboxDescription !== 'string' || bboxDescription.trim() === '') {
     failures++;
     console.error('FAIL OsmBoundingBoxArea.bbox has no description in the schema');
 }
-// So is every key 5.0.0 adds or renames. A path of keys from a definition is followed through `$ref`, each branch of
+// So is every key 5.0.0 adds or renames, and every key added since. A path of keys from a definition is followed through `$ref`, each branch of
 // `anyOf` and `allOf` (a discriminated union's `then`) and an array's `items`. The key must be reached at least once,
 // and carry a description everywhere it is reached; an empty path checks the definition itself.
 type SchemaNode = Record<string, any>;
@@ -280,6 +309,9 @@ const newKeys: Array<[string, string[]]> = [
         'aggregation', 'aggregation.includeBackground', 'aggregation.backgroundLayerType',
         'camera', 'camera.fov', 'camera.clip', 'camera.clip.near', 'camera.clip.far',
     ]],
+    ['OsmDataSourceSpec', ['tagSets', 'tagSets.name', 'tagSets.type', 'tagSets.tags', 'tagSets.tags.key', 'tagSets.tags.value']],
+    ['OsmTagSet', ['']],
+    ['OsmTagFilter', ['']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

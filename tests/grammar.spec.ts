@@ -145,6 +145,98 @@ test('refuses a bbox that is not [west, south, east, north] in degrees, and a bb
     await refused({ bbox: BOX, areas: ['Financial District'] }, both);
 });
 
+// OSM tag sets, read from an Overpass API the test answers itself, so a run needs no network. Inside BOX: two cafes and
+// a bench, a footway, and a park.
+const TAGGED = {
+    version: 0.6,
+    elements: [
+        { type: 'node', id: 1, lat: 40.706, lon: -74.011, tags: { amenity: 'cafe', name: 'Cafe One' } },
+        { type: 'node', id: 2, lat: 40.707, lon: -74.01, tags: { amenity: 'cafe', name: 'Cafe Two' } },
+        { type: 'node', id: 3, lat: 40.7075, lon: -74.0095, tags: { amenity: 'bench' } },
+        {
+            type: 'way', id: 10, nodes: [11, 12, 13], tags: { highway: 'footway' },
+            geometry: [{ lat: 40.7055, lon: -74.012 }, { lat: 40.7065, lon: -74.0105 }, { lat: 40.708, lon: -74.009 }],
+        },
+        {
+            type: 'way', id: 20, nodes: [21, 22, 23, 24, 21], tags: { leisure: 'park', name: 'Pocket Park' },
+            geometry: [
+                { lat: 40.7062, lon: -74.0115 }, { lat: 40.7062, lon: -74.0105 }, { lat: 40.7072, lon: -74.0105 },
+                { lat: 40.7072, lon: -74.0115 }, { lat: 40.7062, lon: -74.0115 },
+            ],
+        },
+    ],
+};
+
+/** An OSM source for BOX with three tag sets, and no layers: the cafes as points, the highways as lines, the parks as polygons. */
+function taggedSource(fields: object = {}): DataSourceSpec {
+    return {
+        type: 'osm',
+        outputTableName: 'osm',
+        queryArea: { bbox: BOX },
+        tagSets: [
+            { name: 'cafes', type: 'points', tags: [{ key: 'amenity', value: 'cafe' }] },
+            { name: 'paths', type: 'polylines', tags: [{ key: 'highway' }] },
+            { name: 'parks', type: 'polygons', tags: [{ key: 'leisure', value: 'park' }] },
+        ],
+        ...fields,
+    } as DataSourceSpec;
+}
+
+/**
+ * Answers the page's Overpass API requests: the query of a source's tag sets with `answer`, any other (the coastline
+ * query) with no elements. Returns the queries the page sends, in the order it sends them, as they come. autk-db asks the
+ * API's status for a free slot before each query; an answer that is not ok lets it go on at once.
+ */
+async function answerOverpass(page: Page, answer: object): Promise<string[]> {
+    const queries: string[] = [];
+    const headers = { 'access-control-allow-origin': '*' };
+    await page.route('https://overpass-api.de/api/status', (route) => route.fulfill({ status: 404, headers, body: '' }));
+    await page.route('https://overpass-api.de/api/interpreter', (route) => {
+        const query = decodeURIComponent((route.request().postData() ?? '').replace(/^data=/, ''));
+        queries.push(query);
+        const body = query.includes('->.tagHits') ? answer : { elements: [] };
+        return route.fulfill({ status: 200, headers, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+    return queries;
+}
+
+/** The value at `path` of each of the first `count` features of `table`. */
+function valuesOf(page: Page, table: string, count: number, path: string): Promise<unknown[]> {
+    return page.evaluate(async ({ table, count, path }) => {
+        const values: unknown[] = [];
+        for (let i = 0; i < count; i++) values.push(await window.valueAt(table, i, path));
+        return values;
+    }, { table, count, path });
+}
+
+test('loads the features each tag set chooses from Overpass, one table of one geometry type a set', async ({ page }) => {
+    const queries = await answerOverpass(page, TAGGED);
+    const { tables } = await runSpec(page, {
+        data: [taggedSource()],
+        map: { layerRefs: [{ dataRef: 'osm_parks_polygons' }, { dataRef: 'osm_paths_polylines' }, { dataRef: 'osm_cafes_points' }] },
+    });
+    expect(queries.filter((query) => query.includes('->.tagHits')), 'one query for the tag sets').toHaveLength(1);
+    // A source with tag sets and no layers makes the tables of its sets alone.
+    expect(Object.keys(tables).sort()).toEqual(['osm_cafes_points', 'osm_parks_polygons', 'osm_paths_polylines']);
+    // The two cafes, not the bench, whose amenity is another. Each feature's properties are its tags.
+    expect(tables.osm_cafes_points.features).toBe(2);
+    expect((await valuesOf(page, 'osm_cafes_points', 2, 'name')).sort()).toEqual(['Cafe One', 'Cafe Two']);
+    expect(tables.osm_paths_polylines.features).toBe(1);
+    expect(await valuesOf(page, 'osm_paths_polylines', 1, 'highway')).toEqual(['footway']);
+    expect(tables.osm_parks_polygons.features).toBe(1);
+    expect(await valuesOf(page, 'osm_parks_polygons', 1, 'name')).toEqual(['Pocket Park']);
+    // A map draws each table as its geometry type.
+    expect((await mapLayers(page)).map((layer) => [layer.id, layer.type])).toEqual([
+        ['osm_parks_polygons', 'polygons'], ['osm_paths_polylines', 'polylines'], ['osm_cafes_points', 'points'],
+    ]);
+});
+
+test('refuses tag sets with a PBF extract, naming the source', async ({ page }) => {
+    // autk-db reads tag sets from the Overpass API only, and refused them with a PBF extract without naming the source.
+    await expect(runSpec(page, { data: [taggedSource({ pbfFileUrl: '/data/lower_mnt.osm.pbf' })] }))
+        .rejects.toThrow('OSM source "osm": tagSets are read from the Overpass API only, so a source with pbfFileUrl cannot take them.');
+});
+
 /** A GeoJSON source of one polygon whose coordinates are declared as EPSG:4326 degrees. */
 function onePolygon(name: string, ring: number[][]): DataSourceSpec {
     return {

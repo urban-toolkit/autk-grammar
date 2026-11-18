@@ -10,6 +10,8 @@ export type {
     DataAdapter,
     DataSourceSpec,
     OsmDataSourceSpec,
+    OsmTagSet,
+    OsmTagFilter,
     CsvDataSourceSpec,
     JsonDataSourceSpec,
     CustomDataSourceSpec,

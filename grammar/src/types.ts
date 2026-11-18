@@ -132,12 +132,64 @@ export interface OsmBoundingBoxArea {
 }
 
 /**
+ * An OpenStreetMap tag a tag set matches: the tag `key` with the value `value`, or with any value when `value` is
+ * omitted.
+ */
+export type OsmTagFilter = {
+    /**
+     * The tag's key, such as `amenity` or `addr:street`: letters, digits, `_`, `:`, `.` and `-`, starting with a letter
+     * or a digit.
+     * @pattern ^[A-Za-z0-9][A-Za-z0-9_:.-]{0,254}$
+     */
+    key: string;
+    /**
+     * The tag's value, such as `cafe`. Without it, the key with any value matches.
+     * @minLength 1
+     * @maxLength 255
+     */
+    value?: string;
+}
+
+/**
+ * OpenStreetMap features chosen by their tags, as one table of one geometry type.
+ */
+export type OsmTagSet = {
+    /**
+     * Names the set's table, `<outputTableName>_<name>_<type>`: a lowercase letter, then up to 31 lowercase letters,
+     * digits or `_`. No two sets of a source share a name.
+     * @pattern ^[a-z][a-z0-9_]{0,31}$
+     */
+    name: string;
+    /**
+     * The geometry the table holds: `points`, the tagged nodes; `polylines`, the open ways and the ways tagged as
+     * lines (`highway`, `barrier`, `railway`, `waterway`, or `area=no`); `polygons`, the other closed ways and the
+     * multipolygon relations.
+     */
+    type: 'points' | 'polylines' | 'polygons';
+    /**
+     * The tags a feature is chosen by: it is in the set when it has any one of them.
+     * @minItems 1
+     * @maxItems 64
+     */
+    tags: OsmTagFilter[];
+}
+
+/**
  * Loads OpenStreetMap data for a named area or a box, from Overpass or from a PBF extract.
+ * @if { "required": ["pbfFileUrl"] }
+ * @then { "properties": { "tagSets": { "maxItems": 0 } } }
  */
 export interface OsmDataSourceSpec extends TableSourceBase {
     type: 'osm';
     /** URL of a local or remote `.osm.pbf` extract to read instead of querying Overpass. */
     pbfFileUrl?: string;
+    /**
+     * Features chosen by their tags, each set as a table of its own, `<outputTableName>_<name>_<type>`, cut to the
+     * area. A set that matches no feature in the area makes no table. Read from the Overpass API only: a source with
+     * `pbfFileUrl` cannot take them. Read by the Autark adapter only.
+     * @maxItems 8
+     */
+    tagSets?: OsmTagSet[];
     /** Split the raw OSM table into one table per layer, named `<outputTableName>_<layer>`. */
     autoLoadLayers?: {
         /** Currently ignored by both adapters. */

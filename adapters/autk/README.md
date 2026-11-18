@@ -35,7 +35,7 @@ Each entry of `data` loads or builds one table, in order. Its `type` selects its
 
 | `type` | Fields | Table |
 |---|---|---|
-| `osm` | `queryArea`, `pbfFileUrl`, `autoLoadLayers` | OpenStreetMap data for an area, from Overpass or a `.osm.pbf` extract (see [OpenStreetMap areas](#openstreetmap-areas)). `autoLoadLayers.layers` splits it into one table per layer, named `<outputTableName>_<layer>`. |
+| `osm` | `queryArea`, `pbfFileUrl`, `autoLoadLayers`, `tagSets` | OpenStreetMap data for an area, from Overpass or a `.osm.pbf` extract (see [OpenStreetMap areas](#openstreetmap-areas)). `autoLoadLayers.layers` splits it into one table per layer, named `<outputTableName>_<layer>`, and [`tagSets`](#tagsets) adds a table for each set of features chosen by their tags. |
 | `csv` | `csvFileUrl` or `csvObject`, `delimiter`, `geometryColumns` | The rows of a CSV file, or of arrays whose first row names the columns. |
 | `json` | `jsonFileUrl` or `jsonObject`, `geometryColumns` | The rows of a JSON array. |
 | `geojson` | `geojsonFileUrl` or `geojsonObject`, `coordinateFormat`, `layerType` | A FeatureCollection. `layerType` sets how a map draws it, for example `polylines`, or `buildings` for polygons; without it, autk-db reads it from the first feature with a geometry. A feature whose geometry is null is a row without one: a map draws nothing for it, and a plot counts it. |
@@ -105,6 +105,33 @@ await grammar.run({
     autoLoadLayers: { layers: ['roads', 'buildings'] },
   }],
   map: { layerRefs: [{ dataRef: 'downtown_roads' }, { dataRef: 'downtown_buildings' }] },
+});
+```
+
+### `tagSets`
+
+An `osm` source's `tagSets` choose features by their tags. Each set becomes a table of one geometry type, named `<outputTableName>_<name>_<type>` and cut to the source's area. Tag sets are read from the Overpass API only: a source with `pbfFileUrl` cannot take them, and the run refuses one that does, with a message that names the source.
+
+| Field | Effect |
+|---|---|
+| `name` | Names the set's table: a lowercase letter, then up to 31 lowercase letters, digits or `_`. No two sets of a source share a name. |
+| `type` | The table's geometry: `points`, the tagged nodes; `polylines`, the open ways and the ways tagged as lines (`highway`, `barrier`, `railway`, `waterway`, or `area=no`); `polygons`, the other closed ways and the multipolygon relations. |
+| `tags` | 1 to 64 tags, each `{ key, value }`: a feature is in the set when it has any one of them. Without `value`, the key with any value matches. |
+
+A source takes up to 8 sets, and may leave out `autoLoadLayers` to load its sets alone. A set that matches no feature in the area makes no table. Each feature's properties are its tags.
+
+```ts
+await grammar.run({
+  data: [{
+    type: 'osm',
+    outputTableName: 'downtown',
+    queryArea: { bbox: [-74.0125, 40.705, -74.008, 40.7085] },
+    tagSets: [
+      { name: 'cafes', type: 'points', tags: [{ key: 'amenity', value: 'cafe' }] },
+      { name: 'paths', type: 'polylines', tags: [{ key: 'highway', value: 'footway' }, { key: 'highway', value: 'path' }] },
+    ],
+  }],
+  map: { layerRefs: [{ dataRef: 'downtown_paths_polylines' }, { dataRef: 'downtown_cafes_points', color: '#8c564b' }] },
 });
 ```
 
