@@ -647,40 +647,41 @@ test('highlights every map that draws a table, or the one a map key names, and l
 });
 
 test('links a plot and a map by the rows each drew, though the map draws nothing for a row with no geometry', async ({ page }) => {
-    // Five squares, a to e, as the host hands them; c has an empty geometry. The plot draws all five, in that order. The
-    // map draws autk-db's export, where c comes first, and draws nothing for c, so from d on a position is another row
-    // in each view. A link passed positions as they were, so a brush on d and e lit other squares.
-    const square = (i: number) => {
-        const x = -73.99 + i * 0.004;
-        return { type: 'Polygon' as const, coordinates: [[[x, 40.75], [x + 0.003, 40.75], [x + 0.003, 40.753], [x, 40.753], [x, 40.75]]] };
-    };
+    // Five points, a to e, as the host hands them; c has an empty geometry. The plot draws all five, in that order. The
+    // map draws autk-db's export, and a points layer has no position for a row it draws nothing for, so from d on a
+    // position is another row in each view. A link passed positions as they were, so a brush on d and e lit e and
+    // nothing, and a pick on d selected c. (A polygon layer keeps a position for such a row, one that draws nothing.)
+    const point = (i: number) => ({ type: 'Point' as const, coordinates: [-73.985 + i * 0.002, 40.75 + i * 0.001] });
     const features = ['a', 'b', 'c', 'd', 'e'].map((name, i) => ({
         type: 'Feature' as const,
         properties: { name, v: i * 10, w: 40 - i * 10 },
-        geometry: name === 'c' ? { type: 'GeometryCollection' as const, geometries: [] } : square(i),
+        geometry: name === 'c' ? { type: 'GeometryCollection' as const, geometries: [] } : point(i),
     }));
     await runSpec(page, {
-        data: [{ type: 'geojson', outputTableName: 'blocks', geojsonObject: { type: 'FeatureCollection', features } }],
-        map: { id: 'm', layerRefs: [{ dataRef: 'blocks', title: 'Blocks' }] },
-        plot: { id: 'p', dataRef: 'blocks', mark: 'scatter', axis: ['v', 'w'], events: ['brush'] },
+        data: [{ type: 'geojson', outputTableName: 'spots', geojsonObject: { type: 'FeatureCollection', features } }],
+        map: { id: 'm', layerRefs: [{ dataRef: 'spots', title: 'Spots' }] },
+        plot: { id: 'p', dataRef: 'spots', mark: 'scatter', axis: ['v', 'w'], events: ['brush'] },
         links: [{ source: 'p', target: 'm' }],
     });
     type Mark = Element & { __data__?: { name?: string; autkIds?: number[] } };
     const marks = () => page.evaluate(() => [...document.querySelectorAll('#plot .autkMark')]
         .map((mark) => ({ name: (mark as Mark).__data__?.name, ids: (mark as Mark).__data__?.autkIds ?? [] })));
-    // What the map draws at each position, read from what autk-map was handed.
-    const drawn = (await page.evaluate(() => window.drawnRows('map0', 'Blocks'))).map((row) => row?.name);
+    // What the map draws at each position, read from what autk-map was handed: the four points, not c.
+    expect((await layerById(page)).Spots.type).toBe('points');
+    const drawn = (await page.evaluate(() => window.drawnRows('map0', 'Spots'))).map((row) => row?.name);
     expect([...drawn].sort()).toEqual(['a', 'b', 'd', 'e']);
     expect((await marks()).map((mark) => mark.name).sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
+    // So d is at one position in the plot and another on the map.
+    expect(drawn.indexOf('d')).not.toBe((await marks()).find((mark) => mark.name === 'd')!.ids[0]);
 
-    // A brush on the marks of d and e lights exactly the squares d and e.
+    // A brush on the marks of d and e lights exactly the points d and e.
     const brushed = (await marks()).filter((mark) => mark.name === 'd' || mark.name === 'e').flatMap((mark) => mark.ids);
     await page.evaluate((ids) => (window.grammar as any)._plotRegistry.get('p').events.emit('brush', { selection: ids }), brushed);
-    const lit = (await layerById(page)).Blocks.highlightedIds ?? [];
+    const lit = (await layerById(page)).Spots.highlightedIds ?? [];
     expect(lit.map((position) => drawn[position]).sort()).toEqual(['d', 'e']);
 
-    // A pick on the square d selects the mark of d.
-    await page.evaluate((position) => window.grammar.maps[0].events.emit('picking' as never, { selection: [position], layerId: 'Blocks' } as never), drawn.indexOf('d'));
+    // A pick on the point d selects the mark of d.
+    await page.evaluate((position) => window.grammar.maps[0].events.emit('picking' as never, { selection: [position], layerId: 'Spots' } as never), drawn.indexOf('d'));
     const selection: number[] = await page.evaluate(() => [...(window.grammar as any)._plotRegistry.get('p').selection]);
     expect((await marks()).filter((mark) => mark.ids.some((id) => selection.includes(id))).map((mark) => mark.name)).toEqual(['d']);
 });
