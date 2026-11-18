@@ -1099,7 +1099,7 @@ test('loads a GeoTIFF as a raster layer', async ({ page }) => {
             { type: 'geotiff', outputTableName: 'lst', geotiffFileUrl: '/data/niteroi_lst_verao_2001_2024.tif' },
             { type: 'geojson', outputTableName: 'area', geojsonObject: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: area, properties: {} }] } },
         ],
-        map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'lst', colorMapInterpolator: 'interpolateYlOrRd' }] },
+        map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'lst', colorMapInterpolator: scheme('interpolateYlOrRd') }] },
     });
     const layers = await page.evaluate(() => window.mapLayers('map0'));
     expect(layers.map((layer) => layer.type)).toEqual(['polygons', 'raster']);
