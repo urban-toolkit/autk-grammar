@@ -54,11 +54,13 @@ Keys the schema does not name are allowed. `make build` regenerates the schema, 
 
 Browse the examples online, with a live editable spec for each one, at [autarkjs.org/grammar/examples](https://autarkjs.org/grammar/examples/).
 
-To run them locally, use [`gallery/`](gallery/). It runs the 49 example specs in this repository and lets you pick which adapter renders each one. Between them they cover OSM and PBF loading, CSV and GeoJSON, GPU compute, colormaps, plots, and two-way interaction between a map and a plot:
+To run them locally, use [`gallery/`](gallery/). It runs the 57 example specs in this repository and lets you pick which adapter renders each one. Between them they cover OSM and PBF loading, CSV and GeoJSON, GPU compute, colormaps, plots, and two-way interaction between a map and a plot:
 
 ```sh
 npm run dev --prefix gallery
 ```
+
+Eight of them show what 5.0.0 adds, on the Autark adapter: `map-camera` (a tilted `camera`), `linked-views` (a map and a plot named by `id`, linked by `links` and set side by side by `layout`), `geotiff-raster` (a `geotiff` source), `compute-output-table` (a pass that writes a new table, with `outputTableName` and `layerType`), `compute-render` (a render pass), `workspaces` (two areas, each in its own `workspace`), `points-true-size` (`pointSize` in meters) and `heatmap-centroids` (`near.useCentroid`).
 
 ## Installation
 
