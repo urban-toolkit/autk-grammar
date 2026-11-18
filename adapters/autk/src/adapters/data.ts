@@ -264,7 +264,9 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                     return db;
                 }
                 default:
-                    return
+                    // The schema refuses any other type, but a spec that was not checked against it reaches here. Handing
+                    // the engine no database would make the next source start a new one, without the tables before it.
+                    throw new Error(`Unknown data source type "${String(type)}".`);
             }
         }
     }
