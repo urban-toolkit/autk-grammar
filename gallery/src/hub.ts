@@ -75,8 +75,8 @@ function makeDraggable(panel: HTMLElement, handle: HTMLElement) {
 let floatingPlotPanel: HTMLElement | null = null;
 
 /**
- * The grammar of the last run. An AutkGrammar is destroyed before the next run, so its maps release their GPU devices;
- * a DeckGlGrammar has no destroy().
+ * The grammar of the last run. An AutkGrammar is destroyed before the next run, so its maps release their GPU textures
+ * and buffers and their event handlers; a DeckGlGrammar has no destroy().
  */
 let lastGrammar: AutkGrammar | DeckGlGrammar | null = null;
 

@@ -77,7 +77,8 @@ window.runExample = async (name: string) => window.runSpec(await window.exampleS
 /**
  * Runs a spec, creating a canvas per map and a div for the plots: one div, `#plot`, that holds them all, or with
  * `plotTargets: 'each'` one div per plot, `#plot0`, `#plot1`, and so on. The grammar of the previous run is
- * destroyed first, so its maps release their GPU devices.
+ * destroyed first, so its maps release their GPU textures and buffers and their event handlers. (autk-map's maps
+ * share one GPU device, which stays.)
  */
 window.runSpec = async (spec: UrbanSpec, plotTargets: 'one' | 'each' = 'one') => {
     window.grammar?.destroy();
