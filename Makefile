@@ -1,4 +1,4 @@
-# Modules — add new module directories here as they are created
+# Modules: add new module directories here as they are created
 MODULES := grammar adapters/autk adapters/deckgl gallery
 
 .PHONY: build install clean lint typecheck \

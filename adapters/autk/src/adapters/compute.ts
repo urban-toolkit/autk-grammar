@@ -1,5 +1,5 @@
 import { ComputeAdapter, ComputeSpec, GpgpuComputeSpec, RenderComputeSpec } from '@urban-toolkit/the-urban-grammar';
-import type { LayerType } from '@urban-toolkit/the-urban-grammar';
+import type { LayerType, RenderLayerSpec } from '@urban-toolkit/the-urban-grammar';
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkComputeEngine } from '@urban-toolkit/autk-compute';
 import { FeatureCollection } from 'geojson';
@@ -7,11 +7,27 @@ import { ComputeCache, ComputeLayerTypes } from '../types';
 import { computeLayerNames, runCompute } from '../compute-params';
 import { enterWorkspace, tableKey } from '../workspace';
 
+/**
+ * The layer types a render pass draws. autk-compute skips a layer of any other type, points among them, with only a
+ * warning, so the adapter refuses one.
+ */
+const RENDER_LAYER_TYPES: ReadonlyArray<RenderLayerSpec['type']> = ['surface', 'parks', 'water', 'roads', 'buildings', 'polygons', 'polylines'];
+
 /** The type of the table `name`, which the database knows or an earlier pass wrote. */
 function layerTypeOf(db: AutkDb, name: string, workspace: string | undefined, types?: ComputeLayerTypes): LayerType | undefined {
     return types?.get(tableKey(workspace, name)) ?? db.getTablesMetadata().find((table) => table.name === name)?.type as LayerType | undefined;
 }
 
+/**
+ * The compute adapter `AutkGrammar` runs. Its `resolveCompute(db, pass)` runs one entry of a spec's `compute`, a
+ * GPGPU pass or a render pass, on autk-compute, in the pass's workspace, which it leaves current. It does nothing
+ * without a database.
+ *
+ * A host calls it to run compute passes exactly as the grammar does. The passes need WebGPU, and their results are
+ * kept only in the caches: `cache` receives each pass's result under {@link tableKey} of its `outputTableName`, or of
+ * the table it computed over, and a later pass reads a table from it first. `types` receives the layer type of each
+ * table a pass wrote under its own `outputTableName`, which a map needs to draw it.
+ */
 export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerTypes): ComputeAdapter {
 
     /** Reads a table, from the cache when an earlier pass wrote it there. */
@@ -19,16 +35,24 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
         return cache?.get(tableKey(workspace, name)) ?? await db.getLayer(name);
     }
 
-    /** Stores a pass's result under `outputTableName`, or, without it, in place of the table `source`. */
-    function store(db: AutkDb, result: FeatureCollection, source: string, spec: GpgpuComputeSpec | RenderComputeSpec): void {
+    /**
+     * Stores a pass's result under `outputTableName`, or, without it, in place of the table `source`. A map draws a
+     * new table as the spec's `layerType` says, else as `resultType`, else as it draws `source`.
+     */
+    function store(db: AutkDb, result: FeatureCollection, source: string, spec: GpgpuComputeSpec | RenderComputeSpec, resultType?: LayerType): void {
         if (!cache) return;
         const name = spec.outputTableName ?? source;
         cache.set(tableKey(spec.workspace, name), result);
-        const type = spec.layerType ?? layerTypeOf(db, source, spec.workspace, types);
+        const type = spec.layerType ?? resultType ?? layerTypeOf(db, source, spec.workspace, types);
         if (spec.outputTableName && type) types?.set(tableKey(spec.workspace, name), type);
     }
 
     async function resolveRender(db: AutkDb, spec: RenderComputeSpec): Promise<void> {
+        for (const layer of spec.layers) {
+            if (!(RENDER_LAYER_TYPES as readonly string[]).includes(layer.type))
+                throw new Error(`Render pass "${spec.outputTableName}": layer "${layer.id}" has the type "${layer.type}", which a render pass cannot draw. A layer's type is one of ${RENDER_LAYER_TYPES.join(', ')}.`);
+        }
+
         const layers = await Promise.all(spec.layers.map(async (layer) => ({
             id: layer.id,
             collection: await read(db, layer.dataRef, spec.workspace),
@@ -48,7 +72,8 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
             tileSize: spec.tileSize,
         });
 
-        store(db, result, spec.viewpoints.dataRef, spec);
+        // With `building-windows` the result holds one point per window, not the viewpoints' features.
+        store(db, result, spec.viewpoints.dataRef, spec, spec.viewpoints.strategy?.type === 'building-windows' ? 'points' : undefined);
     }
 
     async function resolveGpgpu(db: AutkDb, spec: GpgpuComputeSpec): Promise<void> {

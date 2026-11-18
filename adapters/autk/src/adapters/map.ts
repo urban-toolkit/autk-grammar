@@ -1,12 +1,16 @@
 import type { FeatureCollection } from 'geojson';
 import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
-import { Targets, MapRegistry, MapLayerIds, ComputeCache, ComputeLayerTypes } from '../types';
+import { Targets, ComputeCache, ComputeLayerTypes } from '../types';
+import { DrawnLayers, LayerExports, exportOf, mapIdOf } from '../drawn';
+import { rowKeys } from '../rows';
 import { AutkMap } from '@urban-toolkit/autk-map';
 import type { LayerRenderInfo } from '@urban-toolkit/autk-map';
 import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator } from '@urban-toolkit/autk-core';
 import type { ColorHEX, ColorMapConfig, ColorMapDomainSpec, ColorRGB, LayerType, TransferFunction } from '@urban-toolkit/autk-core';
 import { AutkDb } from '@urban-toolkit/autk-db';
+import { extentOf } from './data';
+import { checkPointSize, planarPointSize } from '../point-size';
 
 /** The id a layer has in its map: its `title`, else its `dataRef`. */
 export function layerIdOf(layerRef: MapLayerSpec): string {
@@ -32,7 +36,7 @@ function hexColor(value: string, key: string, layerId: string): ColorRGB {
     return ColorMap.hexToRgb(value as ColorHEX);
 }
 
-/** What `color`, `stroke`, `width` and `pointSize` set on the layer's autk-map render info. */
+/** What `color`, `stroke` and `width` set on the layer's autk-map render info. */
 function styleRenderInfo(layerRef: MapLayerSpec, layerId: string): Partial<LayerRenderInfo> {
     const renderInfo: Partial<LayerRenderInfo> = {};
     if (layerRef.color != null)
@@ -43,8 +47,6 @@ function styleRenderInfo(layerRef: MapLayerSpec, layerId: string): Partial<Layer
         renderInfo.strokeColor = hexColor(layerRef.stroke, 'stroke', layerId);
     if (layerRef.width != null)
         renderInfo.polylinesWidth = layerRef.width;
-    if (layerRef.pointSize != null)
-        renderInfo.pointSize = layerRef.pointSize;
     return renderInfo;
 }
 
@@ -187,8 +189,11 @@ function rasterBand(collection: { features?: { properties?: unknown }[] }, getFn
 /**
  * Moves a map's camera as `camera` says, from the view that fits the map's layers. The camera reports each change,
  * so the map redraws without a request.
+ *
+ * The map adapter calls it once the map's layers are loaded and before the map's first `draw()`. A host that builds
+ * its own map from a spec's `map` entry calls it at the same point, so the map looks from where the grammar's would.
  */
-function applyCamera(map: AutkMap, camera: CameraSpec): void {
+export function applyCamera(map: AutkMap, camera: CameraSpec): void {
     if(camera.zoom === undefined && !camera.pitch && !camera.bearing) return;
 
     // Turn the view around the point it looks at: the eye moves on a sphere around that point, so the data stays
@@ -207,26 +212,49 @@ function applyCamera(map: AutkMap, camera: CameraSpec): void {
     view.resetCamera([Math.sin(bearing), Math.cos(bearing), 0], [x, y, 0], eye);
 }
 
-export function createMapAdapter(targets?: Targets, registry?: MapRegistry, computeCache?: ComputeCache, maps?: AutkMap[], layerIds?: MapLayerIds, computeTypes?: ComputeLayerTypes): MapAdapter {
+/**
+ * The key of the row a vector layer draws at each of its positions. autk-map draws each feature it is handed as one
+ * component, in order, and none for a feature with nothing to draw; a component names its feature by its index among
+ * those handed (`featureIndex`). `kept` gives the table row of each feature handed, and `keys` each table row's key.
+ */
+function drawnRowKeys(map: AutkMap, layerId: string, keys: readonly string[], kept: readonly number[]): string[] {
+    const layer = map.layerManager.searchByLayerId(layerId) as unknown as { components?: Array<{ featureIndex?: number }> } | null;
+    const components = layer?.components;
+    if (!Array.isArray(components)) return kept.map((row) => keys[row] ?? '');
+    return components.map((component, position) => {
+        const handed = Number.isInteger(component?.featureIndex) ? component.featureIndex! : position;
+        return keys[kept[handed]] ?? '';
+    });
+}
 
-    async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<void> {
+/**
+ * The map adapter `AutkGrammar` runs. Each map it draws goes in `maps` at its index, and each of its layers in `layers`,
+ * with the rows it draws, so every map stays known, though several draw one table. A table's export is taken once a
+ * run, in `exports`, which the plot adapter reads too.
+ */
+export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, computeCache?: ComputeCache, maps?: AutkMap[], computeTypes?: ComputeLayerTypes, exports?: LayerExports): MapAdapter {
+
+    /** Loads each layer of `spec` on `map`, and gives the keys of the rows each draws, in the order of the layers. */
+    async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<string[][]> {
         let tableToTypeMap: {[tableName: string]: string} = {};
         for(const table of context.getTablesMetadata()) {
             if(table.type !== undefined) tableToTypeMap[table.name] = table.type;
         }
 
+        const drawn: string[][] = [];
         for(const layerRef of spec.layerRefs){
             const name     = layerRef.dataRef;
             const layerId  = layerIdOf(layerRef);
-            const type     = (computeTypes?.get(tableKey(spec.workspace, name)) ?? tableToTypeMap[name]) as LayerType;
+            const key      = tableKey(spec.workspace, name);
+            const type     = (computeTypes?.get(key) ?? tableToTypeMap[name]) as LayerType;
             const getFnv   = layerRef.getFnv;
 
-            const rawData = computeCache?.get(tableKey(spec.workspace, name)) ?? (type === 'raster' ? await context.getRaster(name) as unknown as FeatureCollection : await context.getLayer(name));
-            // Raster tables (e.g. heatmaps) are a single feature with no geometry, so keep them as-is.
-            const data = type === 'raster' ? rawData : {
-                ...rawData,
-                features: (rawData.features ?? []).filter((f: any) => f.geometry != null),
-            };
+            const rawData = computeCache?.get(key) ?? (type === 'raster' ? await context.getRaster(name) as unknown as FeatureCollection : await exportOf(exports, key, () => context.getLayer(name)));
+            // Raster tables (e.g. heatmaps) are a single feature with no geometry, so keep them as-is. A vector layer
+            // is handed the rows with a geometry: `kept` holds the table row of each.
+            const rows = rawData.features ?? [];
+            const kept = type === 'raster' ? [] : rows.flatMap((feature, row) => (feature?.geometry != null ? [row] : []));
+            const data = type === 'raster' ? rawData : { ...rawData, features: kept.map((row) => rows[row]) };
             const band = type === 'raster' ? rasterBand(data, getFnv) : '';
 
             if(type === 'raster') {
@@ -241,6 +269,13 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
             const style = styleRenderInfo(layerRef, layerId);
             if(Object.keys(style).length > 0)
                 map.updateRenderInfo(layerId, style);
+
+            // pointSize is in meters on the ground, and autk-map's in planar units, which Mercator stretches away
+            // from the equator: the layer's points are sized at the middle of its extent.
+            const crs = context.getWorkspaceConfiguration().coordinateFormat;
+            const pointSize = planarPointSize(layerRef.pointSize, type, crs, () => extentOf(data));
+            if(pointSize !== undefined)
+                map.updateRenderInfo(layerId, { pointSize });
 
             // Thematic (getFnv) vector layers are colored by value out of the box: autk-map
             // attaches a default colour ramp to every layer, so this works even when the
@@ -317,7 +352,10 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
                 const property = getFnv.startsWith('properties.') ? getFnv : `properties.${getFnv}`;
                 map.updateThematic(layerId, { collection: thematicData, property });
             }
+
+            drawn.push(type === 'raster' ? [] : drawnRowKeys(map, layerId, rowKeys(rows), kept));
         }
+        return drawn;
     }
 
     return {
@@ -325,8 +363,10 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
             if(targets && targets.map && context){
 
                 checkLayerIds(spec, index);
-                for(const layerRef of spec.layerRefs)
+                for(const layerRef of spec.layerRefs) {
                     checkColorMapRange(layerRef);
+                    checkPointSize(layerRef.pointSize, layerIdOf(layerRef));
+                }
 
                 let canvas;
 
@@ -344,17 +384,29 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
 
                 const map = new AutkMap(canvas);
 
-                if(spec.style)
-                    map.style.setPredefinedStyle(spec.style)
+                // A map is known to the grammar, which destroys it, once its layers are loaded. One that fails before
+                // is destroyed here, so its controls, event handlers and GPU buffers do not outlive the failed run.
+                let drawn: string[][];
+                try {
+                    if(spec.style)
+                        map.style.setPredefinedStyle(spec.style)
 
-                await map.init();
-                await enterWorkspace(context, spec.workspace);
-                await loadLayers(map, context, spec);
-
-                for(const layerRef of spec.layerRefs) {
-                    registry?.set(layerRef.dataRef, map);
-                    layerIds?.set(layerRef.dataRef, layerIdOf(layerRef));
+                    await map.init();
+                    await enterWorkspace(context, spec.workspace);
+                    drawn = await loadLayers(map, context, spec);
+                } catch(error) {
+                    try {
+                        map.destroy();
+                    } catch {
+                        // The run reports the load's error, not the teardown's.
+                    }
+                    throw error;
                 }
+
+                const mapId = mapIdOf(spec, index);
+                spec.layerRefs.forEach((layerRef, at) => layers?.push({
+                    map, mapIndex: index, mapId, layerId: layerIdOf(layerRef), dataRef: layerRef.dataRef, rows: drawn[at],
+                }));
 
                 if(maps)
                     maps[index] = map;

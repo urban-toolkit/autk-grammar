@@ -1,6 +1,6 @@
 {
   "name": "@urban-toolkit/autk-grammar",
-  "version": "4.4.1",
+  "version": "5.0.0",
   "description": "A declarative grammar for urban visual analytics, built on Autark",
   "license": "MIT",
   "author": "Gustavo Moreira",
@@ -23,13 +23,18 @@
       "import": "./dist/autk-grammar.js",
       "require": "./dist/autk-grammar.umd.cjs"
     },
+    "./data": {
+      "types": "./dist/data/autk-grammar-data.d.ts",
+      "import": "./dist/data/autk-grammar-data.js",
+      "require": "./dist/data/autk-grammar-data.cjs"
+    },
     "./build/autk-grammar-schema.json": "./build/autk-grammar-schema.json"
   },
   "scripts": {
     "doc": "typedoc --options typedoc.json --watch",
     "dev": "vite",
     "dev-build": "vite build --watch",
-    "build": "tsc && vite build && npm run schema",
+    "build": "tsc && vite build && vite build -c vite.data.config.js && npm run schema",
     "schema": "ts-json-schema-generator --path ../../grammar/src/types.ts --type UrbanSpec --tsconfig ../../grammar/tsconfig.schema.json --additional-properties --id https://autarkjs.org/schema/autk-grammar/v1.json --out build/autk-grammar-schema.json",
     "preview": "vite preview",
     "lint": "eslint src",

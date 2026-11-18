@@ -4,6 +4,37 @@ import type { LoadGeojsonParams } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Geometry } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
 import { enterWorkspace, tableKey } from '../workspace';
+import { featureIds } from '../rows';
+
+/** An empty geometry: a GeometryCollection with none in it, which a map draws as nothing. */
+const NO_GEOMETRY: Geometry = { type: 'GeometryCollection', geometries: [] };
+
+/**
+ * A GeoJSON source's collection as autk-db loads it, row for row.
+ *
+ * - Each feature carries the id autk-db gives it (see `featureIds`), from its place in the source. autk-db keeps the
+ *   id in its export, so a row a map draws from the export is found among the source's own rows, which a plot draws.
+ * - autk-db refuses a feature whose geometry is null, which GeoJSON allows, so such a feature gets an empty one: a map
+ *   draws nothing for it, and a plot still counts it.
+ * - autk-db reads the layer's type off the first feature, so a first feature without a geometry trades places with the
+ *   first that has one. Each keeps its id, so the rows are still found by it.
+ */
+function loadableCollection(collection: FeatureCollection): FeatureCollection {
+    const features = collection.features ?? [];
+    const ids = featureIds(features);
+    let changed = false;
+    const loadable = features.map((feature, index) => {
+        if (feature == null || (feature.id != null && feature.geometry != null)) return feature;
+        changed = true;
+        return { ...feature, id: ids[index], geometry: feature.geometry ?? NO_GEOMETRY };
+    });
+    const first = features.findIndex((feature) => feature?.geometry != null);
+    if (first > 0 && features[0] != null && features[0].geometry == null) {
+        [loadable[0], loadable[first]] = [loadable[first], loadable[0]];
+        changed = true;
+    }
+    return changed ? { ...collection, features: loadable } : collection;
+}
 
 /**
  * The query area autk-db reads: `{ bbox }` or `{ geocodeArea, areas }`. autk-db takes any area with a
@@ -53,7 +84,7 @@ function crsAdvice(coordinateFormat: string | undefined): string {
 }
 
 /** The [minX, minY, maxX, maxY] of every position in a collection, or undefined when it has none. */
-function extentOf(collection: FeatureCollection): [number, number, number, number] | undefined {
+export function extentOf(collection: FeatureCollection): [number, number, number, number] | undefined {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const visitPositions = (value: unknown): void => {
         if (!Array.isArray(value)) return;
@@ -76,6 +107,16 @@ function extentOf(collection: FeatureCollection): [number, number, number, numbe
     return minX <= maxX ? [minX, minY, maxX, maxY] : undefined;
 }
 
+/**
+ * The data adapter `AutkGrammar` runs. Its `resolveSource(db, source)` loads one entry of a spec's `data` into the
+ * autk-db database `db` (a new one when `db` is undefined), in the entry's workspace, which it leaves current, and
+ * returns the database.
+ *
+ * A host calls it to load a spec's tables exactly as the grammar does, for example on a server without a map: the
+ * `./data` entry exports it with autk-db as its only import. `targets.db` names an element that lists the tables
+ * after each load. `cache`, when given, receives each GeoJSON table and each table a join wrote, under
+ * {@link tableKey}.
+ */
 export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): DataAdapter {
 
     function print(db: AutkDb, targets?: Targets): void {
@@ -132,15 +173,17 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                         const response = await fetch(geojsonSpec.geojsonFileUrl);
                         geojsonData = await response.json() as FeatureCollection;
                     } else {
-                        // The loader tolerates null geometry and missing properties, which the inline type allows.
+                        // The inline type allows a feature whose geometry is null, which autk-db refuses: loadableCollection
+                        // gives such a feature an empty geometry before autk-db loads it.
                         geojsonData = geojsonSpec.geojsonObject as FeatureCollection | undefined;
                     }
 
                     if (cache && geojsonData) cache.set(tableKey(workspace, geojsonSpec.outputTableName), geojsonData);
 
-                    // Pass the fetched object directly so autk-db doesn't need to re-fetch
+                    // Pass the fetched object directly so autk-db doesn't need to re-fetch, as autk-db loads it (see
+                    // loadableCollection). The cache keeps the source's own rows, in their order, for its plots.
                     const loadSpec = (geojsonData
-                        ? (() => { const s = { ...geojsonSpec, geojsonObject: geojsonData }; delete s.geojsonFileUrl; return s; })()
+                        ? (() => { const s = { ...geojsonSpec, geojsonObject: loadableCollection(geojsonData) }; delete s.geojsonFileUrl; return s; })()
                         : geojsonSpec) as LoadGeojsonParams;
 
                     // Degrees put every y within -90 to 90, so a y outside it shows a layer in another CRS. The
@@ -181,7 +224,7 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                         }
                     } catch (bboxErr) {
                         if (bboxErr instanceof Error && bboxErr.message.includes('bounding box after transform')) throw bboxErr;
-                        // getBoundingBoxFromLayer failed (empty table, unsupported layer type, etc.) — skip validation
+                        // getBoundingBoxFromLayer failed (empty table, unsupported layer type, etc.): skip validation
                     }
                     print(db, targets);
                     return db;
@@ -192,12 +235,15 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                     return db;
                 case 'heatmap': {
                     const hm = rest_spec as HeatmapSourceSpec;
+                    // The schema refuses collect in a heatmap, but a spec that was not checked against it reaches here.
+                    if (hm.groupBy?.some((group) => (group.aggregateFn as string | undefined) === 'collect'))
+                        throw new Error(`Heatmap "${hm.outputTableName}": aggregateFn "collect" lists the rows near a cell, and a cell holds one value; use sum, avg, count, min, max or weighted.`);
                     await db.buildHeatmap({
                         tableJoinName: hm.joinDataRef,
                         near: hm.near,
                         outputTableName: hm.outputTableName,
                         grid: hm.grid,
-                        ...(hm.groupBy && { groupBy: hm.groupBy as any }),
+                        ...(hm.groupBy && { groupBy: hm.groupBy }),
                     });
                     print(db, targets);
                     return db;

@@ -1,10 +1,13 @@
 import { PlotAdapter, PlotSpec, PlotMark } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
-import { Targets, MapRegistry, MapLayerIds, PlotRegistry, PlotMapLinks, GeoJsonCache, ComputeCache } from '../types';
-import { AutkDb } from '@urban-toolkit/autk-db';
+import { Targets, PlotRegistry, GeoJsonCache, ComputeCache } from '../types';
+import { addPlotLink, exportOf } from '../drawn';
+import type { DrawnLayer, DrawnLayers, LayerExports, PlotLinks, PlotRows } from '../drawn';
+import { rowKeys, translateIds } from '../rows';
+import { AutkDb, isRenderableTable } from '@urban-toolkit/autk-db';
 import { AutkPlot, PlotEvent as AutkPlotEvent } from '@urban-toolkit/autk-plot';
 import type { PlotEventData, PlotType, PlotTransformConfig } from '@urban-toolkit/autk-plot';
-import { AutkMap, MapEvent } from '@urban-toolkit/autk-map';
+import { MapEvent } from '@urban-toolkit/autk-map';
 import type { MapEventData } from '@urban-toolkit/autk-map';
 import { FeatureCollection } from 'geojson';
 
@@ -28,23 +31,46 @@ export function plotKey(spec: PlotSpec): string {
 
 /**
  * Links a plot to a layer of a map: picking on the layer selects the features in the plot, and a selection in
- * the plot highlights them on the layer.
+ * the plot highlights them on the layer. `rows` holds the key of the row the plot draws at each position: a selection
+ * passes between the two by the rows each drew (see `translateIds`), since one position can be another row in each.
  */
-export function linkPlotToLayer(plot: AutkPlot, events: AutkPlotEvent[], map: AutkMap, layerId: string): void {
+export function linkPlotToLayer(plot: AutkPlot, rows: readonly string[], events: AutkPlotEvent[], layer: DrawnLayer): void {
+    const { map, layerId } = layer;
     map.updateRenderInfo(layerId, { isPick: true });
 
-    map.events.on(MapEvent.PICKING, ({ selection }: MapEventData) => {
-        plot.setSelection(selection);
+    // A pick names the layer it was made on, so a pick on another layer of the map leaves the plot alone.
+    map.events.on(MapEvent.PICKING, ({ layerId: picked, selection }: MapEventData) => {
+        if (picked === layerId) plot.setSelection(translateIds(selection, layer.rows, rows));
     });
 
     for(const event of events) {
         plot.events.on(event, ({ selection }: PlotEventData) => {
-            map.setHighlightedIds(layerId, selection);
+            map.setHighlightedIds(layerId, translateIds(selection, rows, layer.rows));
         });
     }
 }
 
-export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, plotRegistry?: PlotRegistry, plotMapLinks?: PlotMapLinks, cache?: GeoJsonCache, layerIds?: MapLayerIds, computeCache?: ComputeCache): PlotAdapter {
+/**
+ * A table's rows as a plot reads them from autk-db: the export of a table with a geometry, the one the maps of the run
+ * draw, and for a table without one, such as a CSV or JSON table loaded without `geometryColumns`, which autk-db does
+ * not export as a layer, its rows, each a feature without a geometry. autk-plot reads only the features' properties.
+ */
+async function tableRows(db: AutkDb, name: string, key: string, exports?: LayerExports): Promise<FeatureCollection> {
+    const table = db.getTablesMetadata().find((candidate) => candidate.name === name);
+    if (table && !isRenderableTable(table)) {
+        const rows = await db.getTable(name);
+        // A feature without a geometry, which GeoJSON allows and the plot does not read.
+        return { type: 'FeatureCollection', features: rows.map((properties) => ({ type: 'Feature', geometry: null, properties })) } as unknown as FeatureCollection;
+    }
+    return exportOf(exports, key, () => db.getLayer(name));
+}
+
+/**
+ * The plot adapter `AutkGrammar` runs. Each plot it draws goes in `plotRegistry`, and the keys of the rows it draws in
+ * `plotRows`, by the plot's `id`, else its `dataRef`. A table it reads from autk-db is the export the maps of the run
+ * draw, from `exports`.
+ */
+export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotRegistry?: PlotRegistry, plotLinks?: PlotLinks, cache?: GeoJsonCache, computeCache?: ComputeCache, plotRows?: PlotRows, exports?: LayerExports): PlotAdapter {
 
     return {
         async resolvePlot(context: unknown, spec: PlotSpec, index: number = 0): Promise<void> {
@@ -62,7 +88,7 @@ export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, plo
 
             await enterWorkspace(db, spec.workspace);
             const key = tableKey(spec.workspace, spec.dataRef);
-            const geojson: FeatureCollection = computeCache?.get(key) ?? cache?.get(key) ?? await db.getLayer(spec.dataRef);
+            const geojson: FeatureCollection = computeCache?.get(key) ?? cache?.get(key) ?? await tableRows(db, spec.dataRef, key, exports);
 
             const events = (spec.events ?? []) as unknown as AutkPlotEvent[];
 
@@ -79,13 +105,16 @@ export function createPlotAdapter(targets?: Targets, registry?: MapRegistry, plo
             });
 
             plotRegistry?.set(plotKey(spec), plot);
-            if (spec.mapRef) plotMapLinks?.set(plotKey(spec), spec.mapRef);
+            // autk-plot names a row by its position in the collection it draws.
+            const rows = rowKeys(geojson.features ?? []);
+            plotRows?.set(plotKey(spec), rows);
 
-            // mapRef names the table of the layer to link to; the layer's id in its map is its title, else that name.
-            if(spec.mapRef && registry) {
-                const map: AutkMap | undefined = registry.get(spec.mapRef);
-                if(map)
-                    linkPlotToLayer(plot, events, map, layerIds?.get(spec.mapRef) ?? spec.mapRef);
+            // mapRef names the table of the layers to link to: every layer that draws it, in every map. The maps are
+            // drawn before the plots.
+            for(const layer of layers ?? []) {
+                if(!spec.mapRef || layer.dataRef !== spec.mapRef) continue;
+                linkPlotToLayer(plot, rows, events, layer);
+                addPlotLink(plotLinks, plotKey(spec), layer);
             }
         }
     }

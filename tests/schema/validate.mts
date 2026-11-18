@@ -80,6 +80,8 @@ expect('scatter selectFields', { plot: { ...plot, mark: 'scatter', events: ['cli
 expect('bar selectFields', { plot: { ...plot, mark: 'bar', events: ['brushX'], selectFields: ['id'] } }, true);
 expect('layer title, color, outline and width', { map: { layerRefs: [{ dataRef: 't', title: 'Trees', color: '#1f77b4', stroke: '#D62728', width: 2.5 }] } }, true);
 expect('layer without an outline', { map: { layerRefs: [{ dataRef: 't', stroke: false }] } }, true);
+expect('points layer pointSize in meters', { map: { layerRefs: [{ dataRef: 't', pointSize: 2 }] } }, true);
+expect('points layer pointSize below a meter', { map: { layerRefs: [{ dataRef: 't', pointSize: 0.5 }] } }, true);
 expect('raster scale centered and reversed', { map: { layerRefs: [{ dataRef: 'r', colorMapInterpolator: 'interpolateRdBu', colorMapCenter: -1.5, colorMapReverse: true }] } }, true);
 expect('raster transfer function', { map: { layerRefs: [{ dataRef: 'r', transferFunction: { mode: 'linear', opacityMin: 0, opacityMax: 1, gamma: 2, zeroCenter: 5 } }] } }, true);
 expect('raster cells opaque', { map: { layerRefs: [{ dataRef: 'r', transferFunction: { opacityMin: 1, opacityMax: 1 } }] } }, true);
@@ -124,9 +126,15 @@ expect('render pass without outputTableName', { compute: [(({ outputTableName, .
 expect('render pass without layers', { compute: [{ ...render, layers: [] }] }, false);
 expect('render pass with a tile size that is not a multiple of 8', { compute: [{ ...render, tileSize: 30 }] }, false);
 expect('render pass with a bad aggregation', { compute: [{ ...render, aggregation: { type: 'sum' } }] }, false);
+const drawnTypes = ['surface', 'parks', 'water', 'roads', 'buildings', 'polygons', 'polylines'];
+expect('render pass with a layer of each type it draws', { compute: [{ ...render, layers: drawnTypes.map((type) => ({ id: type, dataRef: type, type })) }] }, true);
+expect('render pass with a points layer, which it cannot draw', { compute: [{ ...render, layers: [{ id: 'p', dataRef: 'p', type: 'points' }] }] }, false);
 const heat = { type: 'heatmap', outputTableName: 'h', joinDataRef: 'n', near: { distance: 500 }, grid: { rows: 10, columns: 10 } };
 expect('heatmap with useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: false } }] }, true);
 expect('heatmap with a non-boolean useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: 'no' } }] }, false);
+expect('heatmap groupBy with count', { data: [{ ...heat, groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }] }] }, true);
+expect('heatmap groupBy with collect, which lists rows while a cell holds one value', { data: [{ ...heat, groupBy: [{ column: 'date', aggregateFn: 'collect' }] }] }, false);
+expect('join groupBy with collect', { data: [{ type: 'join', dataRef: 't', joinDataRef: 'n', groupBy: [{ column: 'date', aggregateFn: 'collect' }] }] }, true);
 expect('workspaces on sources, a map, a plot and a compute pass', {
     data: [{ type: 'geojson', outputTableName: 'g', geojsonFileUrl: 'g.json', workspace: 'west' }, { type: 'join', dataRef: 'g', joinDataRef: 'g', workspace: 'west' }],
     compute: [{ dataRef: 'g', attributes: { x: 'a' }, outputColumnName: 'r', wgslFunction: 'return x;', workspace: 'west' }],
@@ -166,6 +174,9 @@ expect('layer pointSize zero', layer({ pointSize: 0 }), false);
 expect('layer width zero', layer({ width: 0 }), false);
 expect('layer width negative', layer({ width: -2 }), false);
 expect('layer width as a string', layer({ width: '2' }), false);
+expect('layer pointSize of 0 m', layer({ pointSize: 0 }), false);
+expect('layer pointSize negative', layer({ pointSize: -2 }), false);
+expect('layer pointSize as a string', layer({ pointSize: '2' }), false);
 expect('colorMapCenter as a string', layer({ colorMapCenter: '0' }), false);
 expect('colorMapReverse as a string', layer({ colorMapReverse: 'yes' }), false);
 expect('transferFunction as a number', layer({ transferFunction: 1 }), false);
@@ -205,6 +216,7 @@ expect('camera zoom below 0', { map: { ...layers, camera: { zoom: -1 } } }, fals
 expect('camera zoom as a string', { map: { ...layers, camera: { zoom: '12' } } }, false);
 expect('layout with an unknown type', { map: layers, layout: { type: 'diagonal' } }, false);
 expect('layout grid with zero columns', { map: layers, layout: { type: 'grid', columns: 0 } }, false);
+expect('layout grid with columns that are not a whole number', { map: layers, layout: { type: 'grid', columns: 2.5 } }, false);
 expect('layout with a negative gap', { map: layers, layout: { gap: -1 } }, false);
 expect('map with an empty id', { map: { ...layers, id: '' } }, false);
 expect('plot with an empty id', { plot: { ...plot, mark: 'scatter', id: '' } }, false);
@@ -215,7 +227,7 @@ expect('links as an object', { map: layers, links: { source: 'p', target: 'm' } 
 
 // Each layer styling option is documented in the schema.
 const layerProperties = schema.definitions?.MapLayerSpec?.properties ?? {};
-for (const key of ['title', 'color', 'width', 'stroke', 'colorMapCenter', 'colorMapReverse', 'colorMapRange', 'transferFunction']) {
+for (const key of ['title', 'color', 'width', 'pointSize', 'stroke', 'colorMapCenter', 'colorMapReverse', 'colorMapRange', 'transferFunction']) {
     const description = layerProperties[key]?.description;
     if (typeof description !== 'string' || description.trim() === '') {
         failures++;
@@ -227,6 +239,60 @@ const bboxDescription = schema.definitions?.OsmBoundingBoxArea?.properties?.bbox
 if (typeof bboxDescription !== 'string' || bboxDescription.trim() === '') {
     failures++;
     console.error('FAIL OsmBoundingBoxArea.bbox has no description in the schema');
+}
+// So is every key 5.0.0 adds or renames. A path of keys from a definition is followed through `$ref`, each branch of
+// `anyOf` and `allOf` (a discriminated union's `then`) and an array's `items`. The key must be reached at least once,
+// and carry a description everywhere it is reached; an empty path checks the definition itself.
+type SchemaNode = Record<string, any>;
+function objectsOf(node: SchemaNode | SchemaNode[] | undefined): SchemaNode[] {
+    if (Array.isArray(node)) return node.flatMap(objectsOf);
+    if (!node || typeof node !== 'object') return [];
+    if (typeof node.$ref === 'string')
+        return objectsOf(schema.definitions?.[decodeURIComponent(node.$ref.replace('#/definitions/', ''))]);
+    const branches = [...(node.anyOf ?? []), ...(node.allOf ?? []), node.then, node.else, node.items];
+    return [...(node.properties ? [node] : []), ...branches.flatMap(objectsOf)];
+}
+function keysAt(definition: string, path: string): SchemaNode[] {
+    let nodes: SchemaNode[] = [schema.definitions?.[definition]].filter((node) => node !== undefined);
+    for (const key of path ? path.split('.') : [])
+        nodes = objectsOf(nodes).map((node) => node.properties?.[key]).filter((node) => node !== undefined);
+    return nodes;
+}
+const newKeys: Array<[string, string[]]> = [
+    ['UrbanSpec', [
+        'layout', 'layout.type', 'layout.columns', 'layout.gap',
+        'links', 'links.source', 'links.target', 'links.layer',
+        'map.id', 'map.workspace', 'map.camera', 'map.camera.zoom', 'map.camera.pitch', 'map.camera.bearing',
+        'plot.id', 'plot.workspace', 'data.workspace', 'compute.workspace',
+    ]],
+    ['WorkspaceName', ['']],
+    ['CustomDataSourceSpec', ['layerType']],
+    ['GeoTiffDataSourceSpec', ['geotiffFileUrl', 'coordinateFormat', 'maxRasterCells', 'resampleMethod']],
+    ['JoinSourceSpec', ['dataRef', 'joinDataRef', 'near.useCentroid']],
+    ['HeatmapSourceSpec', ['joinDataRef', 'near.useCentroid']],
+    ['GpgpuComputeSpec', ['type', 'wgslFunction', 'outputTableName', 'layerType']],
+    ['RenderComputeSpec', [
+        'type', 'outputTableName', 'layerType', 'tileSize',
+        'layers', 'layers.id', 'layers.dataRef', 'layers.type', 'layers.objectIdProperty',
+        'viewpoints', 'viewpoints.dataRef', 'viewpoints.strategy', 'viewpoints.strategy.floors',
+        'viewpoints.sampling', 'viewpoints.sampling.directions', 'viewpoints.sampling.azimuthOffsetDeg',
+        'viewpoints.sampling.pitchDeg',
+        'aggregation', 'aggregation.includeBackground', 'aggregation.backgroundLayerType',
+        'camera', 'camera.fov', 'camera.clip', 'camera.clip.near', 'camera.clip.far',
+    ]],
+];
+for (const [definition, paths] of newKeys) {
+    for (const path of paths) {
+        const name = path ? `${definition}.${path}` : definition;
+        const nodes = keysAt(definition, path);
+        if (nodes.length === 0) {
+            failures++;
+            console.error(`FAIL ${name} is not in the schema`);
+        } else if (nodes.some((node) => typeof node.description !== 'string' || node.description.trim() === '')) {
+            failures++;
+            console.error(`FAIL ${name} has no description in the schema`);
+        }
+    }
 }
 
 if (checked === 0) {

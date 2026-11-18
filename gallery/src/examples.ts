@@ -1,5 +1,9 @@
 import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 
+/**
+ * What an example shows. The hub arranges every example's views by its spec (`arrangeViews`), whatever this says; a
+ * `data-only` example, which draws nothing, lists the tables it loads instead.
+ */
 export type Layout = 'map' | 'map+plot' | 'multi-map' | 'data-only';
 export type AdapterName = 'autk' | 'deckgl';
 
@@ -309,5 +313,53 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         layout: 'data-only',
         supportedAdapters: ['autk'],
         load: () => import('./examples/data-context-test'),
+    },
+    'map-camera': {
+        title: 'Camera: Tilted View of the Financial District',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/map-camera'),
+    },
+    'linked-views': {
+        title: 'Linked Views: Map and Plot Side by Side',
+        layout: 'map+plot',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/linked-views'),
+    },
+    'geotiff-raster': {
+        title: 'GeoTIFF: Niterói Surface Temperature',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/geotiff-raster'),
+    },
+    'compute-output-table': {
+        title: 'Compute: Into a New Table (Building Heights)',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/compute-output-table'),
+    },
+    'compute-render': {
+        title: 'Compute: Render Pass (Sky Seen from the Street)',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/compute-render'),
+    },
+    'workspaces': {
+        title: 'Workspaces: Manhattan and the Whole City',
+        layout: 'multi-map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/workspaces'),
+    },
+    'points-true-size': {
+        title: 'Points at True Size: Noise Complaints, 10 m',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/points-true-size'),
+    },
+    'heatmap-centroids': {
+        title: 'Heatmap: Park Access, Measured from Park Edges',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/heatmap-centroids'),
     },
 };

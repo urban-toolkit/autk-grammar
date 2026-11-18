@@ -1,6 +1,7 @@
 import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 
 export const spec: UrbanSpec = {
+    layout: { type: 'horizontal' },
     data: [
         {
             type: 'osm',

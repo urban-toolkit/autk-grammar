@@ -1,4 +1,8 @@
-import { EXAMPLES, type AdapterName, type Layout } from './examples';
+import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
+import type { AutkGrammar } from '@urban-toolkit/autk-grammar';
+import type { DeckGlGrammar } from '@urban-toolkit/deckgl-grammar';
+import { EXAMPLES, type AdapterName, type ExampleModule, type Layout } from './examples';
+import { createPanes } from './views';
 
 const exampleSelect = document.getElementById('example-select') as HTMLSelectElement;
 const adapterSelect = document.getElementById('adapter-select') as HTMLSelectElement;
@@ -36,40 +40,16 @@ async function updateSpecOverlay(exampleId: string) {
     }
 }
 
-// ── Drag helper ───────────────────────────────────────────────────────────────
-
-function makeDraggable(panel: HTMLElement, handle: HTMLElement) {
-    let newX = 0, newY = 0, startX = 0, startY = 0;
-
-    handle.addEventListener('mousedown', mouseDown);
-
-    function mouseDown(e: MouseEvent) {
-        startX = e.clientX;
-        startY = e.clientY;
-        document.addEventListener('mousemove', mouseMove);
-        document.addEventListener('mouseup', mouseUp);
-    }
-
-    function mouseMove(e: MouseEvent) {
-        newX = startX - e.clientX;
-        newY = startY - e.clientY;
-        startX = e.clientX;
-        startY = e.clientY;
-        panel.style.top = panel.offsetTop - newY + 'px';
-        panel.style.left = panel.offsetLeft - newX + 'px';
-        panel.style.right = 'auto';
-        e.preventDefault();
-        e.stopPropagation();
-    }
-
-    function mouseUp() {
-        document.removeEventListener('mousemove', mouseMove);
-    }
-}
-
 // ── Stage setup ───────────────────────────────────────────────────────────────
 
-let floatingPlotPanel: HTMLElement | null = null;
+/**
+ * The grammar of the last run. An AutkGrammar is destroyed before the next run, so its maps release their GPU textures
+ * and buffers and their event handlers; a DeckGlGrammar has no destroy().
+ */
+let lastGrammar: AutkGrammar | DeckGlGrammar | null = null;
+
+/** What the last example's afterRun added to the page, such as a console panel, removed before the next run. */
+let afterRunElements: Element[] = [];
 
 function setStatus(msg: string, state: 'loading' | 'error' | 'done' | '') {
     statusBar.textContent = msg;
@@ -100,23 +80,15 @@ function updateAdapterOptions(exampleId: string) {
     }
 }
 
-function createMapEl(adapter: AdapterName, id: string): HTMLElement {
-    if (adapter === 'autk') {
-        const canvas = document.createElement('canvas');
-        canvas.id = id;
-        canvas.className = 'map-el';
-        return canvas;
-    }
-    const div = document.createElement('div');
-    div.id = id;
-    div.className = 'map-el';
-    return div;
-}
-
-function setupStage(layout: Layout, adapter: AdapterName): Record<string, string | string[]> {
+/**
+ * Builds the stage for an example and returns the grammar's targets: a pane for each of the spec's views, placed as
+ * `arrangeViews` says, as every host arranges them (see `createPanes`). Without a `layout`, the panes stack. An
+ * example that draws nothing lists the tables it loads instead.
+ */
+function setupStage(layout: Layout, adapter: AdapterName, spec: UrbanSpec): Record<string, string | string[]> {
     stage.innerHTML = '';
-    floatingPlotPanel?.remove();
-    floatingPlotPanel = null;
+    for (const element of afterRunElements) element.remove();
+    afterRunElements = [];
 
     if (layout === 'data-only') {
         const out = document.createElement('div');
@@ -126,73 +98,22 @@ function setupStage(layout: Layout, adapter: AdapterName): Record<string, string
         return { db: 'debug-output' };
     }
 
-    if (layout === 'multi-map') {
-        const wrap = document.createElement('div');
-        wrap.className = 'maps-wrap multi';
-
-        const id0 = adapter === 'autk' ? 'map-canvas-0' : 'map-container-0';
-        const id1 = adapter === 'autk' ? 'map-canvas-1' : 'map-container-1';
-
-        const slot0 = document.createElement('div');
-        slot0.className = 'map-slot';
-        slot0.appendChild(createMapEl(adapter, id0));
-        wrap.appendChild(slot0);
-
-        const slot1 = document.createElement('div');
-        slot1.className = 'map-slot';
-        slot1.appendChild(createMapEl(adapter, id1));
-        wrap.appendChild(slot1);
-
-        stage.appendChild(wrap);
-        return { map: [id0, id1] };
-    }
-
-    if (layout === 'map+plot') {
-        const wrap = document.createElement('div');
-        wrap.className = 'maps-wrap single';
-        const mapId = adapter === 'autk' ? 'map-canvas' : 'map-container';
-        wrap.appendChild(createMapEl(adapter, mapId));
-        stage.appendChild(wrap);
-
-        const plotPanel = document.createElement('div');
-        plotPanel.className = 'floating-panel plot-panel';
-        const toolbarH = toolbar.offsetHeight;
-        plotPanel.style.right = '16px';
-        plotPanel.style.top = `${toolbarH + 16}px`;
-
-        const plotBar = document.createElement('div');
-        plotBar.className = 'plot-bar';
-        const grip = document.createElement('div');
-        grip.className = 'plot-bar-grip';
-        grip.appendChild(document.createElement('span'));
-        grip.appendChild(document.createElement('span'));
-        grip.appendChild(document.createElement('span'));
-        plotBar.appendChild(grip);
-        plotBar.appendChild(document.createTextNode('Plot'));
-
-        const plotBody = document.createElement('div');
-        plotBody.id = 'plot-body';
-        plotBody.className = 'plot-body';
-
-        plotPanel.appendChild(plotBar);
-        plotPanel.appendChild(plotBody);
-        document.body.appendChild(plotPanel);
-        makeDraggable(plotPanel, plotBar);
-        floatingPlotPanel = plotPanel;
-
-        return { map: mapId, plot: 'plot-body' };
-    }
-
-    // layout === 'map'
-    const wrap = document.createElement('div');
-    wrap.className = 'maps-wrap single';
-    const mapId = adapter === 'autk' ? 'map-canvas' : 'map-container';
-    wrap.appendChild(createMapEl(adapter, mapId));
-    stage.appendChild(wrap);
-    return { map: mapId };
+    const panes = createPanes(spec, adapter === 'autk' ? 'canvas' : 'div');
+    stage.appendChild(panes.element);
+    return panes.targets;
 }
 
 // ── Run ───────────────────────────────────────────────────────────────────────
+
+/** Runs an example's afterRun, and keeps what it adds to the page so that the next run removes it. */
+async function runAfterRun(afterRun: NonNullable<ExampleModule['afterRun']>, grammar: unknown) {
+    const before = new Set(Array.from(document.body.children));
+    try {
+        await afterRun(grammar);
+    } finally {
+        afterRunElements = Array.from(document.body.children).filter((element) => !before.has(element));
+    }
+}
 
 async function runExample(exampleId: string, adapter: AdapterName) {
     const meta = EXAMPLES[exampleId];
@@ -204,18 +125,22 @@ async function runExample(exampleId: string, adapter: AdapterName) {
     try {
         const module = await meta.load();
         const { spec, afterRun } = module;
-        const targets = setupStage(meta.layout, adapter);
+        if (lastGrammar && 'destroy' in lastGrammar) lastGrammar.destroy();
+        lastGrammar = null;
+        const targets = setupStage(meta.layout, adapter, spec);
 
         if (adapter === 'autk') {
             const { AutkGrammar } = await import('@urban-toolkit/autk-grammar');
             const grammar = new AutkGrammar(targets);
+            lastGrammar = grammar;
             await grammar.run(spec);
-            if (afterRun) await afterRun(grammar);
+            if (afterRun) await runAfterRun(afterRun, grammar);
         } else {
             const { DeckGlGrammar } = await import('@urban-toolkit/deckgl-grammar');
             const grammar = new DeckGlGrammar(targets);
+            lastGrammar = grammar;
             await grammar.run(spec);
-            if (afterRun) await afterRun(grammar);
+            if (afterRun) await runAfterRun(afterRun, grammar);
         }
 
         setStatus('Done', 'done');

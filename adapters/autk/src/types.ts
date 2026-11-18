@@ -4,17 +4,30 @@ import type { AutkPlot } from '@urban-toolkit/autk-plot';
 import type { LayerType } from '@urban-toolkit/the-urban-grammar';
 import type { FeatureCollection } from 'geojson';
 
+/** The elements of the page `AutkGrammar` draws in, by id. */
 export type Targets = {
+    /** Not read by the adapter. */
     compute?: string,
+    /** Id of an element that lists the loaded tables after each data source. */
     db?: string,
+    /** Id of the canvas a map draws on, or a list of ids, one canvas per entry of `map`, in order. */
     map?: string[] | string,
+    /**
+     * Id of the element the plots draw in, or a list of ids, one element per entry of `plot`, in order. With one id,
+     * every plot draws in that element.
+     */
     plot?: string[] | string
 }
 
-export type MapRegistry = Map<string, AutkMap>;
-export type MapLayerIds = Map<string, string>; // dataRef → id of the layer that draws it in the map the MapRegistry holds for it
+/**
+ * How the grammar names a map of the spec: its `id`, else its index in the spec's `map` list (0 for a single map).
+ * `map:picking` events name the map by it, and the calls that take a `mapId` (`mapLayers`, `mapLayer`,
+ * `highlightOnMap`, `clearHighlightOnMap`, `setPlotSelection`, `clearHighlightOnPlot`) address one map with it: a
+ * string names a map by its `id`, a number by its index.
+ */
+export type MapId = string | number;
+
 export type PlotRegistry = Map<string, AutkPlot>;
-export type PlotMapLinks = Map<string, string>; // plotId (dataRef) → mapRef (dataRef of a map layer)
 
 /** A layer a map of the last run draws, as `AutkGrammar.mapLayer` finds it by its table's name. */
 export interface GrammarMapLayer {
@@ -30,13 +43,17 @@ export type ComputeLayerTypes = Map<string, LayerType>;
 
 export type AutkGrammarSpec = UrbanSpec;
 
-// Grammar-level interaction payloads — no autk internals leak through the public API
+// Grammar-level interaction payloads: no autk internals leak through the public API
 export interface GrammarPickingEvent {
+    /** The map the pick was made on, by its {@link MapId}: its `id`, else its index in the spec's `map` list. */
+    mapId: MapId;
+    /** The picked layer's id in its map: its `title`, else its `dataRef`. */
     layerId: string;
     selection: number[];
 }
 
 export interface GrammarPlotSelectionEvent {
+    /** The plot's `id`, else its `dataRef`. */
     plotId: string;
     event: 'click' | 'brush' | 'brushX' | 'brushY';
     selection: number[];
@@ -47,7 +64,7 @@ export type GrammarEventRecord = {
     'plot:selection': GrammarPlotSelectionEvent;
 };
 
-// Self-contained typed emitter — does not import from autk packages
+// Self-contained typed emitter: it does not import from autk packages
 export class GrammarEventEmitter {
     private _listeners: Map<string, Set<(p: unknown) => void>> = new Map();
 

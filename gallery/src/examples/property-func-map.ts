@@ -30,7 +30,7 @@ export const spec: UrbanSpec = {
             {
                 dataRef: 'table_osm_buildings',
                 colorMapInterpolator: ColorMapInterpolator.DIV_RED_BLUE,
-                getFnv: 'height_sq',
+                getFnv: 'compute.height_sq',
             },
         ],
     },
