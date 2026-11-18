@@ -258,13 +258,10 @@ export class AutkGrammar {
         for (const cleanup of this._fwdCleanups) cleanup();
         this._fwdCleanups = [];
 
-        // Wire each unique map → grammar bus
-        // Multiple layerRefs can share one AutkMap instance; deduplicate to avoid double-subscription
-        const seenMaps = new Set<AutkMap>();
-        for (const [layerId, map] of this._mapRegistry) {
-            if (seenMaps.has(map)) continue;
-            seenMaps.add(map);
-            const handler = ({ selection }: MapEventData) => {
+        // Wire each map to the grammar bus once, though several layers can share it. autk-map names the picked layer
+        // by its id in the map, which is its title, else its dataRef.
+        for (const map of new Set<AutkMap>(this._mapRegistry.values())) {
+            const handler = ({ layerId, selection }: MapEventData) => {
                 this.interactions.emit('map:picking', { layerId, selection });
             };
             map.events.on(MapEvent.PICKING, handler);

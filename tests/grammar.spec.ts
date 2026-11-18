@@ -429,6 +429,23 @@ test('links plots to a map by id: two plots of one table, a named layer, and a p
     expect(await page.evaluate(() => [...(window.grammar as any)._plotRegistry.get('second').selection])).toEqual([2]);
 });
 
+test('names the picked layer in map:picking by its id, with two layers on one map', async ({ page }) => {
+    await runSpec(page, {
+        data: [area, blocks, zones],
+        map: { layerRefs: [{ dataRef: 'blocks', isPick: true }, { dataRef: 'zones', title: 'Zones', isPick: true }] },
+    });
+    // autk-map reports a pick with the id of the layer picked: a feature of the titled layer, then one of the other.
+    const reported = await page.evaluate(() => {
+        const events: unknown[] = [];
+        window.grammar.interactions.on('map:picking', (event) => { events.push(event); });
+        const map = window.grammar.maps[0];
+        map.events.emit('picking' as never, { selection: [2], layerId: 'Zones' } as never);
+        map.events.emit('picking' as never, { selection: [1], layerId: 'blocks' } as never);
+        return events;
+    });
+    expect(reported).toEqual([{ layerId: 'Zones', selection: [2] }, { layerId: 'blocks', selection: [1] }]);
+});
+
 test('draws each plot in its own target when the plot targets are a list', async ({ page }) => {
     const plots: PlotSpec[] = [
         { dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'] },

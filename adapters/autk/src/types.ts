@@ -40,11 +40,13 @@ export type AutkGrammarSpec = UrbanSpec;
 
 // Grammar-level interaction payloads — no autk internals leak through the public API
 export interface GrammarPickingEvent {
+    /** The picked layer's id in its map: its `title`, else its `dataRef`. */
     layerId: string;
     selection: number[];
 }
 
 export interface GrammarPlotSelectionEvent {
+    /** The plot's `id`, else its `dataRef`. */
     plotId: string;
     event: 'click' | 'brush' | 'brushX' | 'brushY';
     selection: number[];
