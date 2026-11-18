@@ -434,8 +434,8 @@ export type MapLayerSpec = {
  */
 export type CameraSpec = {
     /**
-     * Zoom level: the eye sits at a height of `10000 / 2^(zoom - 10)` workspace units above the point the map
-     * fits to, so each step doubles the scale.
+     * Zoom level: the eye sits `10000 / 2^(zoom - 10)` workspace units from the point the map looks at (straight
+     * above it without `pitch`), so each step doubles the scale.
      * @minimum 0
      */
     zoom?: number,
@@ -446,7 +446,7 @@ export type CameraSpec = {
      */
     pitch?: number,
     /**
-     * Rotation around the vertical axis, in degrees.
+     * Compass heading the view faces, in degrees clockwise from north: the map turns around the point it looks at.
      * @minimum 0
      * @maximum 360
      */

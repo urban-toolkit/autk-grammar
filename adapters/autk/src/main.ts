@@ -183,7 +183,7 @@ export class AutkGrammar {
 
     /**
      * Highlights features on the map layer that draws the table `dataRef` (see {@link mapLayer}).
-     * If that layer is linked to a plot via `mapRef`, the plot selection is updated too.
+     * If a plot is linked to that layer, by a link or its `mapRef`, the plot selection is updated too.
      */
     highlightOnMap(dataRef: string, featureIds: number[]): void {
         const layer = this.mapLayer(dataRef);
@@ -195,7 +195,7 @@ export class AutkGrammar {
 
     /**
      * Clears highlighted features on the map layer that draws the table `dataRef` (see {@link mapLayer}).
-     * If that layer is linked to a plot via `mapRef`, the plot selection is cleared too.
+     * If a plot is linked to that layer, by a link or its `mapRef`, the plot selection is cleared too.
      */
     clearHighlightOnMap(dataRef: string): void {
         const layer = this.mapLayer(dataRef);
@@ -206,8 +206,8 @@ export class AutkGrammar {
     }
 
     /**
-     * Clears the selection on the plot identified by `plotId` (its dataRef).
-     * If that plot is linked to a map via `mapRef`, the map highlight is cleared too.
+     * Clears the selection on the plot `plotId` names: its `id`, else its `dataRef`.
+     * If that plot is linked to a map layer, by a link or its `mapRef`, the layer's highlight is cleared too.
      */
     clearHighlightOnPlot(plotId: string): void {
         this._plotRegistry.get(plotId)?.setSelection([]);
@@ -217,8 +217,8 @@ export class AutkGrammar {
     }
 
     /**
-     * Applies a selection to the plot identified by `plotId` (its dataRef).
-     * If that plot is linked to a map via `mapRef`, the map highlight is updated too.
+     * Applies a selection to the plot `plotId` names: its `id`, else its `dataRef`.
+     * If that plot is linked to a map layer, by a link or its `mapRef`, the layer's highlight is updated too.
      */
     setPlotSelection(plotId: string, featureIds: number[]): void {
         this._plotRegistry.get(plotId)?.setSelection(featureIds);

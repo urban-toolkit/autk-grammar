@@ -1,7 +1,7 @@
 /**
  * The `@urban-toolkit/autk-grammar/data` entry, for hosts that load a spec's tables without a map or a plot, such as
- * a server in Node. It holds the data adapter alone, so its only import at run time is autk-db: nothing of autk-map,
- * autk-plot, autk-compute or autk-core loads.
+ * a server in Node. It holds the data adapter alone, so its only import at run time is autk-db, never autk-map,
+ * autk-plot, autk-compute or autk-core (tests/unit/data-entry.mts checks the built files).
  */
 export { createDataAdapter } from './adapters/data';
 export { enterWorkspace, tableKey } from './workspace';
