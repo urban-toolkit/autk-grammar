@@ -2,7 +2,7 @@ import type { FeatureCollection } from 'geojson';
 import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, ComputeCache, ComputeLayerTypes } from '../types';
-import { DrawnLayers, LayerExports, exportOf, mapIdOf } from '../drawn';
+import { DrawnLayers, LayerExports, exportKey, exportOf, exportOptions, mapIdOf } from '../drawn';
 import { rowKeys } from '../rows';
 import { AutkMap } from '@urban-toolkit/autk-map';
 import type { LayerRenderInfo } from '@urban-toolkit/autk-map';
@@ -249,7 +249,9 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
             const type     = (computeTypes?.get(key) ?? tableToTypeMap[name]) as LayerType;
             const getFnv   = layerRef.getFnv;
 
-            const rawData = computeCache?.get(key) ?? (type === 'raster' ? await context.getRaster(name) as unknown as FeatureCollection : await exportOf(exports, key, () => context.getLayer(name)));
+            const rawData = computeCache?.get(key) ?? (type === 'raster'
+                ? await context.getRaster(name) as unknown as FeatureCollection
+                : await exportOf(exports, exportKey(key, layerRef.osmElements), () => context.getLayer(name, exportOptions(layerRef.osmElements))));
             // Raster tables (e.g. heatmaps) are a single feature with no geometry, so keep them as-is. A vector layer
             // is handed the rows with a geometry: `kept` holds the table row of each.
             const rows = rawData.features ?? [];

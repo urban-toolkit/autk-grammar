@@ -110,6 +110,9 @@ expect('osm with forceRefresh', { data: [{ ...osm, forceRefresh: true }] }, true
 expect('osm with forceRefresh as a string', { data: [{ ...osm, forceRefresh: 'yes' }] }, false);
 expect('osm layers with the CRS of their coordinates', { data: [{ ...osm, autoLoadLayers: { layers: ['roads'], coordinateFormat: 'EPSG:4269' } }] }, true);
 expect('osm layers with a CRS as a number', { data: [{ ...osm, autoLoadLayers: { layers: ['roads'], coordinateFormat: 4269 } }] }, false);
+expect('a layer and a plot of osm elements', { map: { layerRefs: [{ dataRef: 't', osmElements: true }] }, plot: { ...plot, mark: 'table', osmElements: true } }, true);
+expect('a layer with osmElements as a string', { map: { layerRefs: [{ dataRef: 't', osmElements: 'yes' }] } }, false);
+expect('a plot with osmElements as a string', { plot: { ...plot, mark: 'scatter', osmElements: 'yes' } }, false);
 
 // Documents the runtime cannot draw.
 expect('unknown data type', { data: [{ ...osm, type: 'shapefile' }] }, false);
@@ -341,6 +344,8 @@ const newKeys: Array<[string, string[]]> = [
     ['SqlSourceSpec', ['', 'query', 'layerType']],
     ['HeatmapSourceSpec', ['groupBy.normalize']],
     ['OsmDataSourceSpec', ['forceRefresh', 'autoLoadLayers.coordinateFormat']],
+    ['MapLayerSpec', ['osmElements']],
+    ['UrbanSpec', ['plot.osmElements']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

@@ -245,6 +245,42 @@ test('queries Overpass again with forceRefresh, and reads the answer the browser
     expect(sent[2], 'forceRefresh queries the API again').toBe(2 * sent[0]);
 });
 
+test('draws and plots an OSM table as one feature per OSM element with osmElements, and row by row without it', async ({ page }) => {
+    await runSpec(page, {
+        data: [{
+            type: 'osm', outputTableName: 'box', pbfFileUrl: '/data/lower_mnt.osm.pbf', queryArea: { bbox: BOX },
+            autoLoadLayers: { layers: ['roads', 'buildings'] },
+        } as DataSourceSpec],
+        map: {
+            layerRefs: [
+                { dataRef: 'box_buildings', title: 'Building parts', osmElements: true },
+                { dataRef: 'box_roads', title: 'Road elements', osmElements: true },
+                { dataRef: 'box_roads', title: 'Road rows' },
+            ],
+        },
+        plot: { dataRef: 'box_roads', mark: 'table', axis: ['osm_type', 'osm_id', 'highway'], osmElements: true },
+    });
+    const drawn = (layerId: string) => page.evaluate((id) => window.drawnRows('map0', id), layerId);
+    // Each road element is a way, with its id and its tags.
+    const elements = await drawn('Road elements');
+    expect(elements.length).toBeGreaterThan(0);
+    expect(elements.filter((row) => row?.osm_type !== 'way' || !Number.isInteger(row?.osm_id) || typeof row?.highway !== 'string')).toEqual([]);
+    // The same table drawn row by row, from an export of its own: each row holds its tags, and no OSM id.
+    const rows = await drawn('Road rows');
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.filter((row) => row == null || 'osm_id' in row || typeof row.highway !== 'string')).toEqual([]);
+    // A building's parts are drawn as elements of their own, each naming its building.
+    const parts = await drawn('Building parts');
+    expect(parts.length).toBeGreaterThan(0);
+    expect(parts.filter((row) => !['way', 'relation'].includes(String(row?.osm_type)) || row?.building_id == null)).toEqual([]);
+    // The plot draws a row per road element.
+    const plotted = await page.evaluate(() => [...document.querySelectorAll('#plot tr.autkMark')]
+        .map((row) => (row as Element & { __data__?: { osm_id?: number } }).__data__?.osm_id));
+    const ascending = (ids: unknown[]) => ids.map(Number).sort((a, b) => a - b);
+    expect(ascending(plotted)).toEqual(ascending(elements.map((row) => row?.osm_id)));
+    await expectDrawn(page, 'map0');
+});
+
 test('refuses tag sets with a PBF extract, naming the source', async ({ page }) => {
     // autk-db reads tag sets from the Overpass API only, and refused them with a PBF extract without naming the source.
     await expect(runSpec(page, { data: [taggedSource({ pbfFileUrl: '/data/lower_mnt.osm.pbf' })] }))

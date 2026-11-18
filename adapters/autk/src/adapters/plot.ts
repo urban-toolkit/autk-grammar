@@ -1,7 +1,7 @@
 import { PlotAdapter, PlotSpec, PlotMark } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, PlotRegistry, GeoJsonCache, ComputeCache } from '../types';
-import { addPlotLink, exportOf } from '../drawn';
+import { addPlotLink, exportKey, exportOf, exportOptions } from '../drawn';
 import type { DrawnLayer, DrawnLayers, LayerExports, PlotLinks, PlotRows } from '../drawn';
 import { rowKeys, translateIds } from '../rows';
 import { AutkDb, isRenderableTable } from '@urban-toolkit/autk-db';
@@ -52,17 +52,18 @@ export function linkPlotToLayer(plot: AutkPlot, rows: readonly string[], events:
 
 /**
  * A table's rows as a plot reads them from autk-db: the export of a table with a geometry, the one the maps of the run
- * draw, and for a table without one, such as a CSV or JSON table loaded without `geometryColumns`, which autk-db does
- * not export as a layer, its rows, each a feature without a geometry. autk-plot reads only the features' properties.
+ * draw, one feature per OpenStreetMap element with `osmElements`, and for a table without one, such as a CSV or JSON
+ * table loaded without `geometryColumns`, which autk-db does not export as a layer, its rows, each a feature without a
+ * geometry. autk-plot reads only the features' properties.
  */
-async function tableRows(db: AutkDb, name: string, key: string, exports?: LayerExports): Promise<FeatureCollection> {
+async function tableRows(db: AutkDb, name: string, key: string, exports?: LayerExports, osmElements?: boolean): Promise<FeatureCollection> {
     const table = db.getTablesMetadata().find((candidate) => candidate.name === name);
     if (table && !isRenderableTable(table)) {
         const rows = await db.getTable(name);
         // A feature without a geometry, which GeoJSON allows and the plot does not read.
         return { type: 'FeatureCollection', features: rows.map((properties) => ({ type: 'Feature', geometry: null, properties })) } as unknown as FeatureCollection;
     }
-    return exportOf(exports, key, () => db.getLayer(name));
+    return exportOf(exports, exportKey(key, osmElements), () => db.getLayer(name, exportOptions(osmElements)));
 }
 
 /**
@@ -88,7 +89,9 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
 
             await enterWorkspace(db, spec.workspace);
             const key = tableKey(spec.workspace, spec.dataRef);
-            const geojson: FeatureCollection = computeCache?.get(key) ?? cache?.get(key) ?? await tableRows(db, spec.dataRef, key, exports);
+            // The rows of a GeoJSON source or a join are a row per feature, so a plot of OSM elements reads autk-db's.
+            const cached = spec.osmElements === true ? undefined : cache?.get(key);
+            const geojson: FeatureCollection = computeCache?.get(key) ?? cached ?? await tableRows(db, spec.dataRef, key, exports, spec.osmElements);
 
             const events = (spec.events ?? []) as unknown as AutkPlotEvent[];
 

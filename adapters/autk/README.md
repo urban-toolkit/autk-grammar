@@ -209,6 +209,15 @@ The CRS of an `osm` source's coordinates, as an EPSG string. It defaults to `EPS
 { type: 'osm', outputTableName: 'area', pbfFileUrl: 'area-nad83.osm.pbf', queryArea: { bbox: [-74.02, 40.70, -74.00, 40.72] }, autoLoadLayers: { layers: ['roads'], coordinateFormat: 'EPSG:4269' } }
 ```
 
+### `osmElements`
+
+A map layer or a plot with `osmElements: true` reads an OpenStreetMap layer table as one feature per OSM element it was built from, rather than one per row. Each feature's properties are the element's tags, its `osm_type` (`node`, `way` or `relation`) and its `osm_id`; in a buildings table, whose parts are elements of their own, also the `building_id` of its building. A part takes only its own tags, so a buildings layer draws only the parts whose tags give their height. A table that is not an OSM layer, a surface, and an OSM table an `update` source changed are read row by row, as without it.
+
+```ts
+map: { layerRefs: [{ dataRef: 'downtown_roads', osmElements: true, getFnv: 'highway', colorMapInterpolator: ColorMapInterpolator.CAT_TABLEAU10 }] },
+plot: { dataRef: 'downtown_roads', mark: 'table', axis: ['osm_id', 'highway', 'name'], osmElements: true },
+```
+
 ## Compute
 
 Each entry of `compute` runs on the GPU with autk-compute, in order, once the data is loaded. Its `type` is `gpgpu`, the default, or `render`.

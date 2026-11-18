@@ -531,6 +531,13 @@ export type MapLayerSpec = {
      * @minItems 1
      */
     selectFields?: string[],
+    /**
+     * Draw an OpenStreetMap layer table as one feature per OSM element it was built from, each with the element's tags,
+     * `osm_type` and `osm_id` as its properties (and `building_id` in a buildings table, whose parts are elements of
+     * their own), rather than one feature per row. A table that is not an OSM layer, a surface, and an OSM table an
+     * update changed are drawn row by row, as without it. Read by the Autark adapter only.
+     */
+    osmElements?: boolean,
     /** Dot path to the thematic value, relative to `feature.properties` (for example `tags.highway` or `compute.result`). */
     getFnv?: string,
     /** `categorical` reads the value as a string for discrete palettes; `quantitative` reads it as a number for continuous scales. Read by the deck.gl adapter; the Autark adapter ignores it. */
@@ -619,6 +626,13 @@ export interface PlotBase {
     margins?: { left: number; right: number; top: number; bottom: number },
     /** `dataRef` of the map layer this plot links its selection to. A shorthand for a link in `links`. */
     mapRef?: string,
+    /**
+     * Plot an OpenStreetMap layer table as one row per OSM element it was built from, each with the element's tags,
+     * `osm_type` and `osm_id` (and `building_id` in a buildings table), rather than one row per table row. A table that
+     * is not an OSM layer, a surface, and an OSM table an update changed are plotted row by row, as without it. Read by
+     * the Autark adapter only.
+     */
+    osmElements?: boolean,
 }
 
 /**

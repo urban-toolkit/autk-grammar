@@ -31,6 +31,20 @@ export type PlotRows = Map<string, readonly string[]>;
 /** The export of each table a map or a plot of the last run read, by its `tableKey`. */
 export type LayerExports = Map<string, Promise<FeatureCollection>>;
 
+/**
+ * The key of a table's export in {@link LayerExports}: its `tableKey`, with ` osm-elements` added for the export of one
+ * feature per OpenStreetMap element, which a layer or a plot with `osmElements` reads. A table's name holds no space, so
+ * the two never meet.
+ */
+export function exportKey(key: string, osmElements?: boolean): string {
+    return osmElements === true ? `${key} osm-elements` : key;
+}
+
+/** autk-db's options for a table's export: one feature per OpenStreetMap element with `osmElements`, else none. */
+export function exportOptions(osmElements?: boolean): { osmElements: true } | undefined {
+    return osmElements === true ? { osmElements: true } : undefined;
+}
+
 /** A table's export, taken once a run, so the maps and the plots of one table draw the same rows. */
 export function exportOf(exports: LayerExports | undefined, key: string, load: () => Promise<FeatureCollection>): Promise<FeatureCollection> {
     if (!exports) return load();
