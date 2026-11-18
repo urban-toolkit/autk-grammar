@@ -38,7 +38,7 @@ export type ComputeLayerTypes = Map<string, LayerType>;
 
 export type AutkGrammarSpec = UrbanSpec;
 
-// Grammar-level interaction payloads — no autk internals leak through the public API
+// Grammar-level interaction payloads: no autk internals leak through the public API
 export interface GrammarPickingEvent {
     /** The picked layer's id in its map: its `title`, else its `dataRef`. */
     layerId: string;
@@ -57,7 +57,7 @@ export type GrammarEventRecord = {
     'plot:selection': GrammarPlotSelectionEvent;
 };
 
-// Self-contained typed emitter — does not import from autk packages
+// Self-contained typed emitter: it does not import from autk packages
 export class GrammarEventEmitter {
     private _listeners: Map<string, Set<(p: unknown) => void>> = new Map();
 

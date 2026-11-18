@@ -191,7 +191,7 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                         }
                     } catch (bboxErr) {
                         if (bboxErr instanceof Error && bboxErr.message.includes('bounding box after transform')) throw bboxErr;
-                        // getBoundingBoxFromLayer failed (empty table, unsupported layer type, etc.) — skip validation
+                        // getBoundingBoxFromLayer failed (empty table, unsupported layer type, etc.): skip validation
                     }
                     print(db, targets);
                     return db;
