@@ -586,6 +586,40 @@ test('highlights a titled layer, and links it to a plot, by its data name', asyn
     expect(await highlighted()).toEqual(clicked);
 });
 
+test('loads a GeoJSON whose features include null geometries: the map draws the others, and the plot counts every row', async ({ page }) => {
+    // GeoJSON allows a null geometry, which autk-db refuses: its loader reads the layer's type off the first feature
+    // ("First feature has no geometry or geometry type") and parses every feature's geometry as GeoJSON. So a GeoJSON
+    // source with such a feature failed to load.
+    type Mark = Element & { __data__?: { name?: string; autkIds?: number[] } };
+    const point = (i: number) => ({ type: 'Point' as const, coordinates: [-73.985 + i * 0.002, 40.75 + i * 0.001] });
+    for (const nulls of [['c'], ['a', 'c']]) {
+        const features = ['a', 'b', 'c', 'd', 'e'].map((name, i) => ({
+            type: 'Feature' as const,
+            properties: { name, v: i * 10, w: 40 - i * 10 },
+            geometry: nulls.includes(name) ? null : point(i),
+        }));
+        await runSpec(page, {
+            data: [{ type: 'geojson', outputTableName: 'spots', geojsonObject: { type: 'FeatureCollection', features } }],
+            map: { id: 'm', layerRefs: [{ dataRef: 'spots', title: 'Spots' }] },
+            plot: { id: 'p', dataRef: 'spots', mark: 'scatter', axis: ['v', 'w'], events: ['brush'] },
+            links: [{ source: 'p', target: 'm' }],
+        });
+        // The map draws the points of the rows with one, read as points though the first row has none.
+        expect((await layerById(page)).Spots.type, `null geometries on ${nulls}`).toBe('points');
+        const drawn = (await page.evaluate(() => window.drawnRows('map0', 'Spots'))).map((row) => row?.name);
+        expect([...drawn].sort(), `null geometries on ${nulls}`).toEqual(['a', 'b', 'c', 'd', 'e'].filter((name) => !nulls.includes(name)));
+        // The plot counts every row.
+        const marks = await page.evaluate(() => [...document.querySelectorAll('#plot .autkMark')]
+            .map((mark) => ({ name: (mark as Mark).__data__?.name, ids: (mark as Mark).__data__?.autkIds ?? [] })));
+        expect(marks.map((mark) => mark.name).sort(), `null geometries on ${nulls}`).toEqual(['a', 'b', 'c', 'd', 'e']);
+        // And a brush on d and e lights d and e.
+        const brushed = marks.filter((mark) => mark.name === 'd' || mark.name === 'e').flatMap((mark) => mark.ids);
+        await page.evaluate((ids) => (window.grammar as any)._plotRegistry.get('p').events.emit('brush', { selection: ids }), brushed);
+        const lit = (await layerById(page)).Spots.highlightedIds ?? [];
+        expect(lit.map((position) => drawn[position]).sort(), `null geometries on ${nulls}`).toEqual(['d', 'e']);
+    }
+});
+
 test('highlights every map that draws a table, or the one a map key names, and links a plot to each', async ({ page }) => {
     // The grammar kept one map per table, the last: the first map's layer was never found, lit or linked.
     await runSpec(page, {

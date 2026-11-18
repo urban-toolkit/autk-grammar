@@ -38,7 +38,7 @@ Each entry of `data` loads or builds one table, in order. Its `type` selects its
 | `osm` | `queryArea`, `pbfFileUrl`, `autoLoadLayers` | OpenStreetMap data for an area, from Overpass or a `.osm.pbf` extract (see [OpenStreetMap areas](#openstreetmap-areas)). `autoLoadLayers.layers` splits it into one table per layer, named `<outputTableName>_<layer>`. |
 | `csv` | `csvFileUrl` or `csvObject`, `delimiter`, `geometryColumns` | The rows of a CSV file, or of arrays whose first row names the columns. |
 | `json` | `jsonFileUrl` or `jsonObject`, `geometryColumns` | The rows of a JSON array. |
-| `geojson` | `geojsonFileUrl` or `geojsonObject`, `coordinateFormat`, `layerType` | A FeatureCollection. `layerType` sets how a map draws it, for example `polylines`, or `buildings` for polygons; without it, autk-db reads it from the first feature's geometry. |
+| `geojson` | `geojsonFileUrl` or `geojsonObject`, `coordinateFormat`, `layerType` | A FeatureCollection. `layerType` sets how a map draws it, for example `polylines`, or `buildings` for polygons; without it, autk-db reads it from the first feature with a geometry. A feature whose geometry is null is a row without one: a map draws nothing for it, and a plot counts it. |
 | `geotiff` | `geotiffFileUrl`, `coordinateFormat`, `maxRasterCells`, `resampleMethod` | A raster read from a GeoTIFF file. |
 | `heatmap` | `joinDataRef`, `near`, `grid`, `groupBy` | A raster grid over the workspace's extent, whose cells aggregate the rows of another table. |
 | `join` | `dataRef`, `joinDataRef`, `near`, `groupBy` | No new table: it joins the rows of `joinDataRef` onto the features of `dataRef`, in place. |

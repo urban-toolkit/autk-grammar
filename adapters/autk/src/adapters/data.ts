@@ -6,19 +6,34 @@ import { Targets, GeoJsonCache } from '../types';
 import { enterWorkspace, tableKey } from '../workspace';
 import { featureIds } from '../rows';
 
+/** An empty geometry: a GeometryCollection with none in it, which a map draws as nothing. */
+const NO_GEOMETRY: Geometry = { type: 'GeometryCollection', geometries: [] };
+
 /**
- * The collection with the id autk-db gives a GeoJSON feature on each feature that has none (see `featureIds`). autk-db
- * keeps a feature's id in its export, so a row a map draws from the export is found among the source's own rows, which
- * a plot draws, by that id.
+ * A GeoJSON source's collection as autk-db loads it, row for row.
+ *
+ * - Each feature carries the id autk-db gives it (see `featureIds`), from its place in the source. autk-db keeps the
+ *   id in its export, so a row a map draws from the export is found among the source's own rows, which a plot draws.
+ * - autk-db refuses a feature whose geometry is null, which GeoJSON allows, so such a feature gets an empty one: a map
+ *   draws nothing for it, and a plot still counts it.
+ * - autk-db reads the layer's type off the first feature, so a first feature without a geometry trades places with the
+ *   first that has one. Each keeps its id, so the rows are still found by it.
  */
-function withFeatureIds(collection: FeatureCollection): FeatureCollection {
+function loadableCollection(collection: FeatureCollection): FeatureCollection {
     const features = collection.features ?? [];
-    if (features.every((feature) => feature?.id != null)) return collection;
     const ids = featureIds(features);
-    return {
-        ...collection,
-        features: features.map((feature, index) => (feature == null || feature.id != null ? feature : { ...feature, id: ids[index] })),
-    };
+    let changed = false;
+    const loadable = features.map((feature, index) => {
+        if (feature == null || (feature.id != null && feature.geometry != null)) return feature;
+        changed = true;
+        return { ...feature, id: ids[index], geometry: feature.geometry ?? NO_GEOMETRY };
+    });
+    const first = features.findIndex((feature) => feature?.geometry != null);
+    if (first > 0 && features[0] != null && features[0].geometry == null) {
+        [loadable[0], loadable[first]] = [loadable[first], loadable[0]];
+        changed = true;
+    }
+    return changed ? { ...collection, features: loadable } : collection;
 }
 
 /**
@@ -158,15 +173,17 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                         const response = await fetch(geojsonSpec.geojsonFileUrl);
                         geojsonData = await response.json() as FeatureCollection;
                     } else {
-                        // The loader tolerates null geometry and missing properties, which the inline type allows.
+                        // The inline type allows a feature whose geometry is null, which autk-db refuses: loadableCollection
+                        // gives such a feature an empty geometry before autk-db loads it.
                         geojsonData = geojsonSpec.geojsonObject as FeatureCollection | undefined;
                     }
 
                     if (cache && geojsonData) cache.set(tableKey(workspace, geojsonSpec.outputTableName), geojsonData);
 
-                    // Pass the fetched object directly so autk-db doesn't need to re-fetch, each feature with its id.
+                    // Pass the fetched object directly so autk-db doesn't need to re-fetch, as autk-db loads it (see
+                    // loadableCollection). The cache keeps the source's own rows, in their order, for its plots.
                     const loadSpec = (geojsonData
-                        ? (() => { const s = { ...geojsonSpec, geojsonObject: withFeatureIds(geojsonData) }; delete s.geojsonFileUrl; return s; })()
+                        ? (() => { const s = { ...geojsonSpec, geojsonObject: loadableCollection(geojsonData) }; delete s.geojsonFileUrl; return s; })()
                         : geojsonSpec) as LoadGeojsonParams;
 
                     // Degrees put every y within -90 to 90, so a y outside it shows a layer in another CRS. The
