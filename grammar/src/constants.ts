@@ -67,6 +67,12 @@ export type PlotEvent = 'click' | 'brush' | 'brushY' | 'brushX';
 /** How joined rows are combined per feature. */
 export type AggregateFunction = 'sum' | 'avg' | 'count' | 'min' | 'max' | 'weighted' | 'collect';
 
+/**
+ * How the rows near a heatmap cell are combined into its value: any aggregate function but `collect`, which lists the
+ * rows, while a cell holds one value.
+ */
+export type HeatmapAggregateFunction = Exclude<AggregateFunction, 'collect'>;
+
 /** How values are rescaled before coloring. */
 export enum NormalizationMode {
     MIN_MAX = 'minMax',

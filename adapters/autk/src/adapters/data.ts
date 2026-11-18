@@ -218,12 +218,15 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                     return db;
                 case 'heatmap': {
                     const hm = rest_spec as HeatmapSourceSpec;
+                    // The schema refuses collect in a heatmap, but a spec that was not checked against it reaches here.
+                    if (hm.groupBy?.some((group) => (group.aggregateFn as string | undefined) === 'collect'))
+                        throw new Error(`Heatmap "${hm.outputTableName}": aggregateFn "collect" lists the rows near a cell, and a cell holds one value; use sum, avg, count, min, max or weighted.`);
                     await db.buildHeatmap({
                         tableJoinName: hm.joinDataRef,
                         near: hm.near,
                         outputTableName: hm.outputTableName,
                         grid: hm.grid,
-                        ...(hm.groupBy && { groupBy: hm.groupBy as any }),
+                        ...(hm.groupBy && { groupBy: hm.groupBy }),
                     });
                     print(db, targets);
                     return db;

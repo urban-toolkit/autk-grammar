@@ -1159,6 +1159,19 @@ test('refuses a points layer in a render pass, and names the layer', async ({ pa
     })).rejects.toThrow('Render pass "seen": layer "spots" has the type "points", which a render pass cannot draw.');
 });
 
+test('refuses collect in a heatmap groupBy, naming the heatmap, and builds the heatmap with count', async ({ page }) => {
+    // collect lists the rows near a cell, and a cell holds one value. The schema refuses it, but a spec the schema never
+    // checked reaches the adapter, which passed it on to autk-db.
+    const heatmap = (aggregateFn: string) => ({
+        type: 'heatmap', outputTableName: 'heat', joinDataRef: 'spots', near: { distance: 500 }, grid: { rows: 2, columns: 2 },
+        groupBy: [{ column: 'id', aggregateFn }],
+    }) as unknown as DataSourceSpec;
+    await expect(runSpec(page, { data: [area, spots, heatmap('collect')] }))
+        .rejects.toThrow('Heatmap "heat": aggregateFn "collect" lists the rows near a cell, and a cell holds one value; use sum, avg, count, min, max or weighted.');
+    await runSpec(page, { data: [area, spots, heatmap('count')], map: { layerRefs: [{ dataRef: 'heat', getFnv: 'count.spots' }] } });
+    expect((await mapLayers(page)).map((layer) => [layer.id, layer.type])).toEqual([['heat', 'raster']]);
+});
+
 test('accepts useCentroid on a heatmap', async ({ page }) => {
     const [neighborhoods, noise, heatmap] = heatmapGeojson.data!;
     const withNear = (near: object): UrbanSpec => ({

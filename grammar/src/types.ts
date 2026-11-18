@@ -1,6 +1,6 @@
 import { DataAdapter, PlotAdapter, MapAdapter, ComputeAdapter } from "./adapters";
 import { BBox, GeoJsonProperties, Geometry } from 'geojson';
-import { DataSourceType, LayerType, ColorMapInterpolator, PlotEvent, PlotTransformPreset, AggregateFunction, NormalizationMode } from "./constants";
+import { DataSourceType, LayerType, ColorMapInterpolator, PlotEvent, PlotTransformPreset, AggregateFunction, HeatmapAggregateFunction, NormalizationMode } from "./constants";
 
 /**
  * Name of a workspace: an isolated set of tables with its own extent. The first source loaded into a workspace sets its
@@ -76,9 +76,11 @@ export interface HeatmapSourceSpec extends TableSourceBase {
          */
         useCentroid?: boolean;
     };
+    /** Aggregate the rows near each cell, one raster band per entry. */
     groupBy?: Array<{
         column: string;
-        aggregateFn?: AggregateFunction;
+        /** How the rows combine into the cell's value: any aggregate but `collect`, which lists rows, while a cell holds one value. */
+        aggregateFn?: HeatmapAggregateFunction;
     }>;
     /** Grid resolution. */
     grid: {
