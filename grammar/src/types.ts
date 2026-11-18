@@ -475,7 +475,8 @@ export type MapSpec = {
 export interface PlotBase {
     /**
      * Name of the plot, which a link in `links` uses as its `source`. Unique among the ids of the maps and plots.
-     * Without it a plot is known by its `dataRef`, so two plots of one table need ids to be told apart.
+     * Without it a plot is known by its `dataRef`, so two plots of one table need ids: a run refuses two plots known
+     * by one name.
      * @minLength 1
      */
     id?: string,

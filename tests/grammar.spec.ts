@@ -494,8 +494,8 @@ test('selects in a linked plot only what is picked on its own layer', async ({ p
 
 test('draws each plot in its own target when the plot targets are a list', async ({ page }) => {
     const plots: PlotSpec[] = [
-        { dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'] },
-        { dataRef: 'zones', mark: 'scatter', axis: ['v', 'id'] },
+        { id: 'first', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'] },
+        { id: 'second', dataRef: 'zones', mark: 'scatter', axis: ['v', 'id'] },
     ];
     const svgsIn = (id: string) => page.evaluate((target) => document.querySelectorAll(`#${target} svg`).length, id);
 
@@ -503,6 +503,26 @@ test('draws each plot in its own target when the plot targets are a list', async
     await runSpec(page, { data: [area, zones], plot: plots }, 'each');
     expect(await svgsIn('plot0')).toBe(1);
     expect(await svgsIn('plot1')).toBe(1);
+});
+
+test('refuses two plots known by one name: two of a table without ids, or an id that is the dataRef of another plot', async ({ page }) => {
+    // A plot without an id is known by its dataRef. The second such plot of a table replaced the first in the registry,
+    // so links, events and calls reached only the second.
+    const plot = { mark: 'scatter' as const, axis: ['id', 'v'] };
+    await expect(runSpec(page, { data: [area, zones], plot: [{ ...plot, dataRef: 'zones' }, { ...plot, dataRef: 'zones' }] }, 'each'))
+        .rejects.toThrow('Two plots of the table "zones" have no id; give each plot an id.');
+    await expect(runSpec(page, { data: [area, zones, blocks], plot: [{ ...plot, dataRef: 'zones' }, { ...plot, id: 'zones', dataRef: 'blocks' }] }, 'each'))
+        .rejects.toThrow('A plot\'s id "zones" is the dataRef of a plot without an id; give each plot an id.');
+    await expect(runSpec(page, { data: [area, zones, blocks], plot: [{ ...plot, id: 'blocks', dataRef: 'zones' }, { ...plot, dataRef: 'blocks' }] }, 'each'))
+        .rejects.toThrow('A plot\'s id "blocks" is the dataRef of a plot without an id; give each plot an id.');
+
+    // With an id each, both draw and both are known.
+    const { plotSvgs } = await runSpec(page, {
+        data: [area, zones],
+        plot: [{ ...plot, id: 'one', dataRef: 'zones' }, { ...plot, id: 'two', dataRef: 'zones' }],
+    }, 'each');
+    expect(plotSvgs).toBe(2);
+    expect(await page.evaluate(() => [...(window.grammar as any)._plotRegistry.keys()])).toEqual(['one', 'two']);
 });
 
 test('refuses two views with one id, and links that name nothing', async ({ page }) => {

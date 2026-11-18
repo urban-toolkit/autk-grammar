@@ -1,4 +1,4 @@
-import { DataAdapter, MapAdapter, PlotAdapter, ComputeAdapter, IEngine, UrbanSpec, createEngine } from "@urban-toolkit/the-urban-grammar";
+import { DataAdapter, MapAdapter, PlotAdapter, ComputeAdapter, IEngine, PlotSpec, UrbanSpec, createEngine } from "@urban-toolkit/the-urban-grammar";
 import { AutkDb, DEFAULT_WORKSPACE_COORDINATE_FORMAT } from "@urban-toolkit/autk-db";
 import { MapEvent } from "@urban-toolkit/autk-map";
 import type { AutkMap } from "@urban-toolkit/autk-map";
@@ -21,7 +21,11 @@ function asList<T>(value: T[] | T | undefined): T[] {
     return value === undefined ? [] : Array.isArray(value) ? value : [value];
 }
 
-/** An id names one view: no two maps or plots may share one, and an id is never empty. */
+/**
+ * An id names one view: no two maps or plots may share one, and an id is never empty. A plot without an id is known
+ * by its dataRef, so no two plots may be known by one name either: two plots of a table without ids, or a plot whose
+ * id is the dataRef of a plot without one.
+ */
 function checkViewIds(spec: UrbanSpec): void {
     const seen = new Set<string>();
     for (const view of [...asList(spec.map), ...asList(spec.plot)]) {
@@ -29,6 +33,16 @@ function checkViewIds(spec: UrbanSpec): void {
         if (view.id === '') throw new Error('A map or plot has an empty id.');
         if (seen.has(view.id)) throw new Error(`Two maps or plots have the id "${view.id}"; an id names one view.`);
         seen.add(view.id);
+    }
+    const plots = new Map<string, PlotSpec>();
+    for (const plot of asList(spec.plot)) {
+        const key = plotKey(plot);
+        const known = plots.get(key);
+        if (known)
+            throw new Error(known.id === undefined && plot.id === undefined
+                ? `Two plots of the table "${key}" have no id; give each plot an id.`
+                : `A plot's id "${key}" is the dataRef of a plot without an id; give each plot an id.`);
+        plots.set(key, plot);
     }
 }
 

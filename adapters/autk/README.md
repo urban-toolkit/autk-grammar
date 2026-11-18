@@ -218,7 +218,7 @@ map.updateRenderInfo(layerId, { opacity: 0.5 });
 
 ## Plots and links
 
-A plot's `id` names it: as the `source` of a link, as the `plotId` of its `plot:selection` events, and for `setPlotSelection` and `clearHighlightOnPlot`. Without an id, a plot is known by its `dataRef`, so two plots of one table need ids to be told apart.
+A plot's `id` names it: as the `source` of a link, as the `plotId` of its `plot:selection` events, and for `setPlotSelection` and `clearHighlightOnPlot`. Without an id, a plot is known by its `dataRef`, so a run refuses two plots known by one name: two plots of one table without ids, or a plot whose id is the `dataRef` of a plot without one. Give each plot an id.
 
 `links` connect a plot to a layer of a map. Picking on the layer selects the same features in the plot (a pick on another layer of the map does not), and a selection in the plot, by an event its `events` lists, highlights them on the layer. The link makes the layer pickable. A selection passes by the rows each view drew, not by positions: a plot draws its table's rows in the order its source gave them, while a layer draws the rows autk-db holds, which can come in another order, and leaves out the rows without a geometry. Each row is found in the other view by its feature id: a GeoJSON feature's `id`, else the one autk-db gives it, `autk-feature-<index>`.
 
