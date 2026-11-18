@@ -1,4 +1,7 @@
-import { EXAMPLES, type AdapterName, type Layout } from './examples';
+import type { LayoutSpec } from '@urban-toolkit/the-urban-grammar';
+import type { AutkGrammar } from '@urban-toolkit/autk-grammar';
+import type { DeckGlGrammar } from '@urban-toolkit/deckgl-grammar';
+import { EXAMPLES, type AdapterName, type ExampleModule, type Layout } from './examples';
 
 const exampleSelect = document.getElementById('example-select') as HTMLSelectElement;
 const adapterSelect = document.getElementById('adapter-select') as HTMLSelectElement;
@@ -71,6 +74,15 @@ function makeDraggable(panel: HTMLElement, handle: HTMLElement) {
 
 let floatingPlotPanel: HTMLElement | null = null;
 
+/**
+ * The grammar of the last run. An AutkGrammar is destroyed before the next run, so its maps release their GPU devices;
+ * a DeckGlGrammar has no destroy().
+ */
+let lastGrammar: AutkGrammar | DeckGlGrammar | null = null;
+
+/** What the last example's afterRun added to the page, such as a console panel, removed before the next run. */
+let afterRunElements: Element[] = [];
+
 function setStatus(msg: string, state: 'loading' | 'error' | 'done' | '') {
     statusBar.textContent = msg;
     statusBar.className = state;
@@ -113,10 +125,35 @@ function createMapEl(adapter: AdapterName, id: string): HTMLElement {
     return div;
 }
 
-function setupStage(layout: Layout, adapter: AdapterName): Record<string, string | string[]> {
+function createMapSlot(adapter: AdapterName, id: string): HTMLElement {
+    const slot = document.createElement('div');
+    slot.className = 'map-slot';
+    slot.appendChild(createMapEl(adapter, id));
+    return slot;
+}
+
+/**
+ * The container of a stage whose views follow the spec's `layout`: `vertical` stacks them, `horizontal` puts them side
+ * by side and `grid` fills `columns` columns (2 by default), with `gap` pixels between them.
+ */
+function createViews(arrangement: LayoutSpec): HTMLElement {
+    const views = document.createElement('div');
+    views.className = `views ${arrangement.type ?? 'vertical'}`;
+    if (arrangement.gap !== undefined) views.style.setProperty('--views-gap', `${arrangement.gap}px`);
+    if (arrangement.columns !== undefined) views.style.setProperty('--views-columns', String(arrangement.columns));
+    return views;
+}
+
+/**
+ * Builds the stage for an example and returns the grammar's targets. A two-view stage (two maps, or a map and a plot)
+ * follows the spec's `layout` when it has one; without it, two maps sit side by side and a plot floats over its map.
+ */
+function setupStage(layout: Layout, adapter: AdapterName, arrangement?: LayoutSpec): Record<string, string | string[]> {
     stage.innerHTML = '';
     floatingPlotPanel?.remove();
     floatingPlotPanel = null;
+    for (const element of afterRunElements) element.remove();
+    afterRunElements = [];
 
     if (layout === 'data-only') {
         const out = document.createElement('div');
@@ -127,24 +164,35 @@ function setupStage(layout: Layout, adapter: AdapterName): Record<string, string
     }
 
     if (layout === 'multi-map') {
-        const wrap = document.createElement('div');
-        wrap.className = 'maps-wrap multi';
+        let wrap: HTMLElement;
+        if (arrangement) {
+            wrap = createViews(arrangement);
+        } else {
+            wrap = document.createElement('div');
+            wrap.className = 'maps-wrap multi';
+        }
 
         const id0 = adapter === 'autk' ? 'map-canvas-0' : 'map-container-0';
         const id1 = adapter === 'autk' ? 'map-canvas-1' : 'map-container-1';
-
-        const slot0 = document.createElement('div');
-        slot0.className = 'map-slot';
-        slot0.appendChild(createMapEl(adapter, id0));
-        wrap.appendChild(slot0);
-
-        const slot1 = document.createElement('div');
-        slot1.className = 'map-slot';
-        slot1.appendChild(createMapEl(adapter, id1));
-        wrap.appendChild(slot1);
+        wrap.appendChild(createMapSlot(adapter, id0));
+        wrap.appendChild(createMapSlot(adapter, id1));
 
         stage.appendChild(wrap);
         return { map: [id0, id1] };
+    }
+
+    if (layout === 'map+plot' && arrangement) {
+        const views = createViews(arrangement);
+        const mapId = adapter === 'autk' ? 'map-canvas' : 'map-container';
+        views.appendChild(createMapSlot(adapter, mapId));
+
+        const plotBody = document.createElement('div');
+        plotBody.id = 'plot-body';
+        plotBody.className = 'plot-body plot-slot';
+        views.appendChild(plotBody);
+
+        stage.appendChild(views);
+        return { map: mapId, plot: 'plot-body' };
     }
 
     if (layout === 'map+plot') {
@@ -194,6 +242,16 @@ function setupStage(layout: Layout, adapter: AdapterName): Record<string, string
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 
+/** Runs an example's afterRun, and keeps what it adds to the page so that the next run removes it. */
+async function runAfterRun(afterRun: NonNullable<ExampleModule['afterRun']>, grammar: unknown) {
+    const before = new Set(Array.from(document.body.children));
+    try {
+        await afterRun(grammar);
+    } finally {
+        afterRunElements = Array.from(document.body.children).filter((element) => !before.has(element));
+    }
+}
+
 async function runExample(exampleId: string, adapter: AdapterName) {
     const meta = EXAMPLES[exampleId];
     if (!meta) return;
@@ -204,18 +262,22 @@ async function runExample(exampleId: string, adapter: AdapterName) {
     try {
         const module = await meta.load();
         const { spec, afterRun } = module;
-        const targets = setupStage(meta.layout, adapter);
+        if (lastGrammar && 'destroy' in lastGrammar) lastGrammar.destroy();
+        lastGrammar = null;
+        const targets = setupStage(meta.layout, adapter, spec.layout);
 
         if (adapter === 'autk') {
             const { AutkGrammar } = await import('@urban-toolkit/autk-grammar');
             const grammar = new AutkGrammar(targets);
+            lastGrammar = grammar;
             await grammar.run(spec);
-            if (afterRun) await afterRun(grammar);
+            if (afterRun) await runAfterRun(afterRun, grammar);
         } else {
             const { DeckGlGrammar } = await import('@urban-toolkit/deckgl-grammar');
             const grammar = new DeckGlGrammar(targets);
+            lastGrammar = grammar;
             await grammar.run(spec);
-            if (afterRun) await afterRun(grammar);
+            if (afterRun) await runAfterRun(afterRun, grammar);
         }
 
         setStatus('Done', 'done');
