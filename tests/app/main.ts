@@ -42,6 +42,7 @@ declare global {
         grammar: AutkGrammar;
         runSpec: (spec: UrbanSpec, plotTargets?: 'one' | 'each') => Promise<RunSummary>;
         runExample: (name: string) => Promise<RunSummary>;
+        exampleSpec: (name: string) => Promise<UrbanSpec>;
         valueAt: (table: string, index: number, path: string) => Promise<unknown>;
         featureExtents: (table: string) => Promise<number[][]>;
         readMap: (canvasId: string) => Promise<string>;
@@ -60,19 +61,26 @@ function mapOn(canvasId: string): AutkMap {
     return map;
 }
 
-/** Runs a gallery example spec. */
-window.runExample = async (name: string) => {
+/**
+ * The spec of a gallery example, loaded in the page, so a test can run it changed. The examples that name an enum
+ * import the grammar at run time, which the test process cannot do: it never builds the grammar.
+ */
+window.exampleSpec = async (name: string) => {
     const load = examples[`../../gallery/src/examples/${name}.ts`];
     if (!load) throw new Error(`No gallery example named ${name}`);
-    const { spec } = await load();
-    return window.runSpec(spec);
+    return (await load()).spec;
 };
+
+/** Runs a gallery example spec. */
+window.runExample = async (name: string) => window.runSpec(await window.exampleSpec(name));
 
 /**
  * Runs a spec, creating a canvas per map and a div for the plots: one div, `#plot`, that holds them all, or with
- * `plotTargets: 'each'` one div per plot, `#plot0`, `#plot1`, and so on.
+ * `plotTargets: 'each'` one div per plot, `#plot0`, `#plot1`, and so on. The grammar of the previous run is
+ * destroyed first, so its maps release their GPU devices.
  */
 window.runSpec = async (spec: UrbanSpec, plotTargets: 'one' | 'each' = 'one') => {
+    window.grammar?.destroy();
     document.getElementById('stage')!.innerHTML = '';
     const maps = Array.isArray(spec.map) ? spec.map.map((_, i) => `map${i}`) : spec.map ? ['map0'] : [];
     maps.forEach((id) => element('canvas', id));
