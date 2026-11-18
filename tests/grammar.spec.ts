@@ -1196,3 +1196,29 @@ test('keeps the two areas of workspaces apart, each map drawing its whole area',
     // `data` lists the default workspace's tables, which are none here.
     expect(await page.evaluate(() => Object.keys(window.grammar.data))).toEqual([]);
 });
+
+/** The latitude, in degrees, of a World Mercator (EPSG:3395) planar y: the inverse of worldMercator, by bisection. */
+function worldMercatorLatitude(y: number): number {
+    let [south, north] = [-85, 85];
+    for (let i = 0; i < 60; i++) {
+        const middle = (south + north) / 2;
+        if (worldMercator(0, middle)[1] < y) south = middle;
+        else north = middle;
+    }
+    return (south + north) / 2;
+}
+
+test('draws the points of points-true-size with a radius of pointSize meters on the ground', async ({ page }) => {
+    const layerRef = ((await exampleSpec(page, 'points-true-size')).map as MapSpec).layerRefs.find((layer) => layer.dataRef === 'noise')!;
+    const { tables } = await run(page, 'points-true-size');
+    expect(tables.noise.features).toBeGreaterThan(0);
+    // autk-map's radius is in planar units: the meters times World Mercator's scale at the middle of the points' extent,
+    // about 1.32 here.
+    const ys = (await page.evaluate(() => window.featureExtents('noise'))).flatMap(([, south, , north]) => [south, north]);
+    const latitude = worldMercatorLatitude((Math.min(...ys) + Math.max(...ys)) / 2);
+    const layer = (await layerById(page))[layerRef.title!];
+    expect(layer.type).toBe('points');
+    expect(layer.pointSize).toBeCloseTo(layerRef.pointSize! * worldMercatorScale(latitude), 3);
+    expect(layer.pointSize, "a radius well below autk-map's default of 64 planar units").toBeLessThan(64);
+    expect(await pixelsIn(page, layerRef.color!, 'noise discs')).toBeGreaterThan(0);
+});

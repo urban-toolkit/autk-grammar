@@ -346,4 +346,10 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         supportedAdapters: ['autk'],
         load: () => import('./examples/workspaces'),
     },
+    'points-true-size': {
+        title: 'Points at True Size: Noise Complaints, 10 m',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/points-true-size'),
+    },
 };
