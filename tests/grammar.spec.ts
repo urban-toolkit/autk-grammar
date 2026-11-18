@@ -1251,7 +1251,7 @@ test('destroys a map whose layers fail to load, so none of its controls stay on 
 });
 
 test('keeps two areas in two workspaces, each with its own extent and its own map', async ({ page }) => {
-    // The same table name in each workspace. Without workspaces the second area would be cut to the first one's extent.
+    // The same table name in each workspace: without workspaces the second area's tables would replace the first one's.
     const area = (workspace: string, bbox: number[]) => ({
         type: 'osm', outputTableName: 'osm', workspace, pbfFileUrl: '/data/lower_mnt.osm.pbf',
         queryArea: { bbox }, autoLoadLayers: { layers: ['roads'] },
