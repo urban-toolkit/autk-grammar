@@ -62,14 +62,15 @@ export class AutkGrammar {
     private _plotLinks: PlotLinks = new Map();
     private _plotRows: PlotRows = new Map();
     private _exports: LayerExports = new Map();
+    /** Each GeoJSON table a run loaded and each table a join wrote, which its plots read before the database. */
+    private _geojsonCache: GeoJsonCache = new Map();
 
     readonly interactions = new GrammarEventEmitter();
 
     constructor(targets?: Targets) {
-        const cache: GeoJsonCache = new Map();
-        this.dataAdapter = createDataAdapter(targets, cache);
+        this.dataAdapter = createDataAdapter(targets, this._geojsonCache);
         this.mapAdapter = createMapAdapter(targets, this._layers, this._computeCache, this._maps, this._computeTypes, this._exports);
-        this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, cache, this._computeCache, this._plotRows, this._exports);
+        this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, this._geojsonCache, this._computeCache, this._plotRows, this._exports);
         this.computeAdapter = createComputeAdapter(this._computeCache, this._computeTypes);
     }
 
@@ -154,6 +155,7 @@ export class AutkGrammar {
         this._plotLinks.clear();
         this._plotRows.clear();
         this._exports.clear();
+        this._geojsonCache.clear();
         this._computeCache.clear();
         this._computeTypes.clear();
         this.grammarEngine = undefined;

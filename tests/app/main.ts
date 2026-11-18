@@ -46,6 +46,7 @@ declare global {
         grammar: AutkGrammar;
         runSpec: (spec: UrbanSpec, plotTargets?: 'one' | 'each') => Promise<RunSummary>;
         runInPanes: (spec: UrbanSpec, width: number, height: number) => Promise<{ targets: Record<string, unknown>; panes: PaneBox[] }>;
+        runAgain: (spec: UrbanSpec) => Promise<void>;
         runExample: (name: string) => Promise<RunSummary>;
         exampleSpec: (name: string) => Promise<UrbanSpec>;
         valueAt: (table: string, index: number, path: string) => Promise<unknown>;
@@ -155,6 +156,15 @@ window.runInPanes = async (spec: UrbanSpec, width: number, height: number) => {
         };
     });
     return { targets, panes };
+};
+
+/**
+ * Runs a spec on the grammar of the last run, in the elements that run made, as a host that keeps one `AutkGrammar`
+ * does: the grammar destroys the last run's maps itself, and the plot elements are emptied first.
+ */
+window.runAgain = async (spec: UrbanSpec) => {
+    document.querySelectorAll('#stage [id^="plot"]').forEach((element) => { element.innerHTML = ''; });
+    await window.grammar.run(spec);
 };
 
 /** Reads a (dot path) property of one feature, e.g. valueAt('neighborhoods', 0, 'sjoin.count.noise'). */

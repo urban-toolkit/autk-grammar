@@ -1219,6 +1219,29 @@ test('turns the camera around the point it looks at', async ({ page }) => {
     expect(after.eye[1]).toBeCloseTo(after.lookAt[1], 3);
 });
 
+test('draws the second run of a reused grammar from its own table, though the first run loaded a GeoJSON table of that name', async ({ page }) => {
+    // The grammar kept each GeoJSON table it loaded, which its plots read before the database, until the instance went
+    // away: run again with a table of the same name from a CSV, a plot drew the first run's GeoJSON rows.
+    const plot: PlotSpec = { id: 'tp', dataRef: 't', mark: 'scatter', axis: ['id', 'v'] };
+    const values = () => page.evaluate(() => [...document.querySelectorAll('#plot .autkMark')]
+        .map((mark) => Number((mark as Element & { __data__?: { v?: number } }).__data__?.v))
+        .sort((a, b) => a - b));
+    await runSpec(page, { data: [area, squares('t', 40.75)], plot });
+    expect(await values()).toEqual([0, 10, 20, 30]);
+
+    // The same AutkGrammar, now with t from a CSV of three points.
+    await page.evaluate((spec) => window.runAgain(spec), {
+        data: [{
+            type: 'csv',
+            outputTableName: 't',
+            csvObject: [['id', 'v', 'Latitude', 'Longitude'], [7, 70, 40.751, -73.985], [8, 80, 40.752, -73.984], [9, 90, 40.753, -73.983]],
+            geometryColumns: true,
+        }],
+        plot,
+    } as UrbanSpec);
+    expect(await values()).toEqual([70, 80, 90]);
+});
+
 test('destroy releases the maps and the registries of a run', async ({ page }) => {
     await runSpec(page, {
         data: [{ type: 'geojson', geojsonFileUrl: '/data/mnt_neighs.geojson', outputTableName: 'n' }],
