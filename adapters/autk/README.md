@@ -42,6 +42,7 @@ Each entry of `data` loads or builds one table, in order. Its `type` selects its
 | `geotiff` | `geotiffFileUrl`, `coordinateFormat`, `maxRasterCells`, `resampleMethod` | A raster read from a GeoTIFF file. |
 | `heatmap` | `joinDataRef`, `near`, `grid`, `groupBy` | A raster grid over the workspace's extent, whose cells aggregate the rows of another table. |
 | `join` | `dataRef`, `joinDataRef`, `near`, `groupBy` | No new table: it joins the rows of `joinDataRef` onto the features of `dataRef`, in place. |
+| `sql` | `query`, `layerType` | The rows of a SQL query over the workspace's tables (see [`sql` sources](#sql-sources)). |
 
 Every source but `join` names its table with `outputTableName`, and every source takes a `workspace` (see [Workspaces](#workspaces)).
 
@@ -75,6 +76,34 @@ await grammar.run({
     { type: 'heatmap', outputTableName: 'heat', joinDataRef: 'noise', near: { distance: 1000 }, grid: { rows: 20, columns: 20 } },
   ],
   map: { layerRefs: [{ dataRef: 'neighborhoods', getFnv: 'sjoin.count.noise' }, { dataRef: 'heat', opacity: 0.5 }] },
+});
+```
+
+### `sql` sources
+
+A `sql` source saves the rows of a query over the tables of its workspace as a new table, `outputTableName`:
+
+| Field | Effect |
+|---|---|
+| `query` | A `SELECT`, or a `WITH` query that ends in one, in DuckDB's SQL, naming the workspace's tables by their names. autk-db refuses any other statement, and any query in which `insert`, `update`, `delete`, `create`, `alter`, `drop`, `truncate` or `replace` appears as a word, even inside a string; the run's message names the source. |
+| `layerType` | How a map draws the new table. The query then returns its geometry in a column named `geometry`, as the workspace's tables hold it, in the workspace's CRS. Without it, the table has no layer type: a plot draws its rows, but a map does not draw it and `grammar.data` does not list it. |
+
+A GeoJSON table keeps each feature's properties in a JSON column, `properties`, which `properties->>'name'` reads as text; a CSV or JSON table keeps a column per field. A query that returns `properties` gives each feature those properties; otherwise each column but `geometry` becomes a property. Saving under a table's own name replaces it.
+
+```ts
+await grammar.run({
+  data: [
+    { type: 'geojson', outputTableName: 'neighborhoods', geojsonFileUrl: 'neighborhoods.geojson' },
+    { type: 'csv', outputTableName: 'noise', csvFileUrl: 'noise.csv', geometryColumns: { latColumnName: 'Latitude', longColumnName: 'Longitude' } },
+    { type: 'join', dataRef: 'neighborhoods', joinDataRef: 'noise', groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }] },
+    {
+      type: 'sql',
+      outputTableName: 'noisiest',
+      query: "SELECT properties->>'ntaname' AS name, CAST(properties->'sjoin'->'count'->>'noise' AS INTEGER) AS complaints, geometry FROM neighborhoods ORDER BY complaints DESC NULLS LAST LIMIT 10",
+      layerType: 'polygons',
+    },
+  ],
+  map: { layerRefs: [{ dataRef: 'neighborhoods', color: '#d9d9d9' }, { dataRef: 'noisiest', getFnv: 'complaints' }] },
 });
 ```
 

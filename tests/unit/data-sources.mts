@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { DEFAULT_WORKSPACE_NAME } from '@urban-toolkit/autk-db';
 import type { AutkDb } from '@urban-toolkit/autk-db';
+import type { FeatureCollection } from 'geojson';
 import { createDataAdapter } from '@urban-toolkit/autk-grammar/data';
 import type { DataSourceSpec } from '@urban-toolkit/autk-grammar/data';
 
@@ -132,6 +133,34 @@ test("names the workspace whose configuration autk-db refuses", async () => {
         createDataAdapter().resolveWorkspaces(db, [{ name: 'west', coordinateFormat: 'EPSG:3857', precisionGrid: 0 }]),
         { message: 'workspaces, the workspace "west": precisionGrid must be a finite number greater than zero.' },
     );
+});
+
+// sql sources: a SELECT saved as a new table.
+const emptyCollection = (): FeatureCollection => ({ type: 'FeatureCollection', features: [] });
+
+test('a sql source saves its query as a new table, of the layer type it gives', async () => {
+    const query = "SELECT * FROM zones WHERE CAST(properties->>'v' AS INTEGER) >= 20";
+    assert.deepEqual(await callsFor({ type: 'sql', outputTableName: 'high', query, layerType: 'polygons' }), [
+        ['rawQuery', { query, output: { type: 'CREATE_TABLE', tableName: 'high', source: 'user', tableType: 'polygons' } }],
+    ]);
+    assert.deepEqual(await callsFor({ type: 'sql', outputTableName: 'counts', query: 'SELECT 1 AS one' }), [
+        ['rawQuery', { query: 'SELECT 1 AS one', output: { type: 'CREATE_TABLE', tableName: 'counts', source: 'user' } }],
+    ]);
+});
+
+test('names the sql source whose query autk-db refuses', async () => {
+    const { db } = fakeDb();
+    Object.assign(db, { rawQuery: async () => { throw new Error('Only SELECT queries are allowed for raw queries.'); } });
+    await assert.rejects(
+        createDataAdapter().resolveSource(db, { type: 'sql', outputTableName: 'gone', query: 'DROP TABLE zones' } as DataSourceSpec),
+        { message: 'SQL source "gone": Only SELECT queries are allowed for raw queries.' },
+    );
+});
+
+test("a sql source saved under a GeoJSON table's name takes its rows out of the cache the plots read first", async () => {
+    const cache = new Map([['zones', emptyCollection()], ['west/zones', emptyCollection()]]);
+    await createDataAdapter(undefined, cache).resolveSource(fakeDb().db, { type: 'sql', outputTableName: 'zones', query: 'SELECT * FROM zones' } as DataSourceSpec);
+    assert.deepEqual([...cache.keys()], ['west/zones']);
 });
 
 let failed = 0;

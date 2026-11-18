@@ -1,4 +1,4 @@
-import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec, WorkspaceSpec } from '@urban-toolkit/the-urban-grammar';
+import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec, SqlSourceSpec, WorkspaceSpec } from '@urban-toolkit/the-urban-grammar';
 import { AutkDb, DEFAULT_WORKSPACE_NAME } from '@urban-toolkit/autk-db';
 import type { LoadGeojsonParams } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Geometry } from 'geojson';
@@ -293,6 +293,26 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Requ
                         const updated = await db.getLayer(jn.dataRef);
                         cache.set(tableKey(workspace, jn.dataRef), updated);
                     }
+                    print(db, targets);
+                    return db;
+                }
+                case 'sql': {
+                    const sql = rest_spec as SqlSourceSpec;
+                    try {
+                        await db.rawQuery({
+                            query: sql.query,
+                            output: {
+                                type: 'CREATE_TABLE',
+                                tableName: sql.outputTableName,
+                                source: 'user',
+                                ...(sql.layerType !== undefined && { tableType: sql.layerType }),
+                            },
+                        });
+                    } catch (err) {
+                        throw new Error(`SQL source "${sql.outputTableName}": ${err instanceof Error ? err.message : String(err)}`);
+                    }
+                    // A query saved under the name of a GeoJSON table replaces it, so the plots no longer read its rows.
+                    cache?.delete(tableKey(workspace, sql.outputTableName));
                     print(db, targets);
                     return db;
                 }

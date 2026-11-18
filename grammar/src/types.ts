@@ -360,10 +360,30 @@ export interface GeoTiffDataSourceSpec extends TableSourceBase {
 }
 
 /**
+ * Saves the rows of a SQL query over the workspace's tables as a new table. Read by the Autark adapter only.
+ */
+export interface SqlSourceSpec extends TableSourceBase {
+    type: 'sql';
+    /**
+     * A `SELECT`, or a `WITH` query that ends in one, in DuckDB's SQL, over the tables of the source's workspace by their
+     * names. autk-db refuses any other statement, and any query in which `insert`, `update`, `delete`, `create`,
+     * `alter`, `drop`, `truncate` or `replace` appears as a word, even inside a string.
+     * @minLength 1
+     */
+    query: string;
+    /**
+     * How a map draws the new table, whose geometry must then be in a column named `geometry`, in the workspace's CRS,
+     * as the workspace's tables hold it. Without it, the table has no layer type: a plot draws its rows, while a map
+     * does not draw it and `AutkGrammar.data` does not list it.
+     */
+    layerType?: LayerType;
+}
+
+/**
  * One entry of `data`. The `type` field selects which fields apply.
  * @discriminator type
  */
-export type DataSourceSpec = OsmDataSourceSpec | CsvDataSourceSpec | JsonDataSourceSpec | CustomDataSourceSpec | GeoTiffDataSourceSpec | HeatmapSourceSpec | JoinSourceSpec;
+export type DataSourceSpec = OsmDataSourceSpec | CsvDataSourceSpec | JsonDataSourceSpec | CustomDataSourceSpec | GeoTiffDataSourceSpec | HeatmapSourceSpec | JoinSourceSpec | SqlSourceSpec;
 
 /**
  * A color as `#rrggbb`.

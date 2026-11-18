@@ -18,6 +18,7 @@ export type {
     GeoTiffDataSourceSpec,
     HeatmapSourceSpec,
     JoinSourceSpec,
+    SqlSourceSpec,
     WorkspaceName,
     WorkspaceSpec,
 } from '@urban-toolkit/the-urban-grammar';

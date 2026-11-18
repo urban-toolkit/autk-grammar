@@ -165,6 +165,14 @@ expect('a workspace with a negative precision grid', { workspaces: [{ ...crs, pr
 expect('a workspace with a precision grid as a string', { workspaces: [{ ...crs, precisionGrid: '1' }] }, false);
 expect('a workspaces entry with an empty name', { workspaces: [{ ...crs, name: '' }] }, false);
 expect('workspaces as an object', { workspaces: crs }, false);
+const sql = { type: 'sql', outputTableName: 's', query: "SELECT * FROM t WHERE properties->>'kind' = 'park'" };
+expect('sql source', { data: [osm, sql] }, true);
+expect('sql source drawn as polygons, in a workspace', { data: [osm, { ...sql, layerType: 'polygons', workspace: 'west' }] }, true);
+expect('sql source without a query', { data: [{ type: 'sql', outputTableName: 's' }] }, false);
+expect('sql source with an empty query', { data: [{ ...sql, query: '' }] }, false);
+expect('sql source with a query as lines', { data: [{ ...sql, query: ['SELECT *', 'FROM t'] }] }, false);
+expect('sql source without outputTableName', { data: [{ type: 'sql', query: sql.query }] }, false);
+expect('sql source with an unknown layer type', { data: [{ ...sql, layerType: 'rivers' }] }, false);
 expect('geojson without a source', { data: [{ type: 'geojson', outputTableName: 'g' }] }, false);
 expect('geojson with no features', { data: [{ type: 'geojson', outputTableName: 'g', geojsonObject: { type: 'FeatureCollection', features: [] } }] }, false);
 expect('linechart without transform', { plot: { ...plot, mark: 'linechart' } }, false);
@@ -324,6 +332,7 @@ const newKeys: Array<[string, string[]]> = [
     ['OsmTagFilter', ['']],
     ['UrbanSpec', ['workspaces', 'workspaces.name', 'workspaces.coordinateFormat', 'workspaces.precisionGrid']],
     ['WorkspaceSpec', ['']],
+    ['SqlSourceSpec', ['', 'query', 'layerType']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

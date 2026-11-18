@@ -1314,6 +1314,33 @@ test('accepts useCentroid on a heatmap', async ({ page }) => {
     expect((await heatmapLayer(page)).finite).toEqual(byDefault.finite);
 });
 
+test('saves the rows of a sql source as a table, drawn as its layerType says, or plotted without one', async ({ page }) => {
+    const { tables } = await runSpec(page, {
+        data: [
+            area,
+            zones,
+            { type: 'sql', outputTableName: 'high', query: "SELECT * FROM zones WHERE CAST(properties->>'v' AS INTEGER) >= 20", layerType: 'polygons' },
+            { type: 'sql', outputTableName: 'zone_values', query: "SELECT CAST(properties->>'id' AS INTEGER) AS id, CAST(properties->>'v' AS INTEGER) AS v FROM zones" },
+        ],
+        map: { layerRefs: [{ dataRef: 'zones' }, { dataRef: 'high', title: 'High', color: '#d62728' }] },
+        plot: { dataRef: 'zone_values', mark: 'bar', axis: ['id', 'v'] },
+    });
+    // The two zones the query keeps, drawn as polygons on the map.
+    expect(tables.high.features).toBe(2);
+    expect((await page.evaluate(() => window.drawnRows('map0', 'High'))).map((row) => Number(row?.v)).sort((a, b) => a - b)).toEqual([20, 30]);
+    expect((await layerById(page)).High.type).toBe('polygons');
+    // A table without a layer type is not listed in data, and a plot draws its rows.
+    expect(tables.zone_values).toBeUndefined();
+    const bars = await page.evaluate(() => [...document.querySelectorAll('#plot rect.autkMark')]
+        .map((bar) => (bar as Element & { __data__?: { id?: number; v?: number } }).__data__)
+        .map((datum) => `${datum?.id} ${datum?.v}`));
+    expect(bars.sort()).toEqual(['0 0', '1 10', '2 20', '3 30']);
+
+    // autk-db runs a SELECT only, and the run names the source it refused.
+    await expect(runSpec(page, { data: [area, zones, { type: 'sql', outputTableName: 'gone', query: 'DROP TABLE zones' }] }))
+        .rejects.toThrow('SQL source "gone": Only SELECT queries are allowed for raw queries.');
+});
+
 test('sets the radius of a points layer with pointSize', async ({ page }) => {
     const points = { type: 'MultiPoint' as const, coordinates: [[-74.0, 40.7], [-73.99, 40.71]] };
     await runSpec(page, {
