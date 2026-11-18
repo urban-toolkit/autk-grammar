@@ -340,4 +340,10 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         supportedAdapters: ['autk'],
         load: () => import('./examples/compute-render'),
     },
+    'workspaces': {
+        title: 'Workspaces: Manhattan and the Whole City',
+        layout: 'multi-map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/workspaces'),
+    },
 };

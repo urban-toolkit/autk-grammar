@@ -1168,3 +1168,31 @@ test('renders the sky each street of compute-render sees into a new table, every
     expect((await layerById(page))['Share of sky seen from the street']).toMatchObject({ type: 'roads', isColorMap: true, interpolator: 'interpolateBlues' });
     await expectDrawn(page, 'map0');
 });
+
+test('keeps the two areas of workspaces apart, each map drawing its whole area', async ({ page }) => {
+    await run(page, 'workspaces');
+    expect((await mapLayers(page, 'map0')).map((layer) => layer.id)).toEqual(['Manhattan']);
+    expect((await mapLayers(page, 'map1')).map((layer) => layer.id)).toEqual(['New York City by borough']);
+    // A map's origin is the middle of its first layer's extent, in World Mercator meters. In one workspace, the city's
+    // neighborhoods would be cut to Manhattan, the area loaded first, and both origins would lie in Manhattan.
+    const middle = ([west, south, east, north]: number[]) => {
+        const [x0, y0] = worldMercator(west, south);
+        const [x1, y1] = worldMercator(east, north);
+        return [(x0 + x1) / 2, (y0 + y1) / 2];
+    };
+    // The extents of mnt_neighs.geojson and nyc_neigs.csv, [west, south, east, north] in degrees.
+    const expected = [
+        middle([-74.04773, 40.682917, -73.910426, 40.878964]),
+        middle([-74.255591, 40.496134, -73.700009, 40.915533]),
+    ];
+    const origins = await page.evaluate(() => window.grammar.maps.map((map) => [...map.layerManager.origin]));
+    expect(origins).toHaveLength(2);
+    origins.forEach((origin, i) => {
+        expect(Math.abs(origin[0] - expected[i][0]), `map${i} origin x`).toBeLessThan(2);
+        expect(Math.abs(origin[1] - expected[i][1]), `map${i} origin y`).toBeLessThan(2);
+    });
+    await expectDrawn(page, 'map0');
+    await expectDrawn(page, 'map1');
+    // `data` lists the default workspace's tables, which are none here.
+    expect(await page.evaluate(() => Object.keys(window.grammar.data))).toEqual([]);
+});
