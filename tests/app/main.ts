@@ -4,9 +4,13 @@ import { ColorMap } from '@urban-toolkit/autk-core';
 import type { ColorMapInterpolator, ColorRGB } from '@urban-toolkit/autk-core';
 import { AutkMap } from '@urban-toolkit/autk-map';
 import type { FeatureCollection, Geometry } from 'geojson';
+import { createPanes } from '../../gallery/src/views';
 
 export type TableSummary = { features: number; properties: string[] };
 export type RunSummary = { tables: Record<string, TableSummary>; plotSvgs: number };
+
+/** A pane the gallery hub's code made: the id of the element its view draws in, its view's `id`, and its box on the page. */
+export type PaneBox = { target: string; viewId: string | null; left: number; top: number; width: number; height: number };
 
 /** What autk-map holds for one layer of a map. */
 export type LayerState = {
@@ -41,6 +45,7 @@ declare global {
     interface Window {
         grammar: AutkGrammar;
         runSpec: (spec: UrbanSpec, plotTargets?: 'one' | 'each') => Promise<RunSummary>;
+        runInPanes: (spec: UrbanSpec, width: number, height: number) => Promise<{ targets: Record<string, unknown>; panes: PaneBox[] }>;
         runExample: (name: string) => Promise<RunSummary>;
         exampleSpec: (name: string) => Promise<UrbanSpec>;
         valueAt: (table: string, index: number, path: string) => Promise<unknown>;
@@ -119,6 +124,37 @@ window.runSpec = async (spec: UrbanSpec, plotTargets: 'one' | 'each' = 'one') =>
         };
     }
     return { tables, plotSvgs: document.querySelectorAll(plotTargets === 'each' ? '[id^="plot"] svg' : '#plot svg').length };
+};
+
+/**
+ * Runs a spec in the panes the gallery hub builds for a spec with a layout (gallery/src/views.ts, which places each
+ * view as `arrangeViews` says), in a stage of `width` by `height` pixels. Returns the grammar's targets and each pane's
+ * box, once the views are drawn.
+ */
+window.runInPanes = async (spec: UrbanSpec, width: number, height: number) => {
+    window.grammar?.destroy();
+    const stage = document.getElementById('stage')!;
+    stage.innerHTML = '';
+    const { element, targets } = createPanes(spec, 'canvas');
+    Object.assign(element.style, { width: `${width}px`, height: `${height}px` });
+    stage.appendChild(element);
+
+    const grammar = new AutkGrammar(targets);
+    window.grammar = grammar;
+    await grammar.run(spec);
+
+    const panes = [...element.querySelectorAll<HTMLElement>('.view-pane')].map((pane) => {
+        const box = pane.getBoundingClientRect();
+        return {
+            target: pane.firstElementChild?.id ?? '',
+            viewId: pane.dataset.viewId ?? null,
+            left: box.left,
+            top: box.top,
+            width: box.width,
+            height: box.height,
+        };
+    });
+    return { targets, panes };
 };
 
 /** Reads a (dot path) property of one feature, e.g. valueAt('neighborhoods', 0, 'sjoin.count.noise'). */

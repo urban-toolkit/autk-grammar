@@ -279,13 +279,15 @@ grammar.clearHighlightOnMap('buildings', 0);           // the first map
 
 ## Page layout
 
-A spec's `layout` says how its maps and plots are arranged on the page. The grammar never reads it: the page that hosts the views does, when it makes their canvases and elements.
+A spec's `layout` says how its maps and plots are arranged on the page. The grammar's run never reads it: the page that hosts the views does, when it makes their canvases and elements, with `arrangeViews(spec)` (see [For hosts](#for-hosts)), so every host arranges a spec's views alike.
 
 | Field | Effect |
 |---|---|
-| `type` | `vertical`, the default, stacks the views; `horizontal` puts them side by side; `grid` fills `columns` columns. |
-| `columns` | The number of columns of a `grid`. Defaults to 2. |
-| `gap` | The space between views, in pixels. |
+| `type` | `vertical`, the default, stacks the views; `horizontal` puts them side by side; `grid` fills `columns` columns, row by row. |
+| `columns` | The number of columns of a `grid`, a whole number. Defaults to 2. |
+| `gap` | The space between views, in pixels. Defaults to 0. |
+
+Each view has its own pane: the maps first, in the order of `map`, then the plots, in the order of `plot`, as the grammar draws them.
 
 The constructor names the elements the views draw in, by id:
 
@@ -321,7 +323,7 @@ if (!validate(spec)) console.error(validate.errors);
 
 ## For hosts
 
-A host that runs part of a spec itself, a server that loads its tables for example, calls the functions the grammar runs, so it does exactly what `AutkGrammar` does:
+A host that runs part of a spec itself, a server that loads its tables for example, calls the functions the grammar runs, so it does exactly what `AutkGrammar` does, and a page arranges a spec's views with `arrangeViews`, as every host does:
 
 | Export | Effect |
 |---|---|
@@ -330,6 +332,7 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 | `enterWorkspace(db, workspace?)` | Makes an entry's workspace (the default one without a name) the one autk-db works in, and switches only when another is current. Every adapter calls it before it reads or writes an entry's tables. |
 | `tableKey(workspace, name)` | The key of a table in those caches: its name in the default workspace, `<workspace>/<name>` in another. |
 | `applyCamera(map, camera)` | Moves an `AutkMap`'s camera as a map's `camera` says, from the view that fits its layers. The map adapter calls it once the layers are loaded, before the map's first `draw()`. |
+| `arrangeViews(spec)` | Where each view of a spec goes on the page, as its `layout` says: a grid of panes, one per view (see [Arranging the views](#arranging-the-views)). It refuses a `layout` it cannot arrange, with a sentence that names the value. |
 
 `@urban-toolkit/autk-grammar/data` exports `createDataAdapter`, `enterWorkspace` and `tableKey` with their types, as an ES module and a CommonJS one. Its code imports `@urban-toolkit/autk-db` alone, never autk-map, autk-plot, autk-compute or autk-core, so it loads where they cannot, such as Node:
 
@@ -339,6 +342,53 @@ import { createDataAdapter } from '@urban-toolkit/autk-grammar/data';
 const adapter = createDataAdapter();
 let db: unknown; // the AutkDb the first source creates
 for (const source of spec.data ?? []) db = await adapter.resolveSource(db, source);
+```
+
+### Arranging the views
+
+`arrangeViews(spec)` returns:
+
+| Field | Value |
+|---|---|
+| `type` | `vertical`, `horizontal` or `grid`: the `layout`'s, else `vertical`. |
+| `rows` | The rows of panes. |
+| `columns` | The columns of panes: 1 for `vertical`, one per view for `horizontal`, and `layout.columns`, else 2, for `grid`. |
+| `gap` | The space between neighboring panes, in pixels: `layout.gap`, else 0. |
+| `panes` | One pane per view, in the order the grammar draws the views: the maps in the order of `map`, then the plots in the order of `plot`. |
+
+Each pane has:
+
+| Field | Value |
+|---|---|
+| `kind` | `map` or `plot`, which is also the target list, `map` or `plot`, that names the element the view draws in. |
+| `index` | The view's position among the views of its kind: its element is entry `index` of that target list. |
+| `id` | The view's `id`, when it has one. |
+| `key` | The name the grammar knows the view by: its `id`, else a map's index or a plot's `dataRef`. A map's is the `mapId` of its `map:picking` events, a plot's the `plotId` of its `plot:selection` events. |
+| `row` | The pane's row, from 0 at the top. |
+| `column` | The pane's column, from 0 at the left. |
+
+A host makes an element for each pane (a canvas for a map, a div for a plot), places it on a grid of `rows` by `columns`, `gap` pixels apart, and names it in the targets. Each map's canvas goes in a positioned pane of its own, since autk-map adds its controls to the canvas's parent:
+
+```ts
+import { AutkGrammar, arrangeViews } from '@urban-toolkit/autk-grammar';
+
+const { rows, columns, gap, panes } = arrangeViews(spec);
+Object.assign(container.style, {
+  display: 'grid', gap: `${gap}px`,
+  gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+});
+const targets: { map: string[]; plot: string[] } = { map: [], plot: [] };
+for (const pane of panes) {
+  const cell = document.createElement('div');
+  Object.assign(cell.style, { position: 'relative', gridRow: `${pane.row + 1}`, gridColumn: `${pane.column + 1}` });
+  const element = document.createElement(pane.kind === 'map' ? 'canvas' : 'div');
+  element.id = `${pane.kind}-${pane.index}`;
+  Object.assign(element.style, { width: '100%', height: '100%' });
+  cell.appendChild(element);
+  container.appendChild(cell);
+  targets[pane.kind][pane.index] = element.id;
+}
+await new AutkGrammar(targets).run(spec);
 ```
 
 ## License

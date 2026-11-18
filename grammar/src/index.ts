@@ -1,4 +1,5 @@
 export * from './main';
+export * from './layout';
 export * from './adapters/data';
 export * from './adapters/map';
 export * from './adapters/plot';

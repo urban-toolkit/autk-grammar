@@ -213,6 +213,7 @@ expect('camera zoom below 0', { map: { ...layers, camera: { zoom: -1 } } }, fals
 expect('camera zoom as a string', { map: { ...layers, camera: { zoom: '12' } } }, false);
 expect('layout with an unknown type', { map: layers, layout: { type: 'diagonal' } }, false);
 expect('layout grid with zero columns', { map: layers, layout: { type: 'grid', columns: 0 } }, false);
+expect('layout grid with columns that are not a whole number', { map: layers, layout: { type: 'grid', columns: 2.5 } }, false);
 expect('layout with a negative gap', { map: layers, layout: { gap: -1 } }, false);
 expect('map with an empty id', { map: { ...layers, id: '' } }, false);
 expect('plot with an empty id', { plot: { ...plot, mark: 'scatter', id: '' } }, false);

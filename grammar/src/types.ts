@@ -755,18 +755,20 @@ export type ComputeSpec = GpgpuComputeSpec | RenderComputeSpec
 /**
  * How the maps and plots of a specification are arranged on the page.
  *
- * The engine does not read it: the host that creates the map canvases and the plot container does.
+ * The engine does not read it: the host that creates the map canvases and the plot elements does, through
+ * `arrangeViews`, which gives each view its pane.
  */
 export type LayoutSpec = {
     /** `vertical` stacks the views, `horizontal` puts them side by side, `grid` fills `columns` columns. Defaults to `vertical`. */
     type?: 'vertical' | 'horizontal' | 'grid',
     /**
-     * Number of columns of a `grid`. Defaults to 2.
+     * Number of columns of a `grid`, a whole number. Defaults to 2.
      * @minimum 1
+     * @multipleOf 1
      */
     columns?: number,
     /**
-     * Space between views, in pixels.
+     * Space between views, in pixels. Defaults to 0.
      * @minimum 0
      */
     gap?: number,

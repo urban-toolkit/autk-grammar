@@ -4,7 +4,7 @@ import type {
     CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec, MapSpec, PlotSpec,
     RenderComputeSpec, UrbanSpec,
 } from '@urban-toolkit/the-urban-grammar';
-import type { LayerState, RunSummary } from './app/main';
+import type { LayerState, PaneBox, RunSummary } from './app/main';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
 import { spec as heatmapGeojson } from '../gallery/src/examples/heatmap-vis-geojson';
 
@@ -1364,6 +1364,56 @@ test('links the plot of linked-views to its map by their ids: a click in the plo
     const picked = (clicked![0] + 1) % tables.neighborhoods.features;
     await page.evaluate((id) => window.grammar.maps[0].events.emit('picking' as never, { selection: [id], layerId: 'Neighborhood area' } as never), picked);
     expect(await page.evaluate(() => [...(window.grammar as any)._plotRegistry.get('shapePlot').selection])).toEqual([picked]);
+});
+
+test('places the views of linked-views in the panes the hub builds: side by side, its gap apart, drawn and linked', async ({ page }) => {
+    // The hub arranges a spec with a layout by arrangeViews, as autarkjs.org's playground and Curio do.
+    const spec = await exampleSpec(page, 'linked-views');
+    expect(spec.layout).toEqual({ type: 'horizontal', gap: 12 });
+    const { targets, panes } = await page.evaluate((s) => window.runInPanes(s, 1212, 500), spec);
+    expect(targets).toEqual({ map: 'map-0', plot: 'plot-0' });
+    expect(panes.map(({ target, viewId }) => [target, viewId])).toEqual([['map-0', 'neighborhoodMap'], ['plot-0', 'shapePlot']]);
+    // One row of two panes, each half of the stage less the gap: the map on the left, 12 px, then the plot.
+    const [map, plot] = panes;
+    for (const pane of panes) {
+        expect(pane.width).toBeCloseTo(600, 0);
+        expect(pane.height).toBeCloseTo(500, 0);
+    }
+    expect(plot.top).toBeCloseTo(map.top, 0);
+    expect(plot.left - (map.left + map.width)).toBeCloseTo(12, 0);
+    await expectDrawn(page, 'map-0');
+
+    // The views draw and link in their panes: a click on a mark lights the neighborhood it stands for.
+    const clicked = await page.evaluate(() => {
+        const mark = document.querySelector('#plot-0 .autkMark') as Element & { __data__?: { ntaname?: string } };
+        mark.dispatchEvent(new MouseEvent('click'));
+        return mark.__data__?.ntaname;
+    });
+    expect(clicked).toEqual(expect.any(String));
+    const drawn = await page.evaluate(() => window.drawnRows('map-0', 'Neighborhood area'));
+    const lit = (await layerById(page, 'map-0'))['Neighborhood area'].highlightedIds ?? [];
+    expect(lit.map((position) => drawn[position]?.ntaname)).toEqual([clicked]);
+});
+
+test('places views in a grid by its columns and gap, and stacks them without a layout, in the panes the hub builds', async ({ page }) => {
+    const views: UrbanSpec = {
+        data: [area, zones],
+        map: [{ layerRefs: [{ dataRef: 'zones' }] }, { id: 'right', layerRefs: [{ dataRef: 'zones' }] }],
+        plot: { id: 'sc', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'] },
+    };
+    const places = (panes: PaneBox[]) => panes.map((pane) => [
+        pane.target, pane.viewId, Math.round(pane.left - panes[0].left), Math.round(pane.top - panes[0].top), Math.round(pane.width), Math.round(pane.height),
+    ]);
+
+    // Two columns by default: both maps on the first row, the plot under the first map, 400 by 300 px each, 10 px apart.
+    const grid = await page.evaluate((s) => window.runInPanes(s, 810, 610), { ...views, layout: { type: 'grid', gap: 10 } } as UrbanSpec);
+    expect(grid.targets).toEqual({ map: ['map-0', 'map-1'], plot: 'plot-0' });
+    expect(places(grid.panes)).toEqual([['map-0', null, 0, 0, 400, 300], ['map-1', 'right', 410, 0, 400, 300], ['plot-0', 'sc', 0, 310, 400, 300]]);
+    expect((await mapLayers(page, 'map-1')).map((layer) => layer.id)).toEqual(['zones']);
+
+    // Without a layout the panes stack, with no gap.
+    const stacked = await page.evaluate((s) => window.runInPanes(s, 400, 600), views);
+    expect(places(stacked.panes)).toEqual([['map-0', null, 0, 0, 400, 200], ['map-1', 'right', 0, 200, 400, 200], ['plot-0', 'sc', 0, 400, 400, 200]]);
 });
 
 test('draws band 24 of geotiff-raster on its scheme, in at most maxRasterCells cells, each one a cell of the file', async ({ page }) => {

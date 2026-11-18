@@ -42,7 +42,7 @@ export function exportOf(exports: LayerExports | undefined, key: string, load: (
     return collection;
 }
 
-/** A map's {@link MapId}: its `id`, else its index in the spec's `map` list. */
+/** A map's {@link MapId}: its `id`, else its index in the spec's `map` list, which `arrangeViews` gives its pane as its `key`. */
 export function mapIdOf(spec: MapSpec | undefined, index: number): MapId {
     return spec?.id ?? index;
 }

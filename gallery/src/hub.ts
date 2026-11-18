@@ -1,7 +1,8 @@
-import type { LayoutSpec } from '@urban-toolkit/the-urban-grammar';
+import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import type { AutkGrammar } from '@urban-toolkit/autk-grammar';
 import type { DeckGlGrammar } from '@urban-toolkit/deckgl-grammar';
 import { EXAMPLES, type AdapterName, type ExampleModule, type Layout } from './examples';
+import { createPanes } from './views';
 
 const exampleSelect = document.getElementById('example-select') as HTMLSelectElement;
 const adapterSelect = document.getElementById('adapter-select') as HTMLSelectElement;
@@ -133,22 +134,11 @@ function createMapSlot(adapter: AdapterName, id: string): HTMLElement {
 }
 
 /**
- * The container of a stage whose views follow the spec's `layout`: `vertical` stacks them, `horizontal` puts them side
- * by side and `grid` fills `columns` columns (2 by default), with `gap` pixels between them.
+ * Builds the stage for an example and returns the grammar's targets. A spec with a `layout` gets a pane for each of its
+ * views, placed as `arrangeViews` says, as every host arranges them (see `createPanes`). Without one, a stage keeps the
+ * gallery's own presentation: two maps sit side by side, and a plot floats over its map.
  */
-function createViews(arrangement: LayoutSpec): HTMLElement {
-    const views = document.createElement('div');
-    views.className = `views ${arrangement.type ?? 'vertical'}`;
-    if (arrangement.gap !== undefined) views.style.setProperty('--views-gap', `${arrangement.gap}px`);
-    if (arrangement.columns !== undefined) views.style.setProperty('--views-columns', String(arrangement.columns));
-    return views;
-}
-
-/**
- * Builds the stage for an example and returns the grammar's targets. A two-view stage (two maps, or a map and a plot)
- * follows the spec's `layout` when it has one; without it, two maps sit side by side and a plot floats over its map.
- */
-function setupStage(layout: Layout, adapter: AdapterName, arrangement?: LayoutSpec): Record<string, string | string[]> {
+function setupStage(layout: Layout, adapter: AdapterName, spec: UrbanSpec): Record<string, string | string[]> {
     stage.innerHTML = '';
     floatingPlotPanel?.remove();
     floatingPlotPanel = null;
@@ -163,14 +153,15 @@ function setupStage(layout: Layout, adapter: AdapterName, arrangement?: LayoutSp
         return { db: 'debug-output' };
     }
 
+    if (spec.layout) {
+        const panes = createPanes(spec, adapter === 'autk' ? 'canvas' : 'div');
+        stage.appendChild(panes.element);
+        return panes.targets;
+    }
+
     if (layout === 'multi-map') {
-        let wrap: HTMLElement;
-        if (arrangement) {
-            wrap = createViews(arrangement);
-        } else {
-            wrap = document.createElement('div');
-            wrap.className = 'maps-wrap multi';
-        }
+        const wrap = document.createElement('div');
+        wrap.className = 'maps-wrap multi';
 
         const id0 = adapter === 'autk' ? 'map-canvas-0' : 'map-container-0';
         const id1 = adapter === 'autk' ? 'map-canvas-1' : 'map-container-1';
@@ -179,20 +170,6 @@ function setupStage(layout: Layout, adapter: AdapterName, arrangement?: LayoutSp
 
         stage.appendChild(wrap);
         return { map: [id0, id1] };
-    }
-
-    if (layout === 'map+plot' && arrangement) {
-        const views = createViews(arrangement);
-        const mapId = adapter === 'autk' ? 'map-canvas' : 'map-container';
-        views.appendChild(createMapSlot(adapter, mapId));
-
-        const plotBody = document.createElement('div');
-        plotBody.id = 'plot-body';
-        plotBody.className = 'plot-body plot-slot';
-        views.appendChild(plotBody);
-
-        stage.appendChild(views);
-        return { map: mapId, plot: 'plot-body' };
     }
 
     if (layout === 'map+plot') {
@@ -264,7 +241,7 @@ async function runExample(exampleId: string, adapter: AdapterName) {
         const { spec, afterRun } = module;
         if (lastGrammar && 'destroy' in lastGrammar) lastGrammar.destroy();
         lastGrammar = null;
-        const targets = setupStage(meta.layout, adapter, spec.layout);
+        const targets = setupStage(meta.layout, adapter, spec);
 
         if (adapter === 'autk') {
             const { AutkGrammar } = await import('@urban-toolkit/autk-grammar');
