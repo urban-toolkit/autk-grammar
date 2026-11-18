@@ -362,4 +362,10 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         supportedAdapters: ['autk'],
         load: () => import('./examples/heatmap-centroids'),
     },
+    'sql-source': {
+        title: 'SQL: The Ten Noisiest Neighborhoods',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/sql-source'),
+    },
 };

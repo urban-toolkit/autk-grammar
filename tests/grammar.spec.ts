@@ -1834,3 +1834,19 @@ test('counts the parks near each cell of heatmap-centroids from their edges, as 
     expect(sum(fromEdges)).toBeGreaterThan(sum(fromCentroids));
     expect(fromEdges).not.toEqual(fromCentroids);
 });
+
+test('maps the ten neighborhoods of sql-source with the most noise complaints, which its query selects', async ({ page }) => {
+    const { tables } = await run(page, 'sql-source');
+    expect(tables.noisiest.features).toBe(10);
+    const { all, top } = await page.evaluate(async () => ({
+        all: (await window.grammar.data.neighborhoods).features.map((feature) => Number(feature.properties?.sjoin?.count?.noise ?? 0)),
+        top: (await window.grammar.data.noisiest).features.map((feature) => Number(feature.properties?.complaints)),
+    }));
+    // The query's ten rows hold the ten greatest counts the join wrote, each under the name its SELECT gives it.
+    const descending = (counts: number[]) => [...counts].sort((a, b) => b - a);
+    expect(descending(top)).toEqual(descending(all).slice(0, 10));
+    expect(top.every((count) => count > 0)).toBe(true);
+    // The map colors them by that count, over the neighborhoods drawn in gray.
+    expect((await layerById(page))['Noise complaints, the ten noisiest']).toMatchObject({ type: 'polygons', isColorMap: true, interpolator: 'interpolateReds' });
+    await expectDrawn(page, 'map0');
+});
