@@ -322,4 +322,16 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         supportedAdapters: ['autk'],
         load: () => import('./examples/linked-views'),
     },
+    'geotiff-raster': {
+        title: 'GeoTIFF: Niterói Surface Temperature',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/geotiff-raster'),
+    },
+    'compute-output-table': {
+        title: 'Compute: Into a New Table (Building Heights)',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/compute-output-table'),
+    },
 };

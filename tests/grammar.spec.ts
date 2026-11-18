@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import type { CameraSpec, ColorMapInterpolator, DataSourceSpec, MapLayerSpec, MapSpec, PlotSpec, UrbanSpec } from '@urban-toolkit/the-urban-grammar';
+import type { CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, MapLayerSpec, MapSpec, PlotSpec, UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import type { LayerState, RunSummary } from './app/main';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
 import { spec as heatmapGeojson } from '../gallery/src/examples/heatmap-vis-geojson';
@@ -1074,4 +1074,64 @@ test('links the plot of linked-views to its map by their ids: a click in the plo
     const picked = (clicked![0] + 1) % tables.neighborhoods.features;
     await page.evaluate((id) => window.grammar.maps[0].events.emit('picking' as never, { selection: [id], layerId: 'Neighborhood area' } as never), picked);
     expect(await page.evaluate(() => [...(window.grammar as any)._plotRegistry.get('shapePlot').selection])).toEqual([picked]);
+});
+
+test('draws band 24 of geotiff-raster on its scheme, in at most maxRasterCells cells, each one a cell of the file', async ({ page }) => {
+    const layerId = 'Summer surface temperature, 2024 (°C)';
+    const spec = await exampleSpec(page, 'geotiff-raster');
+    const [source, ...others] = spec.data!;
+    const { maxRasterCells, resampleMethod, ...wholeFile } = source as GeoTiffDataSourceSpec;
+
+    // The polygon of the raster's extent frames the map, which a raster does not.
+    await run(page, 'geotiff-raster');
+    const layers = await mapLayers(page);
+    expect(layers.map((layer) => [layer.id, layer.type])).toEqual([['Raster extent', 'polygons'], [layerId, 'raster']]);
+    const cells = await page.evaluate((id) => window.rasterCells('map0', id).values, layerId);
+    // The file holds 22 x 15 cells, more than maxRasterCells, so autk-db reads fewer, and every one holds a temperature.
+    expect(cells.length).toBeGreaterThan(0);
+    expect(cells.length).toBeLessThanOrEqual(maxRasterCells!);
+    expect(cells.filter((value) => !Number.isFinite(value))).toEqual([]);
+    // Colored on YlOrRd from its lowest cell to its highest.
+    const [min, max] = [Math.min(...cells), Math.max(...cells)];
+    expect(layers[1]).toMatchObject({ isColorMap: true, interpolator: 'interpolateYlOrRd', domain: [min, max] });
+    expect((await cellsOffScheme(page, 'interpolateYlOrRd', [min, max], 'map0', layerId)).off).toBe(0);
+    await expectDrawn(page, 'map0');
+
+    // The same band of the whole file: 330 cells, from 26.765 to 34.577 degrees Celsius as rasterio reads them. Nearest
+    // resampling keeps measured values, so every cell the example draws is one of these.
+    expect(resampleMethod).toBe('nearest');
+    await runSpec(page, { ...spec, data: [wholeFile as DataSourceSpec, ...others] });
+    const file = await page.evaluate((id) => window.rasterCells('map0', id).values, layerId);
+    expect(file.length).toBe(22 * 15);
+    expect(Math.min(...file)).toBeCloseTo(26.76499, 4);
+    expect(Math.max(...file)).toBeCloseTo(34.57745, 4);
+    const measured = new Set(file);
+    expect(cells.filter((value) => !measured.has(value))).toEqual([]);
+});
+
+test('writes the pass of compute-output-table into a new table drawn as polygons, and leaves the buildings as they were', async ({ page }) => {
+    const { tables } = await run(page, 'compute-output-table');
+    expect(tables.building_heights.features).toBeGreaterThan(0);
+    expect(tables.building_heights.features).toBe(tables.fidi_buildings.features);
+    const { computed, sourceComputed } = await page.evaluate(async () => {
+        const heights = await window.grammar.data.building_heights;
+        const buildings = await window.grammar.data.fidi_buildings;
+        return {
+            computed: heights.features.map((feature) => ({ height: feature.properties?.height ?? null, feet: feature.properties?.compute?.feet })),
+            sourceComputed: buildings.features.filter((feature) => feature.properties?.compute !== undefined).length,
+        };
+    });
+    // The pass reads `height` as autk-compute reads an attribute, as a number and 0 where OpenStreetMap gives none, and
+    // multiplies it in float32.
+    const wrong = computed.filter(({ height, feet }) => {
+        const meters = Number(height);
+        const expected = (Number.isFinite(meters) ? meters : 0) * 3.28084;
+        return !(Math.abs(feet - expected) <= 1e-4 * Math.max(1, expected));
+    });
+    expect(wrong).toEqual([]);
+    expect(computed.filter(({ feet }) => feet > 0).length).toBeGreaterThan(0);
+    expect(sourceComputed, 'buildings with a compute column').toBe(0);
+    // The map draws the new table flat, as its layerType says, though it was computed from a buildings table.
+    expect((await layerById(page))['Building height (ft)']).toMatchObject({ type: 'polygons', isColorMap: true, interpolator: 'interpolateViridis' });
+    await expectDrawn(page, 'map0');
 });
