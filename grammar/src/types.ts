@@ -672,7 +672,10 @@ export type RenderComputeSpec = {
     workspace?: WorkspaceName,
     /** Name of the table that receives the result. Later passes, maps and plots read it by this name. */
     outputTableName: string,
-    /** How the map draws the new table. Defaults to the type of the viewpoints table. */
+    /**
+     * How the map draws the new table. Defaults to the type of the viewpoints table, or to `points` with the
+     * `building-windows` strategy, whose result holds one point per window.
+     */
     layerType?: LayerType,
     /**
      * Layers to render.

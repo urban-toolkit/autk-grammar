@@ -29,12 +29,15 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
         return cache?.get(tableKey(workspace, name)) ?? await db.getLayer(name);
     }
 
-    /** Stores a pass's result under `outputTableName`, or, without it, in place of the table `source`. */
-    function store(db: AutkDb, result: FeatureCollection, source: string, spec: GpgpuComputeSpec | RenderComputeSpec): void {
+    /**
+     * Stores a pass's result under `outputTableName`, or, without it, in place of the table `source`. A map draws a
+     * new table as the spec's `layerType` says, else as `resultType`, else as it draws `source`.
+     */
+    function store(db: AutkDb, result: FeatureCollection, source: string, spec: GpgpuComputeSpec | RenderComputeSpec, resultType?: LayerType): void {
         if (!cache) return;
         const name = spec.outputTableName ?? source;
         cache.set(tableKey(spec.workspace, name), result);
-        const type = spec.layerType ?? layerTypeOf(db, source, spec.workspace, types);
+        const type = spec.layerType ?? resultType ?? layerTypeOf(db, source, spec.workspace, types);
         if (spec.outputTableName && type) types?.set(tableKey(spec.workspace, name), type);
     }
 
@@ -58,7 +61,8 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
             tileSize: spec.tileSize,
         });
 
-        store(db, result, spec.viewpoints.dataRef, spec);
+        // With `building-windows` the result holds one point per window, not the viewpoints' features.
+        store(db, result, spec.viewpoints.dataRef, spec, spec.viewpoints.strategy?.type === 'building-windows' ? 'points' : undefined);
     }
 
     async function resolveGpgpu(db: AutkDb, spec: GpgpuComputeSpec): Promise<void> {

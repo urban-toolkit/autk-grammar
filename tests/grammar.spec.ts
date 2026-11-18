@@ -927,6 +927,28 @@ test('runs a render compute pass into a new table', async ({ page }) => {
     expect((await page.evaluate(() => window.mapLayers('map0'))).map((layer) => [layer.id, layer.type])).toEqual([['box_surface', 'surface'], ['visibility', 'buildings']]);
 });
 
+test('draws the windows of a building-windows render pass as points', async ({ page }) => {
+    const { tables } = await runSpec(page, {
+        ...boxSpec({ bbox: BOX }),
+        compute: [{
+            type: 'render',
+            outputTableName: 'windows',
+            layers: [{ id: 'buildings', dataRef: 'box_buildings', type: 'buildings' }],
+            viewpoints: { dataRef: 'box_buildings', strategy: { type: 'building-windows', floors: 1 } },
+            aggregation: { type: 'classes', includeBackground: true },
+            tileSize: 8,
+        }],
+        map: { layerRefs: [{ dataRef: 'box_surface' }, { dataRef: 'windows' }] },
+    });
+    // The result is one point per window, each looking out from its facade and 30 degrees to either side.
+    expect(tables.windows.features).toBeGreaterThan(tables.box_buildings.features);
+    const [first] = await page.evaluate(() => window.featureExtents('windows'));
+    expect([first[0], first[1]], 'the first window is a point').toEqual([first[2], first[3]]);
+    expect(await page.evaluate(() => window.valueAt('windows', 0, 'compute.render.sampleCount'))).toBe(3);
+    // So the map draws it as points, though the viewpoints table is drawn as buildings.
+    expect((await page.evaluate(() => window.mapLayers('map0'))).map((layer) => [layer.id, layer.type])).toEqual([['box_surface', 'surface'], ['windows', 'points']]);
+});
+
 test('accepts useCentroid on a heatmap', async ({ page }) => {
     const [neighborhoods, noise, heatmap] = heatmapGeojson.data!;
     const withNear = (near: object): UrbanSpec => ({
