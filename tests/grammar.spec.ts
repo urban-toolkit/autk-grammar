@@ -949,7 +949,9 @@ test('sets the radius of a points layer with pointSize', async ({ page }) => {
         map: { layerRefs: [{ dataRef: 'p', pointSize: 30 }] },
     });
     const [layer] = await page.evaluate(() => window.mapLayers('map0'));
-    expect(layer).toMatchObject({ type: 'points', pointSize: 30 });
+    // 30 m on the ground, in planar units at the middle of the points, 40.705 degrees north.
+    expect(layer.type).toBe('points');
+    expect(layer.pointSize).toBeCloseTo(30 * worldMercatorScale(40.705), 3);
 });
 
 test('turns the camera around the point it looks at', async ({ page }) => {

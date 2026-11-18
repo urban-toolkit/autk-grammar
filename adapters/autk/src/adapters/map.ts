@@ -34,7 +34,7 @@ function hexColor(value: string, key: string, layerId: string): ColorRGB {
     return ColorMap.hexToRgb(value as ColorHEX);
 }
 
-/** What `color`, `stroke`, `width` and `pointSize` set on the layer's autk-map render info. */
+/** What `color`, `stroke` and `width` set on the layer's autk-map render info. */
 function styleRenderInfo(layerRef: MapLayerSpec, layerId: string): Partial<LayerRenderInfo> {
     const renderInfo: Partial<LayerRenderInfo> = {};
     if (layerRef.color != null)
@@ -45,8 +45,6 @@ function styleRenderInfo(layerRef: MapLayerSpec, layerId: string): Partial<Layer
         renderInfo.strokeColor = hexColor(layerRef.stroke, 'stroke', layerId);
     if (layerRef.width != null)
         renderInfo.polylinesWidth = layerRef.width;
-    if (layerRef.pointSize != null)
-        renderInfo.pointSize = layerRef.pointSize;
     return renderInfo;
 }
 
