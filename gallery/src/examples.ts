@@ -352,4 +352,10 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         supportedAdapters: ['autk'],
         load: () => import('./examples/points-true-size'),
     },
+    'heatmap-centroids': {
+        title: 'Heatmap: Park Access, Measured from Park Edges',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/heatmap-centroids'),
+    },
 };

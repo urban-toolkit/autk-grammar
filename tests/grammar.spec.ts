@@ -1,7 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
 import type {
-    CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, MapLayerSpec, MapSpec, PlotSpec, RenderComputeSpec, UrbanSpec,
+    CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec, MapSpec, PlotSpec,
+    RenderComputeSpec, UrbanSpec,
 } from '@urban-toolkit/the-urban-grammar';
 import type { LayerState, RunSummary } from './app/main';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
@@ -1221,4 +1222,25 @@ test('draws the points of points-true-size with a radius of pointSize meters on 
     expect(layer.pointSize).toBeCloseTo(layerRef.pointSize! * worldMercatorScale(latitude), 3);
     expect(layer.pointSize, "a radius well below autk-map's default of 64 planar units").toBeLessThan(64);
     expect(await pixelsIn(page, layerRef.color!, 'noise discs')).toBeGreaterThan(0);
+});
+
+test('counts the parks near each cell of heatmap-centroids from their edges, as its useCentroid says', async ({ page }) => {
+    const layerId = 'Parks within about 150 m';
+    const spec = await exampleSpec(page, 'heatmap-centroids');
+    const [osm, source] = spec.data!;
+    const heatmap = source as HeatmapSourceSpec;
+    expect(heatmap.near.useCentroid).toBe(false);
+    await run(page, 'heatmap-centroids');
+    const fromEdges = (await heatmapLayer(page, 'map0', layerId)).finite;
+    await expectDrawn(page, 'map0');
+
+    // The same heatmap measured from each park's centroid, autk-db's default. A cell by a park's edge can lie far from its
+    // centroid, so the edges reach more parks. (Point rows have no extent: for them the two agree.)
+    await runSpec(page, { ...spec, data: [osm, { ...heatmap, near: { ...heatmap.near, useCentroid: true } }] });
+    const fromCentroids = (await heatmapLayer(page, 'map0', layerId)).finite;
+    expect(fromEdges).toHaveLength(heatmap.grid.rows * heatmap.grid.columns);
+    expect(fromCentroids).toHaveLength(fromEdges.length);
+    const sum = (counts: number[]) => counts.reduce((total, count) => total + count, 0);
+    expect(sum(fromEdges)).toBeGreaterThan(sum(fromCentroids));
+    expect(fromEdges).not.toEqual(fromCentroids);
 });
