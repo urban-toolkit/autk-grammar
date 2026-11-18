@@ -1034,6 +1034,61 @@ function exampleSpec(page: Page, name: string): Promise<UrbanSpec> {
     return page.evaluate((example) => window.exampleSpec(example), name);
 }
 
+/** A spec whose OSM sources read the gallery's lower Manhattan extract instead of the Overpass API. */
+function withExtract(spec: UrbanSpec): UrbanSpec {
+    return { ...spec, data: spec.data?.map((source) => (source.type === 'osm' ? { ...source, pbfFileUrl: '/data/lower_mnt.osm.pbf' } : source)) };
+}
+
+test('colors the buildings of property-func-map by the height_sq its compute pass writes', async ({ page }) => {
+    // The pass writes compute.height_sq. The example named height_sq, which no feature has, so autk-map drew the
+    // buildings in one color.
+    await runSpec(page, withExtract(await exampleSpec(page, 'property-func-map')));
+    const squares = await page.evaluate(async () =>
+        (await window.grammar.data.table_osm_buildings).features.map((feature) => feature.properties?.compute?.height_sq));
+    expect(squares.length).toBeGreaterThan(0);
+    expect(squares.filter((square) => !Number.isFinite(square))).toEqual([]);
+    const layer = (await layerById(page)).table_osm_buildings;
+    expect(layer).toMatchObject({ isColorMap: true, interpolator: 'interpolateRdBu' });
+    // Its scale runs over the squares, which pass 2500 (a building 50 m tall).
+    const domain = (layer.domain ?? []).map(Number);
+    expect(domain.length).toBeGreaterThan(1);
+    expect(domain.every(Number.isFinite)).toBe(true);
+    expect(Math.max(...domain)).toBeGreaterThan(2500);
+    expect(Math.max(...domain)).toBeLessThanOrEqual(Math.max(...squares));
+});
+
+test('draws the second area of osm-layers-api-multi whole, as it draws alone, though both share one workspace', async ({ page }) => {
+    // The first source sets the workspace's extent, which later CSV, JSON, GeoJSON and GeoTIFF sources are cut to. An OSM
+    // source builds its layers inside its own area, so the Financial District, loaded second, keeps all of its own.
+    const spec = withExtract(await exampleSpec(page, 'osm-layers-api-multi'));
+    const tables = ['surface', 'parks', 'water', 'roads', 'buildings'].map((layer) => `table_osm_${layer}`);
+    const summaries = () => page.evaluate(async (names) => {
+        // A table's feature count, and its extent when it has features.
+        const summary: Record<string, { features: number; extent: number[] }> = {};
+        for (const name of names) {
+            const boxes = await window.featureExtents(name);
+            const side = (i: number, pick: (...values: number[]) => number) => pick(...boxes.map((box) => box[i]));
+            summary[name] = { features: boxes.length, extent: boxes.length ? [side(0, Math.min), side(1, Math.min), side(2, Math.max), side(3, Math.max)] : [] };
+        }
+        return summary;
+    }, tables);
+
+    await runSpec(page, spec);
+    const together = await summaries();
+    await expectDrawn(page, 'map0');
+    await expectDrawn(page, 'map1');
+
+    await runSpec(page, { data: [spec.data![1]], map: (spec.map as MapSpec[])[1] });
+    const alone = await summaries();
+    for (const name of ['table_osm_surface', 'table_osm_roads', 'table_osm_buildings'])
+        expect(alone[name].features, `${name} features`).toBeGreaterThan(0);
+    for (const name of tables) {
+        expect(together[name].features, `${name} features`).toBe(alone[name].features);
+        together[name].extent.forEach((value, i) =>
+            expect(Math.abs(value - alone[name].extent[i]), `${name} extent ${i}, in meters`).toBeLessThan(1));
+    }
+});
+
 test('tilts the view of map-camera to its zoom, pitch and bearing around the point the map fits', async ({ page }) => {
     const spec = await exampleSpec(page, 'map-camera');
     const { camera, ...untilted } = spec.map as MapSpec;
