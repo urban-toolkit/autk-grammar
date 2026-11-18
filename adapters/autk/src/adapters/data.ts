@@ -4,6 +4,22 @@ import type { LoadGeojsonParams } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Geometry } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
 import { enterWorkspace, tableKey } from '../workspace';
+import { featureIds } from '../rows';
+
+/**
+ * The collection with the id autk-db gives a GeoJSON feature on each feature that has none (see `featureIds`). autk-db
+ * keeps a feature's id in its export, so a row a map draws from the export is found among the source's own rows, which
+ * a plot draws, by that id.
+ */
+function withFeatureIds(collection: FeatureCollection): FeatureCollection {
+    const features = collection.features ?? [];
+    if (features.every((feature) => feature?.id != null)) return collection;
+    const ids = featureIds(features);
+    return {
+        ...collection,
+        features: features.map((feature, index) => (feature == null || feature.id != null ? feature : { ...feature, id: ids[index] })),
+    };
+}
 
 /**
  * The query area autk-db reads: `{ bbox }` or `{ geocodeArea, areas }`. autk-db takes any area with a
@@ -148,9 +164,9 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
 
                     if (cache && geojsonData) cache.set(tableKey(workspace, geojsonSpec.outputTableName), geojsonData);
 
-                    // Pass the fetched object directly so autk-db doesn't need to re-fetch
+                    // Pass the fetched object directly so autk-db doesn't need to re-fetch, each feature with its id.
                     const loadSpec = (geojsonData
-                        ? (() => { const s = { ...geojsonSpec, geojsonObject: geojsonData }; delete s.geojsonFileUrl; return s; })()
+                        ? (() => { const s = { ...geojsonSpec, geojsonObject: withFeatureIds(geojsonData) }; delete s.geojsonFileUrl; return s; })()
                         : geojsonSpec) as LoadGeojsonParams;
 
                     // Degrees put every y within -90 to 90, so a y outside it shows a layer in another CRS. The

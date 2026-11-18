@@ -2,8 +2,8 @@ import { AutkGrammar } from '@urban-toolkit/autk-grammar';
 import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import { ColorMap } from '@urban-toolkit/autk-core';
 import type { ColorMapInterpolator, ColorRGB } from '@urban-toolkit/autk-core';
-import type { AutkMap } from '@urban-toolkit/autk-map';
-import type { Geometry } from 'geojson';
+import { AutkMap } from '@urban-toolkit/autk-map';
+import type { FeatureCollection, Geometry } from 'geojson';
 
 export type TableSummary = { features: number; properties: string[] };
 export type RunSummary = { tables: Record<string, TableSummary>; plotSvgs: number };
@@ -47,6 +47,7 @@ declare global {
         featureExtents: (table: string) => Promise<number[][]>;
         readMap: (canvasId: string) => Promise<string>;
         mapLayers: (canvasId: string) => LayerState[];
+        drawnRows: (canvasId: string, layerId: string) => Array<Record<string, unknown> | null>;
         cameraState: (canvasId: string) => { eye: number[]; lookAt: number[] };
         rasterCells: (canvasId: string, layerId: string) => { values: number[]; rgba: number[] };
         legend: () => LegendState | null;
@@ -60,6 +61,19 @@ function mapOn(canvasId: string): AutkMap {
     if (!map) throw new Error(`No map draws on #${canvasId}`);
     return map;
 }
+
+/**
+ * The collection autk-map was handed for each layer of each map, recorded as autk-map loads it, so a test reads what a
+ * map draws from what autk-map itself was given rather than from the grammar.
+ */
+const handed = new WeakMap<AutkMap, Map<string, FeatureCollection>>();
+const loadCollection = AutkMap.prototype.loadCollection;
+AutkMap.prototype.loadCollection = function (this: AutkMap, ...args: Parameters<AutkMap['loadCollection']>) {
+    const [layerId, { collection }] = args;
+    if (!handed.has(this)) handed.set(this, new Map());
+    handed.get(this)!.set(layerId, collection as FeatureCollection);
+    return loadCollection.apply(this, args);
+};
 
 /**
  * The spec of a gallery example, loaded in the page, so a test can run it changed. The examples that name an enum
@@ -181,6 +195,19 @@ window.mapLayers = (canvasId: string) => mapOn(canvasId).layerManager.layers.map
         highlightedIds: highlighted ? [...highlighted] : undefined,
     };
 });
+
+/**
+ * The properties of the feature a vector layer of the map on #canvasId draws at each of its positions, the positions
+ * its picks and highlights name. autk-map draws each feature it was handed as one component, and none for a feature
+ * with nothing to draw; a component names its feature by its index among those handed.
+ */
+window.drawnRows = (canvasId: string, layerId: string) => {
+    const map = mapOn(canvasId);
+    const collection = handed.get(map)?.get(layerId);
+    const layer = map.layerManager.searchByLayerId(layerId) as unknown as { components?: Array<{ featureIndex: number }> } | null;
+    if (!collection || !layer?.components) throw new Error(`#${canvasId} draws no vector layer ${layerId}`);
+    return layer.components.map((component) => collection.features[component.featureIndex]?.properties ?? null);
+};
 
 /** A raster layer's cell values and the RGBA autk-map colors its cells with (four 0..255 values a cell). */
 window.rasterCells = (canvasId: string, layerId: string) => {

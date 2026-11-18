@@ -2,7 +2,8 @@ import type { FeatureCollection } from 'geojson';
 import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, ComputeCache, ComputeLayerTypes } from '../types';
-import { DrawnLayers, mapIdOf } from '../drawn';
+import { DrawnLayers, LayerExports, exportOf, mapIdOf } from '../drawn';
+import { rowKeys } from '../rows';
 import { AutkMap } from '@urban-toolkit/autk-map';
 import type { LayerRenderInfo } from '@urban-toolkit/autk-map';
 import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator } from '@urban-toolkit/autk-core';
@@ -212,29 +213,48 @@ export function applyCamera(map: AutkMap, camera: CameraSpec): void {
 }
 
 /**
- * The map adapter `AutkGrammar` runs. Each map it draws goes in `maps` at its index, and each of its layers in `layers`,
- * so every map stays known, though several draw one table.
+ * The key of the row a vector layer draws at each of its positions. autk-map draws each feature it is handed as one
+ * component, in order, and none for a feature with nothing to draw; a component names its feature by its index among
+ * those handed (`featureIndex`). `kept` gives the table row of each feature handed, and `keys` each table row's key.
  */
-export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, computeCache?: ComputeCache, maps?: AutkMap[], computeTypes?: ComputeLayerTypes): MapAdapter {
+function drawnRowKeys(map: AutkMap, layerId: string, keys: readonly string[], kept: readonly number[]): string[] {
+    const layer = map.layerManager.searchByLayerId(layerId) as unknown as { components?: Array<{ featureIndex?: number }> } | null;
+    const components = layer?.components;
+    if (!Array.isArray(components)) return kept.map((row) => keys[row] ?? '');
+    return components.map((component, position) => {
+        const handed = Number.isInteger(component?.featureIndex) ? component.featureIndex! : position;
+        return keys[kept[handed]] ?? '';
+    });
+}
 
-    async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<void> {
+/**
+ * The map adapter `AutkGrammar` runs. Each map it draws goes in `maps` at its index, and each of its layers in `layers`,
+ * with the rows it draws, so every map stays known, though several draw one table. A table's export is taken once a
+ * run, in `exports`, which the plot adapter reads too.
+ */
+export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, computeCache?: ComputeCache, maps?: AutkMap[], computeTypes?: ComputeLayerTypes, exports?: LayerExports): MapAdapter {
+
+    /** Loads each layer of `spec` on `map`, and gives the keys of the rows each draws, in the order of the layers. */
+    async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<string[][]> {
         let tableToTypeMap: {[tableName: string]: string} = {};
         for(const table of context.getTablesMetadata()) {
             if(table.type !== undefined) tableToTypeMap[table.name] = table.type;
         }
 
+        const drawn: string[][] = [];
         for(const layerRef of spec.layerRefs){
             const name     = layerRef.dataRef;
             const layerId  = layerIdOf(layerRef);
-            const type     = (computeTypes?.get(tableKey(spec.workspace, name)) ?? tableToTypeMap[name]) as LayerType;
+            const key      = tableKey(spec.workspace, name);
+            const type     = (computeTypes?.get(key) ?? tableToTypeMap[name]) as LayerType;
             const getFnv   = layerRef.getFnv;
 
-            const rawData = computeCache?.get(tableKey(spec.workspace, name)) ?? (type === 'raster' ? await context.getRaster(name) as unknown as FeatureCollection : await context.getLayer(name));
-            // Raster tables (e.g. heatmaps) are a single feature with no geometry, so keep them as-is.
-            const data = type === 'raster' ? rawData : {
-                ...rawData,
-                features: (rawData.features ?? []).filter((f: any) => f.geometry != null),
-            };
+            const rawData = computeCache?.get(key) ?? (type === 'raster' ? await context.getRaster(name) as unknown as FeatureCollection : await exportOf(exports, key, () => context.getLayer(name)));
+            // Raster tables (e.g. heatmaps) are a single feature with no geometry, so keep them as-is. A vector layer
+            // is handed the rows with a geometry: `kept` holds the table row of each.
+            const rows = rawData.features ?? [];
+            const kept = type === 'raster' ? [] : rows.flatMap((feature, row) => (feature?.geometry != null ? [row] : []));
+            const data = type === 'raster' ? rawData : { ...rawData, features: kept.map((row) => rows[row]) };
             const band = type === 'raster' ? rasterBand(data, getFnv) : '';
 
             if(type === 'raster') {
@@ -332,7 +352,10 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 const property = getFnv.startsWith('properties.') ? getFnv : `properties.${getFnv}`;
                 map.updateThematic(layerId, { collection: thematicData, property });
             }
+
+            drawn.push(type === 'raster' ? [] : drawnRowKeys(map, layerId, rowKeys(rows), kept));
         }
+        return drawn;
     }
 
     return {
@@ -366,11 +389,12 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
 
                 await map.init();
                 await enterWorkspace(context, spec.workspace);
-                await loadLayers(map, context, spec);
+                const drawn = await loadLayers(map, context, spec);
 
                 const mapId = mapIdOf(spec, index);
-                for(const layerRef of spec.layerRefs)
-                    layers?.push({ map, mapIndex: index, mapId, layerId: layerIdOf(layerRef), dataRef: layerRef.dataRef });
+                spec.layerRefs.forEach((layerRef, at) => layers?.push({
+                    map, mapIndex: index, mapId, layerId: layerIdOf(layerRef), dataRef: layerRef.dataRef, rows: drawn[at],
+                }));
 
                 if(maps)
                     maps[index] = map;

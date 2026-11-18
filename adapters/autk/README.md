@@ -220,7 +220,7 @@ map.updateRenderInfo(layerId, { opacity: 0.5 });
 
 A plot's `id` names it: as the `source` of a link, as the `plotId` of its `plot:selection` events, and for `setPlotSelection` and `clearHighlightOnPlot`. Without an id, a plot is known by its `dataRef`, so two plots of one table need ids to be told apart.
 
-`links` connect a plot to a layer of a map. Picking on the layer selects the same features in the plot (a pick on another layer of the map does not), and a selection in the plot, by an event its `events` lists, highlights them on the layer. The link makes the layer pickable.
+`links` connect a plot to a layer of a map. Picking on the layer selects the same features in the plot (a pick on another layer of the map does not), and a selection in the plot, by an event its `events` lists, highlights them on the layer. The link makes the layer pickable. A selection passes by the rows each view drew, not by positions: a plot draws its table's rows in the order its source gave them, while a layer draws the rows autk-db holds, which can come in another order, and leaves out the rows without a geometry. Each row is found in the other view by its feature id: a GeoJSON feature's `id`, else the one autk-db gives it, `autk-feature-<index>`.
 
 | Field | Effect |
 |---|---|
@@ -264,9 +264,9 @@ An app sets selections with these calls, which take feature ids as the events gi
 |---|---|
 | `mapLayers(dataRef, mapId?)` | Every layer that draws the table, each as `{ map, layerId }`: the maps in the spec's order, each map's layers bottom first. |
 | `mapLayer(dataRef, mapId?)` | The last of those: the last map's layer when several maps draw the table. |
-| `highlightOnMap(dataRef, featureIds, mapId?)` | Highlights the features on each of those layers, and selects them in the plots linked to the layers. |
+| `highlightOnMap(dataRef, featureIds, mapId?)` | Highlights the features on each of those layers, and selects the same rows in the plots linked to the layers. |
 | `clearHighlightOnMap(dataRef, mapId?)` | Clears those highlights, and the linked plots' selections. |
-| `setPlotSelection(plotId, featureIds, mapId?)` | Selects the features in the plot (its `id`, else its `dataRef`), and highlights them on the layers it is linked to. |
+| `setPlotSelection(plotId, featureIds, mapId?)` | Selects the features in the plot (its `id`, else its `dataRef`), and highlights the same rows on the layers it is linked to. |
 | `clearHighlightOnPlot(plotId, mapId?)` | Clears the plot's selection, and the highlights on the layers it is linked to. |
 
 `mapId` names one map: a string by its `id`, a number by its index in `map`. The `mapId` of a `map:picking` event names the map it came from, so it can be passed back as it is.

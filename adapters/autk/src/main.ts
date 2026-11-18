@@ -14,7 +14,8 @@ import { enterWorkspace } from "./workspace";
 import { createComputeAdapter } from "./adapters/compute";
 import { Targets, PlotRegistry, GeoJsonCache, ComputeCache, ComputeLayerTypes, GrammarEventEmitter } from "./types";
 import type { GrammarMapLayer, GrammarPlotSelectionEvent, MapId } from "./types";
-import { DrawnLayer, DrawnLayers, PlotLinks, addPlotLink, isOnMap, mapIdOf } from "./drawn";
+import { DrawnLayer, DrawnLayers, LayerExports, PlotLinks, PlotRows, addPlotLink, isOnMap, mapIdOf } from "./drawn";
+import { translateIds } from "./rows";
 
 function asList<T>(value: T[] | T | undefined): T[] {
     return value === undefined ? [] : Array.isArray(value) ? value : [value];
@@ -45,14 +46,16 @@ export class AutkGrammar {
     private _plotRegistry: PlotRegistry = new Map();
     private _fwdCleanups: Array<() => void> = [];
     private _plotLinks: PlotLinks = new Map();
+    private _plotRows: PlotRows = new Map();
+    private _exports: LayerExports = new Map();
 
     readonly interactions = new GrammarEventEmitter();
 
     constructor(targets?: Targets) {
         const cache: GeoJsonCache = new Map();
         this.dataAdapter = createDataAdapter(targets, cache);
-        this.mapAdapter = createMapAdapter(targets, this._layers, this._computeCache, this._maps, this._computeTypes);
-        this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, cache, this._computeCache);
+        this.mapAdapter = createMapAdapter(targets, this._layers, this._computeCache, this._maps, this._computeTypes, this._exports);
+        this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, cache, this._computeCache, this._plotRows, this._exports);
         this.computeAdapter = createComputeAdapter(this._computeCache, this._computeTypes);
     }
 
@@ -135,6 +138,8 @@ export class AutkGrammar {
         this._layers.length = 0;
         this._plotRegistry.clear();
         this._plotLinks.clear();
+        this._plotRows.clear();
+        this._exports.clear();
         this._computeCache.clear();
         this._computeTypes.clear();
         this.grammarEngine = undefined;
@@ -207,7 +212,8 @@ export class AutkGrammar {
     /**
      * Highlights features on every layer that draws the table `dataRef`, in every map (see {@link mapLayers}), or only
      * in the map `mapId` names. If a plot is linked to one of those layers, by a link or its `mapRef`, the plot
-     * selection is updated too.
+     * selection is updated too, to the same rows: the plot finds them by their feature ids, since it can draw the
+     * table's rows in another order and draws the rows without a geometry, which a layer leaves out.
      *
      * @param dataRef The table's name.
      * @param featureIds The features to highlight: their positions among those the layer draws.
@@ -253,8 +259,8 @@ export class AutkGrammar {
 
     /**
      * Applies a selection to the plot `plotId` names: its `id`, else its `dataRef`.
-     * If that plot is linked to map layers, by links or its `mapRef`, their highlights are updated too: on every map,
-     * or only on the map `mapId` names.
+     * If that plot is linked to map layers, by links or its `mapRef`, their highlights are updated too, to the same rows
+     * (see {@link highlightOnMap}): on every map, or only on the map `mapId` names.
      *
      * @param plotId The plot: its `id`, else its `dataRef`.
      * @param featureIds The features to select: their positions among those the plot draws.
@@ -263,15 +269,24 @@ export class AutkGrammar {
      */
     setPlotSelection(plotId: string, featureIds: number[], mapId?: MapId): void {
         this._plotRegistry.get(plotId)?.setSelection(featureIds);
+        // A layer is lit at its own positions of the selected rows.
+        const rows = this._plotRows.get(plotId) ?? [];
         for (const layer of this._plotLinks.get(plotId) ?? []) {
-            if (isOnMap(layer, mapId)) layer.map.setHighlightedIds(layer.layerId, featureIds);
+            if (isOnMap(layer, mapId)) layer.map.setHighlightedIds(layer.layerId, translateIds(featureIds, rows, layer.rows));
         }
     }
 
-    /** Applies a selection made on `layers` to every plot linked to one of them. */
+    /**
+     * Applies a selection made on `layers`, by their positions `featureIds`, to every plot linked to one of them, at the
+     * plot's own positions of the selected rows.
+     */
     private _selectInLinkedPlots(layers: DrawnLayer[], featureIds: number[]): void {
         for (const [plotId, linked] of this._plotLinks) {
-            if (linked.some((layer) => layers.includes(layer))) this._plotRegistry.get(plotId)?.setSelection(featureIds);
+            const selected = linked.filter((layer) => layers.includes(layer));
+            if (selected.length === 0) continue;
+            const rows = this._plotRows.get(plotId) ?? [];
+            const ids = new Set(selected.flatMap((layer) => translateIds(featureIds, layer.rows, rows)));
+            this._plotRegistry.get(plotId)?.setSelection([...ids]);
         }
     }
 
@@ -300,7 +315,7 @@ export class AutkGrammar {
             // The link names its map, so it is that map's layer that it links, though other maps draw the table too.
             const layer = this._layers.find((drawn) => drawn.mapIndex === mapIndex && drawn.layerId === layerIdOf(layerRef));
             if (!layer) continue;
-            linkPlotToLayer(plot, (plotSpec.events ?? []) as unknown as PlotEvent[], map, layer.layerId);
+            linkPlotToLayer(plot, this._plotRows.get(link.source) ?? [], (plotSpec.events ?? []) as unknown as PlotEvent[], layer);
             addPlotLink(this._plotLinks, link.source, layer);
         }
     }
