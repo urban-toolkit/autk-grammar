@@ -41,11 +41,16 @@ export interface JoinSourceSpec {
     dataRef: string;
     /** Table whose rows are joined onto the root table. */
     joinDataRef: string;
-    /**
-     * Join rows within `distance` (in workspace units) instead of by containment. `useCentroid` measures from
-     * centroid to centroid; it defaults to true.
-     */
-    near?: { distance: number; useCentroid?: boolean };
+    /** Join the rows within `distance` of each root feature instead of the rows that intersect it. */
+    near?: {
+        /** Greatest distance from a root feature to a row it receives, in workspace units. */
+        distance: number;
+        /**
+         * Measure from the root feature's centroid to the row's centroid, the default. With `false`, measure between
+         * the geometries themselves, from their nearest points, so features that touch are 0 apart.
+         */
+        useCentroid?: boolean;
+    };
     /** Aggregate the joined rows per root feature. */
     groupBy?: Array<{
         column: string;
@@ -61,11 +66,16 @@ export interface HeatmapSourceSpec extends TableSourceBase {
     type: 'heatmap';
     /** Table whose rows are aggregated onto the grid. */
     joinDataRef: string;
-    /**
-     * Radius around each grid cell, in workspace units, within which rows are aggregated. `useCentroid` measures
-     * from centroid to centroid; it defaults to true.
-     */
-    near: { distance: number; useCentroid?: boolean };
+    /** Which rows count toward a grid cell: those within `distance` of the cell's center. */
+    near: {
+        /** Radius around each cell's center, in workspace units. */
+        distance: number;
+        /**
+         * Measure from the cell's center to each row's centroid, the default. With `false`, measure to the nearest
+         * point of the row's geometry, so a long road counts in every cell within `distance` of any part of it.
+         */
+        useCentroid?: boolean;
+    };
     groupBy?: Array<{
         column: string;
         aggregateFn?: AggregateFunction;
@@ -259,6 +269,11 @@ export interface CustomDataSourceSpec extends TableSourceBase {
  */
 export interface GeoTiffDataSourceSpec extends TableSourceBase {
     type: 'geotiff';
+    /**
+     * URL of the GeoTIFF file, relative to the page or absolute, which autk-db fetches. The file's first image is
+     * read: each of its bands becomes a band of the table (`band_1`, `band_2`, ...), where the file's no-data value
+     * reads as no value. A rotated or sheared grid is refused.
+     */
     geotiffFileUrl: string;
     /** CRS of the file, as an EPSG string. Defaults to `'EPSG:4326'`. */
     coordinateFormat?: string;
@@ -591,11 +606,11 @@ type GpgpuComputeBase = {
     wgslFunction: string | string[]
 }
 
-/** Fields every compute pass shares. */
+/** Where a GPGPU pass writes its result. A render pass declares its own `outputTableName` and `layerType`. */
 type ComputeOutput = {
     /**
      * Name of a new table that receives the result, so the source table stays as it is and later passes, maps and
-     * plots can read both. Without it, a GPGPU pass writes into its `dataRef` table. A render pass needs it.
+     * plots can read both. Without it, the pass writes into its `dataRef` table.
      */
     outputTableName?: string,
     /**
@@ -646,11 +661,12 @@ export type RenderLayerSpec = {
 
 /**
  * A render-based compute pass: from each viewpoint of a table it renders the layers in several directions on the GPU
- * and counts what each frame shows (a visibility or sky-view metric). The result is a copy of the viewpoints table
- * with the metrics in `feature.properties.compute.render`, stored as the table `outputTableName`. Read by the Autark
- * adapter only.
+ * and counts what each frame shows (a visibility or sky-view metric). The result, the viewpoints table's features
+ * (one point per window with the `building-windows` strategy) with the metrics in `feature.properties.compute.render`,
+ * is stored as the table `outputTableName`. Read by the Autark adapter only.
  */
 export type RenderComputeSpec = {
+    /** Selects a render pass. */
     type: 'render',
     /** Workspace of the tables the pass reads and writes. */
     workspace?: WorkspaceName,
@@ -663,25 +679,63 @@ export type RenderComputeSpec = {
      * @minItems 1
      */
     layers: RenderLayerSpec[],
+    /** Where the frames are rendered from: the features of a table, and the directions each one looks in. */
     viewpoints: {
         /** Name of the table whose features are the viewpoints. */
         dataRef: string,
-        /** Where a feature's viewpoints are: its centroid (the default) or one per floor on a building's windows. */
-        strategy?: { type: 'centroid' } | { type: 'building-windows', floors: number },
+        /**
+         * Where the viewpoints are: each feature's centroid (the default), looking in the directions `sampling` sets,
+         * or `building-windows`: windows along each building's facades, each looking out from the facade and 30
+         * degrees to either side. The result then holds one point per window instead of the table's features.
+         */
+        strategy?: { type: 'centroid' } | {
+            type: 'building-windows',
+            /** Rows of windows on each facade, spread evenly up the building's height. */
+            floors: number,
+        },
+        /** The directions each viewpoint looks in, around the horizon. Read with the `centroid` strategy only. */
         sampling?: {
-            /** Directions sampled around each viewpoint. */
+            /** Directions sampled around each viewpoint, evenly spaced. Defaults to 1. */
             directions?: number,
+            /**
+             * Angle of the first direction, in degrees counterclockwise from east (0 looks east, 90 north); the others
+             * follow every 360 / `directions` degrees. Defaults to 0.
+             */
             azimuthOffsetDeg?: number,
+            /**
+             * Angle of every direction above the horizontal, in degrees: up when positive, down when negative.
+             * Defaults to 0.
+             */
             pitchDeg?: number,
         },
     },
-    /** `classes` counts the pixels of each layer type, `objects` those of each object. */
+    /**
+     * What each feature of the result receives: `classes`, the share of its frames' pixels each layer type covers,
+     * from 0 to 1; `objects`, for each object seen, the share of its frames that show it.
+     */
     aggregation:
-        | { type: 'classes', includeBackground?: boolean, backgroundLayerType?: string }
+        | {
+            type: 'classes',
+            /** Also count the pixels where no layer is drawn, such as the sky, as one more class. */
+            includeBackground?: boolean,
+            /** Name of that class. Defaults to `background`, and it must not be the type of a rendered layer. */
+            backgroundLayerType?: string,
+        }
         | { type: 'objects' },
+    /**
+     * The lens of the frames each viewpoint renders. Unlike a map's `camera`, which sets where a map view looks from,
+     * it sets no position or direction: `viewpoints` does.
+     */
     camera?: {
+        /** Field of view of each square frame, in degrees. Defaults to 90. */
         fov?: number,
-        clip?: { near?: number, far?: number },
+        /** How near and how far from the viewpoint the frames show the layers, in workspace units. */
+        clip?: {
+            /** Nearest distance drawn. Defaults to 1. */
+            near?: number,
+            /** Farthest distance drawn. Defaults to 5000. */
+            far?: number,
+        },
     },
     /**
      * Frame size in pixels.
