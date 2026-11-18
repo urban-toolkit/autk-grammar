@@ -1,4 +1,4 @@
-import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec } from '@urban-toolkit/the-urban-grammar';
+import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec } from '@urban-toolkit/the-urban-grammar';
 import { AutkDb, DEFAULT_WORKSPACE_COORDINATE_FORMAT } from '@urban-toolkit/autk-db';
 import type { LoadGeojsonParams } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Geometry } from 'geojson';
@@ -182,11 +182,15 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                     print(db, targets);
                     return db;
                 }
+                case 'geotiff':
+                    await db.loadGeoTiff(rest_spec as GeoTiffDataSourceSpec);
+                    print(db, targets);
+                    return db;
                 case 'heatmap': {
                     const hm = rest_spec as HeatmapSourceSpec;
                     await db.buildHeatmap({
-                        tableJoinName: hm.tableJoinName,
-                        near: { distance: hm.near.distance },
+                        tableJoinName: hm.joinDataRef,
+                        near: hm.near,
                         outputTableName: hm.outputTableName,
                         grid: hm.grid,
                         ...(hm.groupBy && { groupBy: hm.groupBy as any }),
@@ -197,14 +201,14 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                 case 'join': {
                     const jn = rest_spec as JoinSourceSpec;
                     await db.spatialQuery({
-                        tableRootName: jn.tableRootName,
-                        tableJoinName: jn.tableJoinName,
+                        tableRootName: jn.dataRef,
+                        tableJoinName: jn.joinDataRef,
                         ...(jn.near && { near: jn.near }),
                         ...(jn.groupBy && { groupBy: jn.groupBy }),
                     });
                     if (cache) {
-                        const updated = await db.getLayer(jn.tableRootName);
-                        cache.set(jn.tableRootName, updated);
+                        const updated = await db.getLayer(jn.dataRef);
+                        cache.set(jn.dataRef, updated);
                     }
                     print(db, targets);
                     return db;

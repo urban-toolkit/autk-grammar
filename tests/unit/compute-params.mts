@@ -20,7 +20,7 @@ const fc = (props: Array<Record<string, unknown>>, rings?: number[][][]): Featur
     })),
 });
 
-const base: ComputeSpec = { dataRef: 'roads', attributes: { x: 'lanes' }, outputColumnName: 'out', wglsFunction: 'return x;' };
+const base: ComputeSpec = { dataRef: 'roads', attributes: { x: 'lanes' }, outputColumnName: 'out', wgslFunction: 'return x;' };
 const tests: Array<[string, () => void | Promise<void>]> = [];
 const test = (name: string, fn: () => void | Promise<void>) => tests.push([name, fn]);
 
@@ -31,7 +31,7 @@ test('joinWgsl joins lines with newlines', () => {
 
 test('plain pass maps spec fields to dispatch params', () => {
     const roads = fc([{ lanes: 2 }]);
-    const p = resolveComputeParams({ ...base, wglsFunction: ['a', 'b'], uniforms: { k: 3 } }, { roads });
+    const p = resolveComputeParams({ ...base, wgslFunction: ['a', 'b'], uniforms: { k: 3 } }, { roads });
     assert.equal(p.collection, roads);
     assert.equal(p.wgslBody, 'a\nb');
     assert.equal(p.resultField, 'out');

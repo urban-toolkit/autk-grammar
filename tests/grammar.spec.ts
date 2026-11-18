@@ -38,8 +38,8 @@ function run(page: Page, example: string): Promise<RunSummary> {
     return page.evaluate((name) => window.runExample(name), example);
 }
 
-function runSpec(page: Page, spec: UrbanSpec): Promise<RunSummary> {
-    return page.evaluate((s) => window.runSpec(s), spec);
+function runSpec(page: Page, spec: UrbanSpec, plotTargets?: 'one' | 'each'): Promise<RunSummary> {
+    return page.evaluate(([s, targets]) => window.runSpec(s, targets), [spec, plotTargets] as const);
 }
 
 /**
@@ -233,7 +233,7 @@ test('packs a batched compute past the 64 KiB a uniform buffer holds', async ({ 
             uniformMatrices: { o: { fromFeature: { layer: 'boxes', path: 'geometry.coordinates.0', iterate: 'batched' }, cols: 2 } },
             outputColumnName: 'count',
             // o packs [xmin,ymin, xmax,ymin, xmax,ymax, xmin,ymax] per feature: count the boxes that have a width.
-            wglsFunction: [
+            wgslFunction: [
                 'var n = 0.0;',
                 'for (var i = 0u; i < u32(num_features); i++) {',
                 '    if (o[i * 8u + 2u] > o[i * 8u]) { n += v[i]; }',
@@ -386,6 +386,65 @@ test('refuses two layers with one id in a map, and takes one title in two maps',
     });
     expect((await mapLayers(page, 'map0')).map((layer) => layer.id)).toEqual(['Same']);
     expect((await mapLayers(page, 'map1')).map((layer) => layer.id)).toEqual(['Same']);
+});
+
+test('links plots to a map by id: two plots of one table, a named layer, and a pick back', async ({ page }) => {
+    await runSpec(page, {
+        data: [area, zones],
+        map: { id: 'zmap', layerRefs: [{ dataRef: 'zones', title: 'Zones' }] },
+        plot: [
+            { id: 'first', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], events: ['click'] },
+            { id: 'second', dataRef: 'zones', mark: 'scatter', axis: ['v', 'id'], events: ['click'] },
+        ],
+        links: [{ source: 'first', target: 'zmap' }, { source: 'second', target: 'zmap', layer: 'Zones' }],
+    });
+    const highlighted = async () => (await layerById(page)).Zones?.highlightedIds;
+
+    // Both plots are known, though they draw one table.
+    expect(await page.evaluate(() => [...(window.grammar as any)._plotRegistry.keys()])).toEqual(['first', 'second']);
+
+    // A selection in either plot highlights the layer; the plot's table names the layer when the link does not.
+    await page.evaluate(() => (window.grammar as any)._plotRegistry.get('first').events.emit('click', { selection: [1, 2] }));
+    expect(await highlighted()).toEqual([1, 2]);
+    await page.evaluate(() => (window.grammar as any)._plotRegistry.get('second').events.emit('click', { selection: [3] }));
+    expect(await highlighted()).toEqual([3]);
+
+    // A pick on the layer selects the features in both linked plots.
+    await page.evaluate(() => window.grammar.maps[0].events.emit('picking' as never, { selection: [2], layerId: 'Zones' } as never));
+    expect(await page.evaluate(() => [...(window.grammar as any)._plotRegistry.get('first').selection])).toEqual([2]);
+    expect(await page.evaluate(() => [...(window.grammar as any)._plotRegistry.get('second').selection])).toEqual([2]);
+});
+
+test('draws each plot in its own target when the plot targets are a list', async ({ page }) => {
+    const plots: PlotSpec[] = [
+        { dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'] },
+        { dataRef: 'zones', mark: 'scatter', axis: ['v', 'id'] },
+    ];
+    const svgsIn = (id: string) => page.evaluate((target) => document.querySelectorAll(`#${target} svg`).length, id);
+
+    // A list gives plot i the target i. (With one target, a later plot replaces the earlier one.)
+    await runSpec(page, { data: [area, zones], plot: plots }, 'each');
+    expect(await svgsIn('plot0')).toBe(1);
+    expect(await svgsIn('plot1')).toBe(1);
+});
+
+test('refuses two views with one id, and links that name nothing', async ({ page }) => {
+    const views = {
+        data: [area, zones],
+        map: { id: 'zmap', layerRefs: [{ dataRef: 'zones', title: 'Zones' }] },
+        plot: { id: 'sc', dataRef: 'zones', mark: 'scatter' as const, axis: ['id', 'v'], events: ['click' as const] },
+    };
+    await expect(runSpec(page, { ...views, plot: { ...views.plot, id: 'zmap' } })).rejects.toThrow('Two maps or plots have the id "zmap"');
+    await expect(runSpec(page, { ...views, links: [{ source: 'nope', target: 'zmap' }] })).rejects.toThrow('Link source "nope" is not the id');
+    await expect(runSpec(page, { ...views, links: [{ source: 'sc', target: 'nope' }] })).rejects.toThrow('Link target "nope" is not the id of a map');
+    await expect(runSpec(page, { ...views, links: [{ source: 'sc', target: 'zmap', layer: 'nope' }] })).rejects.toThrow('has no layer "nope"');
+    // A link without a layer needs the map to draw the plot's table.
+    await expect(runSpec(page, {
+        ...views,
+        map: { id: 'zmap', layerRefs: [{ dataRef: 'paths' }] },
+        data: [area, zones, paths],
+        links: [{ source: 'sc', target: 'zmap' }],
+    })).rejects.toThrow('draws no layer of the table "zones"');
 });
 
 test('highlights a titled layer, and links it to a plot, by its data name', async ({ page }) => {
@@ -624,7 +683,7 @@ test('centers and reverses a raster color scale', async ({ page }) => {
 // The same points counted within 400 m of each cell instead of 1000 m: the same grid, with lower counts.
 const nearHeatmap: DataSourceSpec = {
     type: 'heatmap',
-    tableJoinName: 'noise',
+    joinDataRef: 'noise',
     near: { distance: 400 },
     outputTableName: 'heatmap_near',
     grid: { rows: 30, columns: 30 },
@@ -716,4 +775,131 @@ test('centers and reverses a raster color scale within its colorMapRange, and dr
     expect(plain.layer).toMatchObject({ isColorMap: true, domain: [0, 100] });
     expect((await page.evaluate(() => window.legend()))?.visible).toBe(true);
     expect((await cellsOffScheme(page, plain.layer.interpolator, [0, 100])).off).toBe(0);
+});
+
+test('loads a GeoTIFF as a raster layer', async ({ page }) => {
+    // Like heatmaps, rasters are drawn on the map but not listed in the summary's tables. A raster does not frame
+    // the map, so a vector layer over the same area does.
+    const area = { type: 'Polygon' as const, coordinates: [[[-43.2, -22.95], [-43.0, -22.95], [-43.0, -22.8], [-43.2, -22.8], [-43.2, -22.95]]] };
+    await runSpec(page, {
+        data: [
+            { type: 'geotiff', outputTableName: 'lst', geotiffFileUrl: '/data/niteroi_lst_verao_2001_2024.tif' },
+            { type: 'geojson', outputTableName: 'area', geojsonObject: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: area, properties: {} }] } },
+        ],
+        map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'lst', colorMapInterpolator: 'interpolateYlOrRd' }] },
+    });
+    const layers = await page.evaluate(() => window.mapLayers('map0'));
+    expect(layers.map((layer) => layer.type)).toEqual(['polygons', 'raster']);
+    expect(layers[1].domain).toEqual([expect.any(Number), expect.any(Number)]);
+    await expectDrawn(page, 'map0');
+});
+
+test('draws a GeoJSON polygon layer as parks when layerType says so', async ({ page }) => {
+    const square = { type: 'Polygon' as const, coordinates: [[[-74.01, 40.70], [-74.0, 40.70], [-74.0, 40.71], [-74.01, 40.71], [-74.01, 40.70]]] };
+    await runSpec(page, {
+        data: [{
+            type: 'geojson', outputTableName: 'g', layerType: 'parks',
+            geojsonObject: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: square, properties: {} }] },
+        }],
+        map: { layerRefs: [{ dataRef: 'g' }] },
+    });
+    expect((await page.evaluate(() => window.mapLayers('map0'))).map((layer) => layer.type)).toEqual(['parks']);
+});
+
+test('writes a compute pass into a new table and leaves its source alone', async ({ page }) => {
+    const { tables } = await runSpec(page, {
+        data: [{ type: 'geojson', geojsonFileUrl: '/data/mnt_neighs.geojson', outputTableName: 'neighborhoods' }],
+        compute: [{
+            dataRef: 'neighborhoods',
+            attributes: { x: 'shape_area', y: 'shape_leng' },
+            outputColumnName: 'result',
+            wgslFunction: 'return (4.0 * 3.1415927 * x) / (y * y);',
+            outputTableName: 'compactness',
+        }],
+        map: { layerRefs: [{ dataRef: 'compactness', getFnv: 'compute.result', getFnvType: 'quantitative', defaultFnv: 0 }] },
+    });
+    expect(tables.compactness.features).toBe(tables.neighborhoods.features);
+    expect(await page.evaluate(() => window.valueAt('compactness', 0, 'compute.result'))).toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.valueAt('neighborhoods', 0, 'compute.result'))).toBeUndefined();
+    expect((await page.evaluate(() => window.mapLayers('map0'))).map((layer) => layer.type)).toEqual(['polygons']);
+    await expectDrawn(page, 'map0');
+});
+
+test('runs a render compute pass into a new table', async ({ page }) => {
+    const { tables } = await runSpec(page, {
+        ...boxSpec({ bbox: BOX }),
+        compute: [{
+            type: 'render',
+            outputTableName: 'visibility',
+            layers: [{ id: 'buildings', dataRef: 'box_buildings', type: 'buildings' }, { id: 'roads', dataRef: 'box_roads', type: 'roads' }],
+            viewpoints: { dataRef: 'box_buildings', sampling: { directions: 4 } },
+            aggregation: { type: 'classes', includeBackground: true },
+            tileSize: 64,
+        }],
+        map: { layerRefs: [{ dataRef: 'box_surface' }, { dataRef: 'visibility' }] },
+    });
+    expect(tables.visibility.features).toBe(tables.box_buildings.features);
+    const render = await page.evaluate(() => window.valueAt('visibility', 0, 'compute.render'));
+    expect(render, 'compute.render of the first viewpoint').toMatchObject({ sampleCount: 4, classes: { buildings: expect.any(Number), background: expect.any(Number) } });
+    expect(await page.evaluate(() => window.valueAt('box_buildings', 0, 'compute.render'))).toBeUndefined();
+    expect((await page.evaluate(() => window.mapLayers('map0'))).map((layer) => [layer.id, layer.type])).toEqual([['box_surface', 'surface'], ['visibility', 'buildings']]);
+});
+
+test('accepts useCentroid on a heatmap', async ({ page }) => {
+    const [neighborhoods, noise, heatmap] = heatmapGeojson.data!;
+    const withNear = (near: object): UrbanSpec => ({
+        ...heatmapGeojson,
+        data: [neighborhoods, noise, { ...heatmap, near } as DataSourceSpec],
+    });
+    await runSpec(page, withNear({ distance: 1000 }));
+    const byDefault = await heatmapLayer(page);
+    await runSpec(page, withNear({ distance: 1000, useCentroid: true }));
+    expect((await heatmapLayer(page)).finite).toEqual(byDefault.finite);
+    await runSpec(page, withNear({ distance: 1000, useCentroid: false }));
+    // Point rows have no extent, so the result matches; this checks that the option is accepted.
+    expect((await heatmapLayer(page)).finite).toEqual(byDefault.finite);
+});
+
+test('sets the radius of a points layer with pointSize', async ({ page }) => {
+    const points = { type: 'MultiPoint' as const, coordinates: [[-74.0, 40.7], [-73.99, 40.71]] };
+    await runSpec(page, {
+        data: [{ type: 'geojson', outputTableName: 'p', geojsonObject: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: points, properties: {} }] } }],
+        map: { layerRefs: [{ dataRef: 'p', pointSize: 30 }] },
+    });
+    const [layer] = await page.evaluate(() => window.mapLayers('map0'));
+    expect(layer).toMatchObject({ type: 'points', pointSize: 30 });
+});
+
+test('turns the camera around the point it looks at', async ({ page }) => {
+    const spec = (camera?: object): UrbanSpec => ({
+        data: [{ type: 'geojson', geojsonFileUrl: '/data/mnt_neighs.geojson', outputTableName: 'n' }],
+        map: { layerRefs: [{ dataRef: 'n' }], ...(camera && { camera }) },
+    });
+    await runSpec(page, spec());
+    const before = await page.evaluate(() => window.cameraState('map0'));
+
+    await runSpec(page, spec({ zoom: 12, pitch: 60, bearing: 90 }));
+    const after = await page.evaluate(() => window.cameraState('map0'));
+    const distance = 10000 / 2 ** 2;
+    // The same point is looked at, and the eye is `distance` away from it, tilted 60 degrees from the vertical.
+    expect(after.lookAt[0]).toBeCloseTo(before.lookAt[0], 3);
+    expect(after.lookAt[1]).toBeCloseTo(before.lookAt[1], 3);
+    expect(after.eye[2]).toBeCloseTo(distance * Math.cos(Math.PI / 3), 3);
+    // Bearing 90 looks east, so the eye is west of the point.
+    expect(after.eye[0] - after.lookAt[0]).toBeCloseTo(-distance * Math.sin(Math.PI / 3), 3);
+    expect(after.eye[1]).toBeCloseTo(after.lookAt[1], 3);
+});
+
+test('destroy releases the maps and the registries of a run', async ({ page }) => {
+    await runSpec(page, {
+        data: [{ type: 'geojson', geojsonFileUrl: '/data/mnt_neighs.geojson', outputTableName: 'n' }],
+        map: { layerRefs: [{ dataRef: 'n' }] },
+    });
+    const result = await page.evaluate(() => {
+        const map = window.grammar.maps[0] as unknown as { _isDestroyed: boolean };
+        const before = map._isDestroyed;
+        window.grammar.destroy();
+        return { before, after: map._isDestroyed, maps: window.grammar.maps.length, layer: window.grammar.mapLayer('n') ?? null };
+    });
+    expect(result).toEqual({ before: false, after: true, maps: 0, layer: null });
 });

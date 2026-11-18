@@ -1,4 +1,4 @@
-import type { ComputeSpec, FromFeatureDirective } from '@urban-toolkit/the-urban-grammar';
+import type { GpgpuComputeSpec, FromFeatureDirective } from '@urban-toolkit/the-urban-grammar';
 import type { GpgpuPipelineParams } from '@urban-toolkit/autk-compute';
 import type { Feature, FeatureCollection } from 'geojson';
 
@@ -23,7 +23,7 @@ const BOX_BYTES = 8 * 4;
 type UniformEntry = number | FromFeatureDirective;
 type MatrixEntry = { data: number[][]; cols: number } | FromFeatureDirective;
 
-/** Joins a `wglsFunction` written as an array of lines. Any other separator would let a `//` comment swallow the lines after it. */
+/** Joins a `wgslFunction` written as an array of lines. Any other separator would let a `//` comment swallow the lines after it. */
 export function joinWgsl(body: string | string[]): string {
     return Array.isArray(body) ? body.join('\n') : body;
 }
@@ -46,7 +46,7 @@ function valueAtPath(item: unknown, path: string): unknown {
     }, item);
 }
 
-function directives(block: ComputeSpec): FromFeatureDirective[] {
+function directives(block: GpgpuComputeSpec): FromFeatureDirective[] {
     const out: FromFeatureDirective[] = [];
     for (const cfg of [block.uniforms, block.uniformMatrices]) {
         for (const value of Object.values(cfg ?? {})) {
@@ -57,7 +57,7 @@ function directives(block: ComputeSpec): FromFeatureDirective[] {
 }
 
 /** Every table a compute pass reads: its `dataRef` plus each `fromFeature` layer. */
-export function computeLayerNames(block: ComputeSpec): string[] {
+export function computeLayerNames(block: GpgpuComputeSpec): string[] {
     return [...new Set([block.dataRef, ...directives(block).map(d => d.fromFeature.layer)])];
 }
 
@@ -65,7 +65,7 @@ export function computeLayerNames(block: ComputeSpec): string[] {
  * The iteration a compute pass asks for, or `null`. Every iterating directive must read the same
  * layer; the first one found decides the mode and the layer.
  */
-export function findIterateSource(block: ComputeSpec): { mode: 'all' | 'batched'; layer: string } | null {
+export function findIterateSource(block: GpgpuComputeSpec): { mode: 'all' | 'batched'; layer: string } | null {
     for (const d of directives(block)) {
         const { iterate, layer } = d.fromFeature;
         if (iterate === 'all' || iterate === 'batched') return { mode: iterate, layer };
@@ -251,14 +251,14 @@ export function buildBatchedUniforms(
  * nothing. With `iterate: 'all'`, pass the feature index as `iterateIndex` for each dispatch (see
  * {@link runCompute}). Throws when the pass's `dataRef` is not in `layers`.
  */
-export function resolveComputeParams(block: ComputeSpec, layers: ComputeLayers, iterateIndex?: number): GpgpuPipelineParams {
+export function resolveComputeParams(block: GpgpuComputeSpec, layers: ComputeLayers, iterateIndex?: number): GpgpuPipelineParams {
     const collection = lookup(layers, block.dataRef);
     if (!collection) throw new Error(`compute: table "${block.dataRef}" is not loaded`);
 
     const params: GpgpuPipelineParams = {
         collection,
         variableMapping: block.attributes,
-        wgslBody: joinWgsl(block.wglsFunction),
+        wgslBody: joinWgsl(block.wgslFunction),
     };
     if (block.attributeArrays) params.attributeArrays = block.attributeArrays;
     if (block.attributeMatrices) params.attributeMatrices = block.attributeMatrices;
@@ -292,7 +292,7 @@ function notBatched<T>(entries: Record<string, T> | undefined): Record<string, T
     return Object.fromEntries(Object.entries(entries).filter(([, v]) => !(isFromFeature(v) && v.fromFeature.iterate === 'batched')));
 }
 
-function outputColumns(block: ComputeSpec): string[] {
+function outputColumns(block: GpgpuComputeSpec): string[] {
     return block.outputColumns ?? (block.outputColumnName ? [block.outputColumnName] : []);
 }
 
@@ -300,7 +300,7 @@ function outputColumns(block: ComputeSpec): string[] {
  * Runs a compute pass. Without iteration, or with `batched`, that is one dispatch. With `all` it is
  * one dispatch per feature of the iterated layer, and each output column holds the sum over them.
  */
-export async function runCompute(block: ComputeSpec, layers: ComputeLayers, run: ComputeRunner): Promise<FeatureCollection> {
+export async function runCompute(block: GpgpuComputeSpec, layers: ComputeLayers, run: ComputeRunner): Promise<FeatureCollection> {
     const iterate = findIterateSource(block);
     if (iterate?.mode !== 'all') return run(resolveComputeParams(block, layers));
 

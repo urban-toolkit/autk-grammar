@@ -1,5 +1,6 @@
-import { MapAdapter, MapLayerSpec, MapSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
-import { Targets, MapRegistry, MapLayerIds, ComputeCache } from '../types';
+import type { FeatureCollection } from 'geojson';
+import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
+import { Targets, MapRegistry, MapLayerIds, ComputeCache, ComputeLayerTypes } from '../types';
 import { AutkMap } from '@urban-toolkit/autk-map';
 import type { LayerRenderInfo } from '@urban-toolkit/autk-map';
 import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator } from '@urban-toolkit/autk-core';
@@ -30,7 +31,7 @@ function hexColor(value: string, key: string, layerId: string): ColorRGB {
     return ColorMap.hexToRgb(value as ColorHEX);
 }
 
-/** What `color`, `stroke` and `width` set on the layer's autk-map render info. */
+/** What `color`, `stroke`, `width` and `pointSize` set on the layer's autk-map render info. */
 function styleRenderInfo(layerRef: MapLayerSpec, layerId: string): Partial<LayerRenderInfo> {
     const renderInfo: Partial<LayerRenderInfo> = {};
     if (layerRef.color != null)
@@ -41,6 +42,8 @@ function styleRenderInfo(layerRef: MapLayerSpec, layerId: string): Partial<Layer
         renderInfo.strokeColor = hexColor(layerRef.stroke, 'stroke', layerId);
     if (layerRef.width != null)
         renderInfo.polylinesWidth = layerRef.width;
+    if (layerRef.pointSize != null)
+        renderInfo.pointSize = layerRef.pointSize;
     return renderInfo;
 }
 
@@ -180,13 +183,37 @@ function rasterBand(collection: { features?: { properties?: unknown }[] }, getFn
     return band?.id ?? bands[0]?.id ?? getFnv ?? '';
 }
 
-export function createMapAdapter(targets?: Targets, registry?: MapRegistry, computeCache?: ComputeCache, maps?: AutkMap[], layerIds?: MapLayerIds): MapAdapter {
+/**
+ * Moves a map's camera as `camera` says, from the view that fits the map's layers. The camera reports each change,
+ * so the map redraws without a request.
+ */
+function applyCamera(map: AutkMap, camera: CameraSpec): void {
+    if(camera.zoom === undefined && !camera.pitch && !camera.bearing) return;
+
+    // Turn the view around the point it looks at: the eye moves on a sphere around that point, so the data stays
+    // in view at any pitch. `pitch` is the angle from straight down and `bearing` the compass heading of the view,
+    // clockwise from north.
+    const view = map.camera;
+    const [x, y] = view.getLookAt();
+    const distance = camera.zoom !== undefined ? 10000 / Math.pow(2, camera.zoom - 10) : Math.abs(view.getEye()[2]);
+    const pitch = (camera.pitch ?? 0) * Math.PI / 180;
+    const bearing = (camera.bearing ?? 0) * Math.PI / 180;
+    const eye = [
+        x - distance * Math.sin(pitch) * Math.sin(bearing),
+        y - distance * Math.sin(pitch) * Math.cos(bearing),
+        distance * Math.cos(pitch),
+    ];
+    view.resetCamera([Math.sin(bearing), Math.cos(bearing), 0], [x, y, 0], eye);
+}
+
+export function createMapAdapter(targets?: Targets, registry?: MapRegistry, computeCache?: ComputeCache, maps?: AutkMap[], layerIds?: MapLayerIds, computeTypes?: ComputeLayerTypes): MapAdapter {
 
     async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<void> {
         let tableToTypeMap: {[tableName: string]: string} = {};
         for(const table of context.getTablesMetadata()) {
             if(table.type !== undefined) tableToTypeMap[table.name] = table.type;
         }
+        for(const [name, type] of computeTypes ?? []) tableToTypeMap[name] = type;
 
         for(const layerRef of spec.layerRefs){
             const name     = layerRef.dataRef;
@@ -194,7 +221,7 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
             const type     = tableToTypeMap[name] as LayerType;
             const getFnv   = layerRef.getFnv;
 
-            const rawData = computeCache?.get(name) ?? await context.getLayer(name);
+            const rawData = computeCache?.get(name) ?? (type === 'raster' ? await context.getRaster(name) as unknown as FeatureCollection : await context.getLayer(name));
             // Raster tables (e.g. heatmaps) are a single feature with no geometry, so keep them as-is.
             const data = type === 'raster' ? rawData : {
                 ...rawData,
@@ -330,6 +357,9 @@ export function createMapAdapter(targets?: Targets, registry?: MapRegistry, comp
 
                 if(maps)
                     maps[index] = map;
+
+                if(spec.camera)
+                    applyCamera(map, spec.camera);
 
                 map.draw();
             }
