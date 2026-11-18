@@ -228,6 +228,12 @@ export interface OsmDataSourceSpec extends TableSourceBase {
     autoLoadLayers?: {
         /** Currently ignored by both adapters. */
         dropOsmTable?: boolean;
+        /**
+         * CRS of the OpenStreetMap data's coordinates, as an EPSG string. Defaults to `'EPSG:4326'`, the degrees the
+         * Overpass API and OpenStreetMap's extracts give. The layers and the tag sets are read in it. Read by the Autark
+         * adapter only.
+         */
+        coordinateFormat?: string;
         layers: Array<LayerType>;
     };
     /** Area to load: sub-areas inside a geocoded region (`geocodeArea` with `areas`), or a box (`bbox`), not both. */

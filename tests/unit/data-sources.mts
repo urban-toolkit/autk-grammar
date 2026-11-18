@@ -100,6 +100,14 @@ test('refuses tag sets with a PBF extract, naming the source, before autk-db run
     assert.deepEqual((await loadOsmParams({ ...osm, pbfFileUrl: 'area.osm.pbf', tagSets: [] })).tagSets, []);
 });
 
+test('an OSM source hands autk-db the CRS of its coordinates, and leaves dropOsmTable out', async () => {
+    assert.deepEqual(
+        (await loadOsmParams({ ...osm, autoLoadLayers: { layers: ['roads'], coordinateFormat: 'EPSG:4269' } })).autoLoadLayers,
+        { layers: ['roads'], coordinateFormat: 'EPSG:4269' },
+    );
+    assert.deepEqual((await loadOsmParams({ ...osm, autoLoadLayers: { layers: ['roads'], dropOsmTable: true } })).autoLoadLayers, { layers: ['roads'] });
+});
+
 test('an OSM source hands autk-db its forceRefresh', async () => {
     assert.equal((await loadOsmParams({ ...osm, forceRefresh: true })).forceRefresh, true);
     assert.equal('forceRefresh' in await loadOsmParams(osm), false);

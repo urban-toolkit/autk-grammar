@@ -108,6 +108,8 @@ expect('osm tag sets with layers', withTagSets([tagSet({})], { autoLoadLayers: {
 expect('osm with a pbf and no tag sets', withTagSets([], { pbfFileUrl: 'downtown.osm.pbf' }), true);
 expect('osm with forceRefresh', { data: [{ ...osm, forceRefresh: true }] }, true);
 expect('osm with forceRefresh as a string', { data: [{ ...osm, forceRefresh: 'yes' }] }, false);
+expect('osm layers with the CRS of their coordinates', { data: [{ ...osm, autoLoadLayers: { layers: ['roads'], coordinateFormat: 'EPSG:4269' } }] }, true);
+expect('osm layers with a CRS as a number', { data: [{ ...osm, autoLoadLayers: { layers: ['roads'], coordinateFormat: 4269 } }] }, false);
 
 // Documents the runtime cannot draw.
 expect('unknown data type', { data: [{ ...osm, type: 'shapefile' }] }, false);
@@ -338,7 +340,7 @@ const newKeys: Array<[string, string[]]> = [
     ['WorkspaceSpec', ['']],
     ['SqlSourceSpec', ['', 'query', 'layerType']],
     ['HeatmapSourceSpec', ['groupBy.normalize']],
-    ['OsmDataSourceSpec', ['forceRefresh']],
+    ['OsmDataSourceSpec', ['forceRefresh', 'autoLoadLayers.coordinateFormat']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

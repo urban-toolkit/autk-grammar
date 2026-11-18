@@ -201,6 +201,14 @@ autk-db keeps the Overpass API's answer for an `osm` source in the browser's cac
 { type: 'osm', outputTableName: 'loop', queryArea: { geocodeArea: 'Chicago', areas: ['Loop'] }, autoLoadLayers: { layers: ['roads'] }, forceRefresh: true }
 ```
 
+### `autoLoadLayers.coordinateFormat`
+
+The CRS of an `osm` source's coordinates, as an EPSG string. It defaults to `EPSG:4326`, the degrees the Overpass API and OpenStreetMap's extracts give, so a source sets it only for data in another CRS. The layers and the tag sets are read in it, and stored in the workspace's CRS.
+
+```ts
+{ type: 'osm', outputTableName: 'area', pbfFileUrl: 'area-nad83.osm.pbf', queryArea: { bbox: [-74.02, 40.70, -74.00, 40.72] }, autoLoadLayers: { layers: ['roads'], coordinateFormat: 'EPSG:4269' } }
+```
+
 ## Compute
 
 Each entry of `compute` runs on the GPU with autk-compute, in order, once the data is loaded. Its `type` is `gpgpu`, the default, or `render`.
