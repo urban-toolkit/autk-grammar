@@ -5,7 +5,8 @@ import { Targets, ComputeCache, ComputeLayerTypes } from '../types';
 import { DrawnLayers, LayerExports, exportOf, mapIdOf } from '../drawn';
 import { rowKeys } from '../rows';
 import { AutkMap } from '@urban-toolkit/autk-map';
-import type { LayerRenderInfo } from '@urban-toolkit/autk-map';
+import { TILE_SOURCES } from '@urban-toolkit/autk-map';
+import type { LayerRenderInfo, TileSource } from '@urban-toolkit/autk-map';
 import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator } from '@urban-toolkit/autk-core';
 import type { ColorHEX, ColorMapConfig, ColorMapDomainSpec, ColorRGB, LayerType, TransferFunction } from '@urban-toolkit/autk-core';
 import { AutkDb } from '@urban-toolkit/autk-db';
@@ -26,6 +27,29 @@ function checkLayerIds(spec: MapSpec, index: number): void {
             throw new Error(`Map ${index} draws two layers with the id "${id}". A layer's id is its title, else its dataRef: give each layer of a map its own title.`);
         ids.add(id);
     }
+}
+
+const DEFAULT_BASEMAP_TITLE = 'Basemap';
+
+/** The title a basemap has in the layer list, which no layer of the map may share. */
+function basemapTitleOf(spec: MapSpec): string {
+    return spec.basemap?.title ?? DEFAULT_BASEMAP_TITLE;
+}
+
+/**
+ * The tile source of a map's basemap: a preset by name, or the source the spec gives. Refuses a name that is not a
+ * preset, and a title another layer of the map has.
+ */
+function basemapSource(spec: MapSpec, index: number): TileSource {
+    const basemap = spec.basemap!;
+    const title = basemapTitleOf(spec);
+    if (spec.layerRefs.some((layerRef) => layerIdOf(layerRef) === title))
+        throw new Error(`Map ${index}: the basemap's title "${title}" is also a layer's. Give the basemap a title of its own.`);
+    if (typeof basemap.source !== 'string') return basemap.source as TileSource;
+    const preset = (TILE_SOURCES as Record<string, TileSource>)[basemap.source];
+    if (!preset)
+        throw new Error(`Map ${index}: "${basemap.source}" is not a basemap preset (${Object.keys(TILE_SOURCES).join(', ')}).`);
+    return preset;
 }
 
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
@@ -394,6 +418,9 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                     await map.init();
                     await enterWorkspace(context, spec.workspace);
                     drawn = await loadLayers(map, context, spec);
+                    // The tiles need the map origin, which the first layer of a table sets.
+                    if(spec.basemap)
+                        map.loadTiles(basemapTitleOf(spec), { source: basemapSource(spec, index), opacity: spec.basemap.opacity });
                 } catch(error) {
                     try {
                         map.destroy();

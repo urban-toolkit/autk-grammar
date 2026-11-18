@@ -419,6 +419,47 @@ test('refuses two layers with one id in a map, and takes one title in two maps',
     expect((await mapLayers(page, 'map1')).map((layer) => layer.id)).toEqual(['Same']);
 });
 
+test('draws a basemap of web map tiles under the layers, from a preset or a source of its own, and refuses a name that is not a preset or a title a layer has', async ({ page }) => {
+    // The tiles come from a route, not the network: one 256-pixel PNG for every tile asked for.
+    const tile = new PNG({ width: 256, height: 256 });
+    tile.data.fill(200);
+    const tileBody = PNG.sync.write(tile);
+    const asked: string[] = [];
+    await page.route(/^https:\/\/(tile\.openstreetmap\.org|tiles\.example\.test)\//, (route) => {
+        asked.push(new URL(route.request().url()).host);
+        return route.fulfill({ status: 200, contentType: 'image/png', body: tileBody });
+    });
+
+    await runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones' }], basemap: { source: 'openStreetMap', title: 'Streets', opacity: 0.5 } },
+    });
+    const preset = await mapLayers(page);
+    expect(preset.map((layer) => [layer.id, layer.type])).toContainEqual(['Streets', 'tiles']);
+    expect(preset.map((layer) => layer.id)).toContain('zones');
+    await expect.poll(() => asked.includes('tile.openstreetmap.org')).toBe(true);
+
+    // Without a title the basemap is "Basemap" in the layer list.
+    await runSpec(page, {
+        data: [area, zones],
+        map: {
+            layerRefs: [{ dataRef: 'zones' }],
+            basemap: { source: { urlTemplate: 'https://tiles.example.test/{z}/{x}/{y}.png', attribution: 'Example tiles' } },
+        },
+    });
+    expect((await mapLayers(page)).map((layer) => [layer.id, layer.type])).toContainEqual(['Basemap', 'tiles']);
+    await expect.poll(() => asked.includes('tiles.example.test')).toBe(true);
+
+    await expect(runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones' }], basemap: { source: 'cartoLight' as 'openStreetMap' } },
+    })).rejects.toThrow('Map 0: "cartoLight" is not a basemap preset (esriWorldImagery, openStreetMap, osmLight, osmDark).');
+    await expect(runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones' }], basemap: { source: 'openStreetMap', title: 'zones' } },
+    })).rejects.toThrow('Map 0: the basemap\'s title "zones" is also a layer\'s.');
+});
+
 test('links plots to a map by id: two plots of one table, a named layer, and a pick back', async ({ page }) => {
     await runSpec(page, {
         data: [area, zones],

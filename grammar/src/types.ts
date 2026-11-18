@@ -455,6 +455,53 @@ export type CameraSpec = {
     bearing?: number,
 }
 
+/** Ready-made tile sources of a basemap. */
+export type BasemapPreset = 'esriWorldImagery' | 'openStreetMap' | 'osmLight' | 'osmDark';
+
+/** A web map tile source of a basemap that is not a preset. */
+export type BasemapSource = {
+    /**
+     * URL with `{z}`, `{x}` and `{y}` placeholders (`{reverseY}` for a source that counts rows from the south), and
+     * `{s}` for a subdomain.
+     * @minLength 1
+     */
+    urlTemplate: string,
+    /** Credit the provider asks for. It is shown on the map. */
+    attribution: string,
+    /** Smallest zoom level the source serves. Defaults to 0. */
+    minZoom?: number,
+    /** Largest zoom level the source serves. Defaults to 19. */
+    maxZoom?: number,
+    /** Tile edge in pixels. Defaults to 256. */
+    tileSize?: number,
+    /** Subdomains substituted for `{s}`, one letter each (for example `abcd`). Needed when the template uses `{s}`. */
+    subdomains?: string,
+}
+
+/**
+ * Web map tiles drawn under a map's layers, fetched as the camera moves.
+ */
+export type BasemapSpec = {
+    /**
+     * Where the tiles come from: a preset (`esriWorldImagery` for satellite and aerial imagery, `openStreetMap`, and
+     * `osmLight` and `osmDark`, the OpenStreetMap tiles muted light or dark) or a source of your own. Each provider sets its own terms of use, and the attribution stays
+     * visible on the map.
+     */
+    source: BasemapPreset | BasemapSource,
+    /**
+     * Name of the basemap in the map's layer list, where it can be hidden and shown. It cannot be another layer's
+     * title or `dataRef` in that map. Defaults to `Basemap`.
+     * @minLength 1
+     */
+    title?: string,
+    /**
+     * Opacity from 0 to 1. Defaults to 1.
+     * @minimum 0
+     * @maximum 1
+     */
+    opacity?: number,
+}
+
 /**
  * A map view.
  */
@@ -470,6 +517,12 @@ export type MapSpec = {
     style?: string,
     /** Where the map looks from. */
     camera?: CameraSpec,
+    /**
+     * Web map tiles drawn under the layers. The map takes its origin from the first layer of a table, so the tiles
+     * need at least one layer, and they assume the workspace's default coordinate system, EPSG:3395. Read by the
+     * Autark adapter; the deck.gl adapter ignores it.
+     */
+    basemap?: BasemapSpec,
     /** Layers to draw, bottom first. Each names a table with `dataRef`. */
     layerRefs: MapLayerSpec[]
 }
