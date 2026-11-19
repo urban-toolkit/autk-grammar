@@ -583,6 +583,8 @@ if (spec.workspaces) db = await adapter.resolveWorkspaces(db, spec.workspaces);
 for (const source of spec.data ?? []) db = await adapter.resolveSource(db, source);
 ```
 
+The data adapter of either entry notes the coordinate system of each GeoJSON source it puts in its cache, and the two entries keep their notes in one place on the page. So a host may load a spec's tables with the data adapter of `./data` and run its passes with the compute adapter of the main entry, handing it that cache as `sources`: its passes read the sources' features as the grammar's do.
+
 ### Arranging the views
 
 `arrangeViews(spec)` returns:
