@@ -490,8 +490,8 @@ export type RasterTransferFunction = {
 
 /**
  * One layer drawn by a map.
- * @if { "required": ["colorMapRange"] }
- * @then { "not": { "required": ["colorMapDomain"] } }
+ * @if { "type": "object" }
+ * @then { "allOf": [{ "if": { "required": ["colorMapRange"] }, "then": { "not": { "required": ["colorMapDomain"] } } }, { "if": { "required": ["pickedComps"] }, "then": { "required": ["isPick"], "not": { "properties": { "isPick": { "const": false } } } } }] }
  */
 export type MapLayerSpec = {
     /** Name of the table to draw, as produced by a data source or a compute pass. */
@@ -563,15 +563,24 @@ export type MapLayerSpec = {
      * raster layers; other layers and the deck.gl adapter ignore it.
      */
     transferFunction?: RasterTransferFunction,
-    /** Legend labels. Read by the deck.gl adapter; the Autark adapter ignores it. */
+    /** Legend labels. Neither adapter reads it. */
     colorMapLabels?: string[],
-    /** Feature ids drawn as picked. Read by the deck.gl adapter; the Autark adapter ignores it. */
-    pickedComps?: number[],
+    /**
+     * Features drawn as picked from the start, in the map's highlight color, as if the user had picked them: their
+     * positions among the features the layer draws, as `map:picking` events give them. autk-map draws picked features
+     * only on the layer of a map that picks, so the layer sets `isPick: true`, and no later layer of its map sets it, nor
+     * does a link or a plot's `mapRef` make another layer of its map pick. The plots linked to the layer select the same
+     * rows. Read by the Autark adapter; the deck.gl adapter ignores it.
+     */
+    pickedComps?: RowPosition[],
     /** How values are rescaled before coloring. */
     normalization?: { mode: NormalizationMode; lowerPercentile?: number; upperPercentile?: number },
     /** Load the layer without drawing it. */
     isSkip?: boolean,
-    /** Allow picking features on this layer. */
+    /**
+     * Allow picking features on this layer. autk-map lets one layer of a map pick: the last layer that sets it, unless a
+     * link or a plot's `mapRef` makes another layer of the map pick.
+     */
     isPick?: boolean,
     /**
      * Columns whose values name the rows a pick on this layer selects, so an app can link

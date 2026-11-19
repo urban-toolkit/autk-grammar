@@ -300,6 +300,14 @@ expect('map terrain without dataRef', { map: { ...layers, terrain: { band: 'band
 expect('map terrain with an empty dataRef', { map: { ...layers, terrain: { dataRef: '' } } }, false);
 expect('map terrain with an empty band', { map: { ...layers, terrain: { dataRef: 'dem', band: '' } } }, false);
 expect('map terrain with a band as a number', { map: { ...layers, terrain: { dataRef: 'dem', band: 1 } } }, false);
+expect('layer pickedComps on a layer that picks', layer({ isPick: true, pickedComps: [0, 4] }), true);
+expect('layer pickedComps empty', layer({ isPick: true, pickedComps: [] }), true);
+expect('layer pickedComps without isPick', layer({ pickedComps: [1] }), false);
+expect('layer pickedComps with isPick false', layer({ isPick: false, pickedComps: [1] }), false);
+expect('layer pickedComps of a negative position', layer({ isPick: true, pickedComps: [-1] }), false);
+expect('layer pickedComps of a position between two', layer({ isPick: true, pickedComps: [1.5] }), false);
+expect('layer pickedComps as strings', layer({ isPick: true, pickedComps: ['1'] }), false);
+expect('layer pickedComps as a number', layer({ isPick: true, pickedComps: 1 }), false);
 expect('layout with an unknown type', { map: layers, layout: { type: 'diagonal' } }, false);
 expect('layout grid with zero columns', { map: layers, layout: { type: 'grid', columns: 0 } }, false);
 expect('layout grid with columns that are not a whole number', { map: layers, layout: { type: 'grid', columns: 2.5 } }, false);
@@ -434,6 +442,7 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['plot.markColor', 'plot.highlightColor']],
     ['UrbanSpec', ['map.terrain', 'map.terrain.dataRef', 'map.terrain.band']],
     ['TerrainSpec', ['']],
+    ['MapLayerSpec', ['pickedComps', 'isPick']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

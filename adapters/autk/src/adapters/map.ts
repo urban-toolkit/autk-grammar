@@ -133,6 +133,38 @@ function checkColorMapRange(layerRef: MapLayerSpec): void {
         throw refuse(`colorMapCenter (${center}) must lie within colorMapRange [${low}, ${high}].`);
 }
 
+/** Refuses a list of feature positions that is not whole numbers from 0, as `key` of a layer. */
+function checkPositions(positions: unknown, key: string, layerId: string): void {
+    if (!Array.isArray(positions) || !positions.every((position) => Number.isInteger(position) && position >= 0))
+        throw new Error(`Layer "${layerId}": ${key} must list the positions of features the layer draws, whole numbers from 0, not ${JSON.stringify(positions)}.`);
+}
+
+/** Refuses positions on a raster layer, which draws no features, and positions past the last feature a layer draws. */
+function checkDrawnPositions(positions: readonly number[], key: string, layerId: string, type: LayerType, count: number): void {
+    if (type === 'raster')
+        throw new Error(`Layer "${layerId}": ${key} names features, and a raster layer has none.`);
+    const past = positions.find((position) => position >= count);
+    if (past !== undefined)
+        throw new Error(`Layer "${layerId}": ${key} names position ${past}, past the ${count} features the layer draws.`);
+}
+
+/**
+ * Refuses a layer's `pickedComps` when the layer does not set `isPick`, or when a later layer of its map sets it: autk-map
+ * draws picked features only on the layer that picks, and lets one layer of a map pick, the last that asks.
+ */
+function checkPickedComps(spec: MapSpec): void {
+    spec.layerRefs.forEach((layerRef, at) => {
+        if (layerRef.pickedComps === undefined) return;
+        const layerId = layerIdOf(layerRef);
+        checkPositions(layerRef.pickedComps, 'pickedComps', layerId);
+        if (layerRef.isPick !== true)
+            throw new Error(`Layer "${layerId}": pickedComps draws features as picked, which autk-map does only on the layer that picks: set isPick: true.`);
+        const later = spec.layerRefs.slice(at + 1).find((other) => other.isPick === true);
+        if (later)
+            throw new Error(`Layer "${layerId}": pickedComps draws features as picked on the layer that picks, but layer "${layerIdOf(later)}", after it, picks too: autk-map lets one layer of a map pick, the last.`);
+    });
+}
+
 function valueAtPath(obj: unknown, path: string): unknown {
     return path.split('.').reduce<unknown>((acc, key) => {
         if (acc == null || typeof acc !== 'object') return undefined;
@@ -381,7 +413,11 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 map.updateThematic(layerId, { collection: thematicData, property });
             }
 
-            drawn.push(type === 'raster' ? [] : drawnRowKeys(map, layerId, rowKeys(rows), kept));
+            const drawnRows = type === 'raster' ? [] : drawnRowKeys(map, layerId, rowKeys(rows), kept);
+            // The run highlights pickedComps once the plots and links exist (see AutkGrammar).
+            if(layerRef.pickedComps)
+                checkDrawnPositions(layerRef.pickedComps, 'pickedComps', layerId, type, drawnRows.length);
+            drawn.push(drawnRows);
         }
         return drawn;
     }
@@ -395,6 +431,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                     checkColorMapRange(layerRef);
                     checkPointSize(layerRef.pointSize, layerIdOf(layerRef));
                 }
+                checkPickedComps(spec);
                 // Refused before the map is made, so a refused camera leaves nothing on the page.
                 const refusedCamera = spec.camera && cameraRefusal(spec.camera);
                 if(refusedCamera)

@@ -536,6 +536,16 @@ A plot's `selection` lists the rows selected as it is drawn, by their feature id
 plot: { id: 'sizes', dataRef: 'parcels', mark: 'scatter', axis: ['area', 'perimeter'], mapRef: 'parcels', selection: [0, 4] }
 ```
 
+### `pickedComps`
+
+A layer's `pickedComps` lists the features drawn as picked as the map is drawn, in the map's highlight color, as if the user had picked them: their positions among those the layer draws, as `map:picking` events and `highlightOnMap` give them. The run applies it once the plots and their links exist, as `highlightOnMap` does for that one layer: the layer highlights the features, and the plots linked to it select the same rows. No `map:picking` event reports it.
+
+autk-map draws picked features only on the layer of a map that picks, and lets one layer of a map pick: the last that sets `isPick`, unless a link or a plot's `mapRef` makes another layer pick. So a layer with `pickedComps` sets `isPick: true`, and a run refuses `pickedComps` on a layer without it, or on a layer a later layer of its map, a link or a plot's `mapRef` takes picking from. A run also refuses it on a raster layer, on a layer linked to a plot that sets `selection`, and a position that is not a whole number from 0 or is past the last feature the layer draws.
+
+```ts
+map: { layerRefs: [{ dataRef: 'parcels', isPick: true, pickedComps: [0, 4] }] }
+```
+
 ## Page layout
 
 A spec's `layout` says how its maps and plots are arranged on the page. The grammar's run never reads it: the page that hosts the views does, when it makes their canvases and elements, with `arrangeViews(spec)` (see [For hosts](#for-hosts)), so every host arranges a spec's views alike.

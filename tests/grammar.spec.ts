@@ -2308,6 +2308,60 @@ test('selects the rows a plot names in selection as it is drawn, and highlights 
         .rejects.toThrow('Plot "p": selection names row 4, but the plot draws 4 rows.');
 });
 
+test('draws the features pickedComps names as picked on the layer that picks, and selects them in the plots linked to it', async ({ page }) => {
+    // The zones in one gray, so the picked ones show in autk-map's highlight color, #5dade2.
+    const zonesWith = (options: Partial<MapLayerSpec>, rest: Partial<UrbanSpec> = {}): UrbanSpec => ({
+        data: [area, zones, blocks],
+        map: { id: 'm', layerRefs: [{ dataRef: 'zones', title: 'Zones', color: '#d9d9d9', isPick: true, ...options }, { dataRef: 'blocks' }] },
+        ...rest,
+    });
+    const litZones = async () => {
+        const drawn = await page.evaluate(() => window.drawnRows('map0', 'Zones'));
+        return ((await layerById(page)).Zones.highlightedIds ?? []).map((position) => drawn[position]?.id).sort();
+    };
+
+    // Without pickedComps nothing is picked.
+    await runSpec(page, zonesWith({}));
+    expect((await layerById(page)).Zones).toMatchObject({ isPick: true, highlightedIds: [] });
+    expect(await pixelsIn(page, '#5dade2', 'no zone picked')).toBe(0);
+
+    // Two zones, by their positions among those the layer draws: the layer picks them as it is drawn.
+    await runSpec(page, zonesWith({ pickedComps: [1, 3] }));
+    expect((await layerById(page)).Zones).toMatchObject({ isPick: true, highlightedIds: [1, 3] });
+    expect(await pixelsIn(page, '#5dade2', 'two zones picked')).toBeGreaterThan(400);
+
+    // A plot linked to the layer selects the same zones, though it draws its rows in their own order.
+    await runSpec(page, zonesWith({ pickedComps: [2] }, {
+        plot: plotOf({ id: 'p', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'] }),
+        links: [{ source: 'p', target: 'm', layer: 'Zones' }],
+    }));
+    const [zone] = await litZones();
+    expect((await plotMarks(page)).filter(({ fill }) => fill === highlightBlue).map(({ datum }) => datum?.id)).toEqual([zone]);
+
+    // Refused: a layer that does not pick, positions that are not features the layer draws, a raster, and a layer that
+    // another of its map takes picking from, by isPick, a link or a plot's mapRef.
+    await expect(runSpec(page, zonesWith({ isPick: undefined, pickedComps: [1] })))
+        .rejects.toThrow('Layer "Zones": pickedComps draws features as picked, which autk-map does only on the layer that picks: set isPick: true.');
+    await expect(runSpec(page, zonesWith({ pickedComps: [1.5] })))
+        .rejects.toThrow('Layer "Zones": pickedComps must list the positions of features the layer draws, whole numbers from 0, not [1.5].');
+    await expect(runSpec(page, zonesWith({ pickedComps: [4] })))
+        .rejects.toThrow('Layer "Zones": pickedComps names position 4, past the 4 features the layer draws.');
+    await expect(runSpec(page, heatmapWith({ title: 'Heat', isPick: true, pickedComps: [0] })))
+        .rejects.toThrow('Layer "Heat": pickedComps names features, and a raster layer has none.');
+    await expect(runSpec(page, {
+        data: [area, zones, blocks],
+        map: { layerRefs: [{ dataRef: 'zones', title: 'Zones', isPick: true, pickedComps: [1] }, { dataRef: 'blocks', isPick: true }] },
+    })).rejects.toThrow('Layer "Zones": pickedComps draws features as picked on the layer that picks, but layer "blocks", after it, picks too: autk-map lets one layer of a map pick, the last.');
+    await expect(runSpec(page, zonesWith({ pickedComps: [1] }, {
+        plot: plotOf({ id: 'p', dataRef: 'blocks', mark: 'scatter', axis: ['id', 'v'] }),
+        links: [{ source: 'p', target: 'm' }],
+    }))).rejects.toThrow(`Layer "Zones": pickedComps draws features as picked on the layer that picks, but a link or a plot's mapRef made layer "blocks" of its map pick: autk-map lets one layer of a map pick.`);
+    await expect(runSpec(page, zonesWith({ pickedComps: [1] }, {
+        plot: plotOf({ id: 'p', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], selection: [0] }),
+        links: [{ source: 'p', target: 'm', layer: 'Zones' }],
+    }))).rejects.toThrow('Layer "Zones": pickedComps and the selection of plot "p", which is linked to it, both set what the two show: set one of them.');
+});
+
 test('draws the marks of every plot of the page in one markColor, and the selected ones in one highlightColor', async ({ page }) => {
     const green = 'rgb(44, 160, 44)'; // #2ca02c
     const red = 'rgb(214, 39, 40)'; // #d62728
