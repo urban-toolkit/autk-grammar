@@ -1514,6 +1514,71 @@ test("keeps the camera's up direction across its line of sight at any pitch belo
         .rejects.toThrow('Map 0: camera.pitch must be at least 0 and less than 90 degrees, not 90');
 });
 
+test("looks at camera.center, put in the CRS of the map's workspace, and turns the view around it", async ({ page }) => {
+    // A point of zones about 220 m west and 510 m south of the middle of area, the map's origin, which the view without
+    // a center looks at.
+    const center: [number, number] = [-73.982, 40.7515];
+    const spec = (camera: CameraSpec, workspaces?: UrbanSpec['workspaces']): UrbanSpec => ({
+        ...(workspaces && { workspaces }), data: [area, zones], map: { camera, layerRefs: [{ dataRef: 'zones' }] },
+    });
+    const view = () => page.evaluate(() => window.cameraView('map0'));
+    const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const unit = (a: number[]) => a.map((value) => value / Math.sqrt(dot(a, a)));
+    // The point looked at, back in the workspace's CRS: the world is relative to the map's origin.
+    const lookedAt = ({ lookAt, origin }: { lookAt: number[]; origin: number[] }) => [lookAt[0] + origin[0], lookAt[1] + origin[1]];
+
+    await runSpec(page, { data: [area, zones], map: { layerRefs: [{ dataRef: 'zones' }] } });
+    const fitted = await view();
+
+    // A center alone: the eye goes straight above it, as high as the view without a center has it.
+    await runSpec(page, spec({ center }));
+    const above = await view();
+    const [x, y] = worldMercator(...center);
+    const [atX, atY] = lookedAt(above);
+    expect(Math.abs(atX - x), 'x of the point looked at, in World Mercator meters').toBeLessThan(0.01);
+    expect(Math.abs(atY - y), 'y of the point looked at, in World Mercator meters').toBeLessThan(0.01);
+    expect(above.eye[0]).toBeCloseTo(above.lookAt[0], 2);
+    expect(above.eye[1]).toBeCloseTo(above.lookAt[1], 2);
+    expect(above.eye[2]).toBeCloseTo(fitted.eye[2], 2);
+
+    // With zoom, pitch and bearing, the eye turns around the center, with its up across the line of sight.
+    await runSpec(page, spec({ center, zoom: 13, pitch: 55, bearing: 30 }));
+    const turned = await view();
+    const [turnedX, turnedY] = lookedAt(turned);
+    expect(Math.abs(turnedX - x)).toBeLessThan(0.01);
+    expect(Math.abs(turnedY - y)).toBeLessThan(0.01);
+    const distance = 10000 / 2 ** 3;
+    const [tilt, heading] = [55, 30].map((degrees) => (degrees * Math.PI) / 180);
+    expect(turned.eye[0] - turned.lookAt[0]).toBeCloseTo(-distance * Math.sin(tilt) * Math.sin(heading), 2);
+    expect(turned.eye[1] - turned.lookAt[1]).toBeCloseTo(-distance * Math.sin(tilt) * Math.cos(heading), 2);
+    expect(turned.eye[2] - turned.lookAt[2]).toBeCloseTo(distance * Math.cos(tilt), 2);
+    const sight = unit(turned.lookAt.map((value, i) => value - turned.eye[i]));
+    expect(Math.abs(dot(unit(turned.up), sight)), 'up across the line of sight').toBeLessThan(1e-5);
+    expect(turned.up[2], 'up toward the sky').toBeGreaterThan(0);
+
+    // A host's later turn of the map, by the same camera, looks at the same center; one the run never put on the map
+    // is refused.
+    await page.evaluate((camera) => window.turnCamera('map0', camera), { center, pitch: 40 } as CameraSpec);
+    const again = lookedAt(await view());
+    expect(Math.abs(again[0] - x)).toBeLessThan(0.01);
+    expect(Math.abs(again[1] - y)).toBeLessThan(0.01);
+    await expect(page.evaluate(() => window.turnCamera('map0', { center: [-73.97, 40.76] })))
+        .rejects.toThrow('camera.center [-73.97, 40.76] has no point on this map yet');
+
+    // In a workspace in Web Mercator, the center is a point of Web Mercator, about 33 km from World Mercator's here.
+    await runSpec(page, spec({ center }, [{ coordinateFormat: 'EPSG:3857', precisionGrid: 0.01 }]));
+    const [webX, webY] = lookedAt(await view());
+    const [wx, wy] = webMercator(...center);
+    expect(Math.abs(webX - wx), 'x of the point looked at, in Web Mercator meters').toBeLessThan(0.01);
+    expect(Math.abs(webY - wy), 'y of the point looked at, in Web Mercator meters').toBeLessThan(0.01);
+
+    // A center that is not [longitude, latitude], and one Mercator has no point for, are refused before anything draws.
+    await expect(runSpec(page, spec({ center: [-73.98, 40.75, 0] as unknown as [number, number] })))
+        .rejects.toThrow('Map 0: camera.center must be [longitude, latitude] in degrees');
+    await expect(runSpec(page, spec({ center: [-73.98, 90] })))
+        .rejects.toThrow('Map 0: camera.center [-73.98, 90] has no point in EPSG:3395');
+});
+
 test('draws the second run of a reused grammar from its own table, though the first run loaded a GeoJSON table of that name', async ({ page }) => {
     // The grammar kept each GeoJSON table it loaded, which its plots read before the database, until the instance went
     // away: run again with a table of the same name from a CSV, a plot drew the first run's GeoJSON rows.

@@ -12,6 +12,7 @@ import { AutkDb } from '@urban-toolkit/autk-db';
 import { extentOf } from './data';
 import { checkPointSize, planarPointSize } from '../point-size';
 import { HEX_COLOR, buildDomainSpec, colorMapRangeRefusal } from '../color-keys';
+import { centerOnMap, centerRefusal, resolveCameraCenter } from '../camera';
 
 /** The id a layer has in its map: its `title`, else its `dataRef`. */
 export function layerIdOf(layerRef: MapLayerSpec): string {
@@ -164,20 +165,22 @@ function rasterBand(collection: { features?: { properties?: unknown }[] }, getFn
 }
 
 /**
- * Why a run refuses `camera`, or `undefined` when it takes it: a pitch that is not at least 0 and less than 90 degrees.
- * At 90 the eye would sit on the ground, edge-on to the map's flat layers, and autk-map's pan, which moves the eye by
- * its height, would stand still. The schema refuses the same pitches.
+ * Why a run refuses `camera`, or `undefined` when it takes it: a pitch that is not at least 0 and less than 90 degrees,
+ * or a center that is not `[longitude, latitude]` in degrees. At 90 the eye would sit on the ground, edge-on to the
+ * map's flat layers, and autk-map's pan, which moves the eye by its height, would stand still. The schema refuses the
+ * same pitches and centers.
  */
 function cameraRefusal(camera: CameraSpec): string | undefined {
     const { pitch } = camera as { pitch?: unknown };
-    if (pitch === undefined || (typeof pitch === 'number' && pitch >= 0 && pitch < 90)) return undefined;
+    if (pitch === undefined || (typeof pitch === 'number' && pitch >= 0 && pitch < 90)) return centerRefusal(camera.center);
     const shown = typeof pitch === 'number' ? String(pitch) : JSON.stringify(pitch);
     return `camera.pitch must be at least 0 and less than 90 degrees, not ${shown}: at 90 the eye would sit on the ground, edge-on to the map's flat layers, and the map could not pan.`;
 }
 
 /**
  * Moves a map's camera as `camera` says, from the view that fits the map's layers. The camera reports each change,
- * so the map redraws without a request. It refuses a pitch that is not at least 0 and less than 90 degrees.
+ * so the map redraws without a request. It refuses a pitch that is not at least 0 and less than 90 degrees, and a
+ * `center` that `resolveCameraCenter` has not put on the map.
  *
  * The map adapter calls it once the map's layers are loaded and before the map's first `draw()`. A host that builds
  * its own map from a spec's `map` entry calls it at the same point, so the map looks from where the grammar's would.
@@ -185,13 +188,14 @@ function cameraRefusal(camera: CameraSpec): string | undefined {
 export function applyCamera(map: AutkMap, camera: CameraSpec): void {
     const refused = cameraRefusal(camera);
     if(refused) throw new Error(refused);
-    if(camera.zoom === undefined && !camera.pitch && !camera.bearing) return;
+    const center = camera.center && centerOnMap(map, camera.center);
+    if(camera.zoom === undefined && !camera.pitch && !camera.bearing && !center) return;
 
-    // Turn the view around the point it looks at: the eye moves on a sphere around that point, so the data stays
-    // in view at any pitch. `pitch` is the angle from straight down and `bearing` the compass heading of the view,
-    // clockwise from north.
+    // Turn the view around the point it looks at, `center` or else the one the view looks at now: the eye moves on a
+    // sphere around that point, so the data stays in view at any pitch. `pitch` is the angle from straight down and
+    // `bearing` the compass heading of the view, clockwise from north.
     const view = map.camera;
-    const [x, y] = view.getLookAt();
+    const [x, y] = center ?? view.getLookAt();
     const distance = camera.zoom !== undefined ? 10000 / Math.pow(2, camera.zoom - 10) : Math.abs(view.getEye()[2]);
     const pitch = (camera.pitch ?? 0) * Math.PI / 180;
     const bearing = (camera.bearing ?? 0) * Math.PI / 180;
@@ -395,6 +399,10 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                     await map.init();
                     await enterWorkspace(context, spec.workspace);
                     drawn = await loadLayers(map, context, spec);
+                    // The point the camera looks at, in the CRS of the map's workspace, which is current here.
+                    if(spec.camera?.center)
+                        await resolveCameraCenter(context, map, spec.camera.center)
+                            .catch((error: Error) => { throw new Error(`Map ${index}: ${error.message}`); });
                 } catch(error) {
                     try {
                         map.destroy();

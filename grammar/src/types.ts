@@ -622,6 +622,12 @@ export type CameraSpec = {
      * @maximum 360
      */
     bearing?: number,
+    /**
+     * The point the view looks at, as `[longitude, latitude]` in degrees (WGS84). The run puts it in the CRS of the
+     * map's workspace, and the eye turns around it as `pitch` and `bearing` say. Without it, the middle of the view that
+     * fits the map's layers. Read by the Autark adapter only.
+     */
+    center?: [longitude: Longitude, latitude: Latitude],
 }
 
 /**

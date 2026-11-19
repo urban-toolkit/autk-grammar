@@ -292,6 +292,18 @@ expect('camera pitch below 0', { map: { ...layers, camera: { pitch: -1 } } }, fa
 expect('camera bearing above 360', { map: { ...layers, camera: { bearing: 361 } } }, false);
 expect('camera zoom below 0', { map: { ...layers, camera: { zoom: -1 } } }, false);
 expect('camera zoom as a string', { map: { ...layers, camera: { zoom: '12' } } }, false);
+// Camera keys, valid and refused. CameraSpec allows keys it does not name, so each refused form is valid until its key
+// is typed.
+const cameraWith = (camera: Record<string, unknown>) => ({ map: { ...layers, camera } });
+expect('camera center', cameraWith({ center: [-73.98, 40.75] }), true);
+expect('camera center with zoom, pitch and bearing', cameraWith({ center: [-73.98, 40.75], zoom: 15, pitch: 50, bearing: 30 }), true);
+expect('camera center at the edges of the degrees', cameraWith({ center: [-180, 90] }), true);
+expect('camera center with three numbers', cameraWith({ center: [-73.98, 40.75, 0] }), false);
+expect('camera center with one number', cameraWith({ center: [-73.98] }), false);
+expect('camera center longitude above 180', cameraWith({ center: [181, 40.75] }), false);
+expect('camera center latitude below -90', cameraWith({ center: [-73.98, -90.5] }), false);
+expect('camera center as strings', cameraWith({ center: ['-73.98', '40.75'] }), false);
+expect('camera center as an object', cameraWith({ center: { lon: -73.98, lat: 40.75 } }), false);
 expect('layout with an unknown type', { map: layers, layout: { type: 'diagonal' } }, false);
 expect('layout grid with zero columns', { map: layers, layout: { type: 'grid', columns: 0 } }, false);
 expect('layout grid with columns that are not a whole number', { map: layers, layout: { type: 'grid', columns: 2.5 } }, false);
@@ -424,6 +436,7 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['plot.axisLabels']],
     ['UrbanSpec', ['plot.selection']],
     ['UrbanSpec', ['plot.markColor', 'plot.highlightColor']],
+    ['UrbanSpec', ['map.camera.center']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

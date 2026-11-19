@@ -324,11 +324,23 @@ A map's `camera` moves its view from the one that fits its layers:
 | `zoom` | The eye's distance from the point the view looks at: `10000 / 2^(zoom - 10)` workspace units, so each step halves it. Without it, the distance of the view that fits the layers. |
 | `pitch` | The tilt from straight down, in degrees, at least 0 and less than 90. At 90 the eye would sit on the ground, edge-on to the flat layers, and the map could not pan, so a run refuses it. |
 | `bearing` | The compass heading the view faces, clockwise from north, from 0 to 360 degrees. |
+| `center` | The point the view looks at, `[longitude, latitude]` in degrees (see [`camera.center`](#cameracenter)). |
 
-The camera turns around the point the map looks at, which the view that fits the layers sets: the eye moves on a sphere around that point, so the layers stay in view at any pitch and bearing. The view's up direction stays across its line of sight, as autk-map's own tilt leaves it, so the map's pan, tilt and zoom at the cursor carry on from the spec's view as they do from a view the user tilted.
+The camera turns around the point the map looks at, `center` or else the one the view that fits the layers sets: the eye moves on a sphere around that point, so the layers stay in view at any pitch and bearing. The view's up direction stays across its line of sight, as autk-map's own tilt leaves it, so the map's pan, tilt and zoom at the cursor carry on from the spec's view as they do from a view the user tilted.
 
 ```ts
 map: { id: 'downtown', camera: { zoom: 15, pitch: 50, bearing: 30 }, layerRefs: [{ dataRef: 'buildings' }] }
+```
+
+### `camera.center`
+
+`center` is the point the view looks at, as `[longitude, latitude]` in degrees (WGS84). The run puts it in the CRS of the map's workspace with autk-db's own transform, as autk-db puts a source's coordinates there, so it names the same place in World Mercator, autk-db's default, and in any CRS a `workspaces` entry sets. The eye then turns around it as `zoom`, `pitch` and `bearing` say; with `center` alone, it looks straight down on it, as high as the view that fits the layers. A run refuses a `center` that is not two numbers in range, and one the workspace's CRS has no point for, such as a pole in Mercator.
+
+```ts
+map: {
+  camera: { center: [-74.0110, 40.7069], zoom: 15, pitch: 50, bearing: 30 },  // the New York Stock Exchange
+  layerRefs: [{ dataRef: 'fidi_surface' }, { dataRef: 'fidi_buildings' }],
+}
 ```
 
 ## Layer styling
@@ -569,7 +581,8 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 | `createComputeAdapter(cache?, types?, sources?)` | The compute adapter. Its `resolveCompute(db, pass)` runs one `compute` entry on the GPU. The results are kept only in `cache`, and `types` receives the layer type of each table a pass wrote under its own `outputTableName`. `sources` is the cache `createDataAdapter` fills, from which a pass reads a `fromFeature` table a GeoJSON source loaded in its workspace's CRS. |
 | `enterWorkspace(db, workspace?)` | Makes an entry's workspace (the default one without a name) the one autk-db works in, and switches only when another is current. Every adapter calls it before it reads or writes an entry's tables. |
 | `tableKey(workspace, name)` | The key of a table in those caches: its name in the default workspace, `<workspace>/<name>` in another. |
-| `applyCamera(map, camera)` | Moves an `AutkMap`'s camera as a map's `camera` says, from the view that fits its layers, and refuses a `pitch` that is not at least 0 and less than 90. The map adapter calls it once the layers are loaded, before the map's first `draw()`. |
+| `applyCamera(map, camera)` | Moves an `AutkMap`'s camera as a map's `camera` says, from the view that fits its layers, and refuses a `pitch` that is not at least 0 and less than 90. The map adapter calls it once the layers are loaded, before the map's first `draw()`. It looks at a `center` that `resolveCameraCenter` put on the map, and refuses any other, so a host's later turns of a map the grammar drew keep its center. |
+| `resolveCameraCenter(db, map, center)` | Puts `center`, `[longitude, latitude]` in degrees, in the CRS of the workspace `db` works in, and keeps it with `map` for `applyCamera`. The map adapter calls it once the layers are loaded, with the map's workspace current; a host that builds its own map calls it after `enterWorkspace(db, workspace)`. |
 | `arrangeViews(spec)` | Where each view of a spec goes on the page, as its `layout` says: a grid of panes, one per view (see [Arranging the views](#arranging-the-views)). It refuses a `layout` it cannot arrange, with a sentence that names the value. |
 
 `@urban-toolkit/autk-grammar/data` exports `createDataAdapter`, `enterWorkspace` and `tableKey` with their types, as an ES module and a CommonJS one. Its code imports `@urban-toolkit/autk-db` alone, never autk-map, autk-plot, autk-compute or autk-core, so it loads where they cannot, such as Node:
