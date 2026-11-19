@@ -280,12 +280,28 @@ window.cameraState = (canvasId: string) => {
     return { eye: [...camera.getEye()], lookAt: [...camera.getLookAt()] };
 };
 
+/**
+ * The positions of the features a layer hides, in order, read with autk-map's public getters: a vector layer gives them
+ * (`skippedIds`); a points layer gives which of its point instances are hidden (`skippedVertices`), and each of its
+ * features (`components`) holds the instances up to its running count `nPoints`. Undefined for a layer that hides none
+ * of either kind, a raster.
+ */
+function skippedIdsOf(layer: unknown): number[] | undefined {
+    const { skippedIds, skippedVertices, components } = layer as
+        { skippedIds?: number[]; skippedVertices?: Float32Array; components?: Array<{ nPoints: number }> };
+    if (Array.isArray(skippedIds)) return [...skippedIds].sort((a, b) => a - b);
+    if (!skippedVertices || !Array.isArray(components)) return undefined;
+    return components.flatMap((component, position) => {
+        const first = position > 0 ? components[position - 1].nPoints : 0;
+        return first < component.nPoints && skippedVertices[first] > 0 ? [position] : [];
+    });
+}
+
 /** The render state autk-map holds for each layer of the map on #canvasId, in its layer order. */
 window.mapLayers = (canvasId: string) => mapOn(canvasId).layerManager.layers.map((layer) => {
     const info = layer.layerRenderInfo;
     const highlighted = (layer as unknown as { highlightedIds?: number[] }).highlightedIds;
-    // A points layer, unlike the others, has no getter for the features it hides.
-    const skipped = (layer as unknown as { _skippedIds?: Set<number> })._skippedIds;
+    const skipped = skippedIdsOf(layer);
     return {
         id: layer.layerInfo.id,
         type: layer.layerInfo.typeLayer,
@@ -300,7 +316,7 @@ window.mapLayers = (canvasId: string) => mapOn(canvasId).layerManager.layers.map
         domain: info.colormap.computedDomain ? [...info.colormap.computedDomain] : undefined,
         labels: info.colormap.computedLabels ? [...info.colormap.computedLabels] : undefined,
         highlightedIds: highlighted ? [...highlighted] : undefined,
-        skippedIds: skipped ? [...skipped].sort((a, b) => a - b) : undefined,
+        skippedIds: skipped,
         polylinesWidthByComponent: info.polylinesWidthByComponent ? [...info.polylinesWidthByComponent] : undefined,
     };
 });
@@ -366,7 +382,10 @@ window.mapUi = (canvasId: string) => {
     };
 };
 
-/** The terrain of the map on #canvasId, or null when it draws none (see `TerrainState`). */
+/**
+ * The terrain of the map on #canvasId, or null when it draws none (see `TerrainState`). autk-map 4.1.1 gives no public
+ * getter for a terrain's heightfield, so this reads the one its terrain render path keeps (`_terrainRenderPath`).
+ */
 window.terrain = (canvasId: string) => {
     const map = mapOn(canvasId);
     const path = (map as unknown as { _terrainRenderPath?: { heightfield?: Omit<TerrainState, 'band' | 'bandMin' | 'bandMax'> } | null })._terrainRenderPath;
