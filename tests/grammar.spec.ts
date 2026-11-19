@@ -2135,3 +2135,37 @@ test("formats the tick labels of a plot's axes with its tickFormats", async ({ p
     // A list d3-format cannot read is refused before anything is drawn.
     await expect(zonesBy('scatter', ['.2f'])).rejects.toThrow('Plot "p": tickFormats must hold two d3-format specifiers, [x, y].');
 });
+
+test("titles a plot's axes with its axisLabels, and the output of a transform value", async ({ page }) => {
+    const titles = () => page.evaluate(() => window.plotAxisTitles());
+    const zonesBy = (fields: Record<string, unknown>) =>
+        runSpec(page, { data: [area, zones], plot: plotOf({ id: 'p', dataRef: 'zones', axis: ['id', 'v'], ...fields }) });
+
+    // A scatter plot's x and y titles, and the axis titles of parallel coordinates, in the order of axis.
+    await zonesBy({ mark: 'scatter', axisLabels: ['Zone', 'Value'] });
+    expect(await titles()).toEqual(['Zone', 'Value']);
+    await zonesBy({ mark: 'parallel-coordinates', axisLabels: ['Zone', 'Value'] });
+    expect(await titles()).toEqual(['Zone', 'Value']);
+
+    // A table's headers: a column without a title keeps its name, and each row has a cell under each header.
+    await runSpec(page, {
+        data: [trees],
+        plot: plotOf({ id: 't', dataRef: 'trees', mark: 'table', axis: ['id', 'kind', 'n'], axisLabels: ['Tree', 'Kind'] }),
+    });
+    const table = await page.evaluate(() => ({
+        headers: Array.from(document.querySelectorAll('#plot th'), (header) => header.textContent),
+        cells: Array.from(document.querySelectorAll('#plot tr.autkMark'), (row) => row.querySelectorAll('td').length),
+    }));
+    expect(table).toEqual({ headers: ['Tree', 'Kind', 'n'], cells: [3, 3, 3, 3] });
+
+    // A binned bar chart's count axis is titled value, autk-plot's own title for a transform's output, not "@transform".
+    const binned = { mark: 'bar', axis: ['v', '@transform'], transform: { preset: 'binning-1d', options: { bins: 2 } } };
+    await zonesBy(binned);
+    expect(await titles()).toEqual(['v', 'value']);
+    await zonesBy({ ...binned, axisLabels: ['Value', 'Zones'] });
+    expect(await titles()).toEqual(['Value', 'Zones']);
+
+    // More titles than columns are refused before anything is drawn.
+    await expect(zonesBy({ mark: 'scatter', axisLabels: ['Zone', 'Value', 'Extra'] }))
+        .rejects.toThrow('Plot "p": axisLabels has 3 titles for the 2 columns of axis.');
+});

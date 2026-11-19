@@ -105,6 +105,26 @@ test('refuses tick formats that are not two specifiers d3-format reads', () => {
     refused({ tickFormats: [2, '~s'] }, unread(0, '2'));
 });
 
+test("titles the axes with axisLabels, an axis without one by its column, and a transform's output value", () => {
+    const labels = (fields: Record<string, unknown>) => plotOptions(plot(fields), rows).labels;
+    assert.deepEqual(labels({}), { axis: ['name', 'v'], title: undefined });
+    assert.deepEqual(labels({ axisLabels: ['Name', 'Value'], title: 'Trees' }), { axis: ['Name', 'Value'], title: 'Trees' });
+    // A table titles its columns by the list it is handed, so every column gets one.
+    assert.deepEqual(labels({ mark: 'table', axis: ['name', 'v', 'kind'], axisLabels: ['Name'] }), { axis: ['Name', 'v', 'kind'], title: undefined });
+    // autk-plot titled the output of a binned bar chart or a line chart "@transform".
+    assert.deepEqual(labels({ axis: ['v', '@transform'], transform: { preset: 'binning-1d' } }), { axis: ['v', 'value'], title: undefined });
+    assert.deepEqual(labels({ axis: ['v', '@transform'], axisLabels: ['', 'Trees'] }), { axis: ['', 'Trees'], title: undefined });
+    checkPlotKeys(plot({ axisLabels: [] }));
+});
+
+test('refuses axis titles that are not strings, more titles than axis columns, or two titles alike', () => {
+    const list = 'axisLabels must be a list of titles, one for each column of axis.';
+    refused({ axisLabels: 'Name' }, list);
+    refused({ axisLabels: ['Name', 3] }, list);
+    refused({ axisLabels: ['Name', 'Value', 'Kind'] }, 'axisLabels has 3 titles for the 2 columns of axis.');
+    refused({ axisLabels: ['Value', 'Value'] }, 'axisLabels gives two axes the title "Value".');
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
     try { fn(); console.log(`ok ${name}`); }

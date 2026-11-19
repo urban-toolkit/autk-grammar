@@ -52,6 +52,23 @@ function tickFormatsRefusal(tickFormats: unknown): string | undefined {
 }
 
 /**
+ * Why a plot refuses its `axisLabels`, or `undefined` when it takes them: titles that are not strings, more titles than
+ * `axis` has columns, which a table would show as headers over no cells, and two titles alike, since a table finds the
+ * column a click on a header sorts by its title.
+ */
+function axisLabelsRefusal(axisLabels: unknown, axis: readonly string[]): string | undefined {
+    if (axisLabels === undefined) return undefined;
+    if (!Array.isArray(axisLabels) || !axisLabels.every((title) => typeof title === 'string'))
+        return 'axisLabels must be a list of titles, one for each column of axis.';
+    if (axisLabels.length > axis.length)
+        return `axisLabels has ${axisLabels.length} titles for the ${axis.length} columns of axis.`;
+    const twice = axisLabels.find((title, at) => axisLabels.indexOf(title) !== at);
+    if (twice !== undefined)
+        return `axisLabels gives two axes the title ${JSON.stringify(twice)}.`;
+    return undefined;
+}
+
+/**
  * Refuses what a plot spec sets that autk-plot cannot draw, with a sentence that names the plot. `AutkGrammar.run` calls
  * it for each plot before it draws any view. The schema refuses the same values; a host that skips it gets the sentence.
  */
@@ -59,7 +76,8 @@ export function checkPlotKeys(spec: PlotSpec): void {
     const refusal = schemeRefusal('colorMapInterpolator', spec.colorMapInterpolator, false)
         ?? schemeRefusal('categoricalColorMapInterpolator', spec.categoricalColorMapInterpolator, true)
         ?? colorMapRangeRefusal(spec.colorMapRange, spec.colorMapDomain)
-        ?? tickFormatsRefusal(spec.tickFormats);
+        ?? tickFormatsRefusal(spec.tickFormats)
+        ?? axisLabelsRefusal(spec.axisLabels, spec.axis);
     if (refusal) throw new Error(`Plot "${plotKey(spec)}": ${refusal}`);
 }
 
@@ -90,13 +108,22 @@ function domainSpecOf(spec: PlotSpec, rows: readonly (Feature | null | undefined
 }
 
 /**
+ * The title of each axis: its `axisLabels` entry, else its column's name, and `value`, autk-plot's own title, for the
+ * axis that holds a transform's output, `@transform`. autk-plot titles the axes by the list it is handed, a table's
+ * headers too, so the list holds a title for every column.
+ */
+function axisTitles(spec: PlotSpec): string[] {
+    return spec.axis.map((column, at) => spec.axisLabels?.[at] ?? (column === '@transform' ? 'value' : column));
+}
+
+/**
  * The part of autk-plot's config a plot spec sets, beside its type, rows, columns, events and size. `rows` are the
  * features the plot draws.
  */
 export function plotOptions(spec: PlotSpec, rows: readonly (Feature | null | undefined)[]): PlotOptions {
     const domainSpec = domainSpecOf(spec, rows);
     return {
-        labels: { axis: spec.axis, title: spec.title },
+        labels: { axis: axisTitles(spec), title: spec.title },
         // The grammar's scheme names are autk-core's, as strings.
         ...(spec.colorMapInterpolator !== undefined && { colorMapInterpolator: spec.colorMapInterpolator as unknown as ColorMapInterpolator }),
         ...(spec.categoricalColorMapInterpolator !== undefined && {

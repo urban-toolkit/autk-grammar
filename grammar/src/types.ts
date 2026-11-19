@@ -717,6 +717,15 @@ export interface PlotBase {
      * adapter; the deck.gl adapter ignores it.
      */
     tickFormats?: [x: TickFormat, y: TickFormat],
+    /**
+     * Titles of the plot's axes, in the order of `axis`, in place of the column names: the x and y axes' titles of a
+     * scatter plot, a bar chart, a line chart and a heat matrix, each axis's title of parallel coordinates, and a table's
+     * column headers. An axis without a title keeps its column's name, and an axis that holds a transform's output,
+     * `@transform`, is titled `value`. A run refuses more titles than `axis` has columns, and two titles alike, since a
+     * table finds the column to sort by its header. Read by the Autark adapter; the deck.gl adapter ignores it.
+     * @uniqueItems true
+     */
+    axisLabels?: string[],
     title?: string,
     /** Interactions the plot emits. */
     events?: PlotEvent[],

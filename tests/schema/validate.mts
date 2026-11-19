@@ -335,6 +335,11 @@ expect('plot tick formats with three specifiers', plotWith({ tickFormats: ['~s',
 expect('plot tick formats as a string', plotWith({ tickFormats: '~s' }), false);
 expect('plot tick format d3-format cannot read', plotWith({ tickFormats: ['~s', '%%'] }), false);
 expect('plot tick format as a number', plotWith({ tickFormats: [2, '~s'] }), false);
+expect('plot axis titles', plotWith({ axisLabels: ['Area', 'Neighborhoods'] }), true);
+expect('plot axis title for the first axis only', plotWith({ axisLabels: ['Area'] }, 'table'), true);
+expect('plot axis titles as a string', plotWith({ axisLabels: 'Area' }), false);
+expect('plot axis title as a number', plotWith({ axisLabels: ['Area', 3] }), false);
+expect('plot axis titles alike', plotWith({ axisLabels: ['Area', 'Area'] }, 'scatter'), false);
 
 // Each layer styling option is documented in the schema.
 const layerProperties = schema.definitions?.MapLayerSpec?.properties ?? {};
@@ -406,6 +411,7 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['plot.color', 'plot.colorMapInterpolator', 'plot.categoricalColorMapInterpolator']],
     ['UrbanSpec', ['plot.normalization', 'plot.colorMapRange', 'plot.colorMapDomain']],
     ['UrbanSpec', ['plot.tickFormats']],
+    ['UrbanSpec', ['plot.axisLabels']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {
