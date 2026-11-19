@@ -542,6 +542,13 @@ export type MapLayerSpec = {
     pointSize?: number,
     /** Color the layer by the value read with `getFnv`. */
     isColorMap?: boolean,
+    /**
+     * Show this layer's color scale in the map's legend, which otherwise shows the last layer whose colors autk-map set,
+     * about the last layer colored by value. One layer of a map at most; a layer colored by value, or a raster, whose
+     * legend it shows; and a map that shows its controls. The layers pick as their `isPick` says. Read by the Autark
+     * adapter; the deck.gl adapter ignores it.
+     */
+    legend?: boolean,
     /** Color scheme used when `isColorMap` is set. */
     colorMapInterpolator?: ColorMapInterpolator,
     /**

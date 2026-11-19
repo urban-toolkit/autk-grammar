@@ -314,6 +314,8 @@ expect('layer skippedComps', layer({ skippedComps: [2, 5] }), true);
 expect('layer skippedComps of a negative position', layer({ skippedComps: [-1] }), false);
 expect('layer skippedComps of a position between two', layer({ skippedComps: [0.5] }), false);
 expect('layer skippedComps as a number', layer({ skippedComps: 2 }), false);
+expect('layer shown in the legend', layer({ getFnv: 'v', legend: true }), true);
+expect('layer legend as a string', layer({ legend: 'yes' }), false);
 expect('layer widths by feature', layer({ layerType: 'roads', widthBy: 'compute.width' }), true);
 expect('layer widthBy with width', layer({ widthBy: 'lanes', width: 4 }), false);
 expect('layer widthBy empty', layer({ widthBy: '' }), false);
@@ -474,6 +476,7 @@ const newKeys: Array<[string, string[]]> = [
     ['MapLayerSpec', ['layerType']],
     ['MapLayerSpec', ['skippedComps']],
     ['MapLayerSpec', ['widthBy']],
+    ['MapLayerSpec', ['legend']],
     ['UrbanSpec', ['map.showUi']],
     ['UrbanSpec', ['map.style', 'map.highlightColor', 'map.invalidValueColor']],
     ['MapStyleColors', ['', 'background', 'surface', 'parks', 'water', 'roads', 'buildings', 'points', 'polylines', 'polygons']],

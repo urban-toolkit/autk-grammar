@@ -1081,6 +1081,46 @@ test('hides the floating menu and legend of a map with showUi false, and keeps i
     expect(await ui()).toEqual({ menu: true, legend: true, credit: true });
 });
 
+test("shows the color scale of the layer that sets legend in the map's legend, and leaves picking as the layers set it", async ({ page }) => {
+    // Zones valued 0 to 30 and lots valued 0 to 60, both colored by value; the lots pick.
+    const twoScales = (zonesOptions: Partial<MapLayerSpec> = {}, lotsOptions: Partial<MapLayerSpec> = {}, mapOptions: Partial<MapSpec> = {}): UrbanSpec => ({
+        data: [area, zones, lots],
+        map: {
+            ...mapOptions,
+            layerRefs: [
+                { dataRef: 'zones', title: 'Zones', getFnv: 'v', ...zonesOptions },
+                { dataRef: 'lots', title: 'Lots', getFnv: 'v', isPick: true, ...lotsOptions },
+            ],
+        },
+    });
+    const legend = () => page.evaluate(() => window.legend());
+
+    // By default the legend shows the last layer colored by value.
+    await runSpec(page, twoScales());
+    expect(await legend()).toMatchObject({ title: 'Lots', visible: true });
+
+    // With legend on the zones: their scale, 0 to 30, while the lots still pick and the zones do not.
+    await runSpec(page, twoScales({ legend: true }));
+    expect(await legend()).toEqual({ title: 'Zones', labels: await page.evaluate((domain) => window.domainLabels(domain), [0, 30]), visible: true });
+    const layers = await layerById(page);
+    expect(layers.Lots.isPick).toBe(true);
+    expect(layers.Zones.isPick).toBeFalsy();
+
+    // A raster colored without a scheme of its own hides its legend, and shows it with legend.
+    await runSpec(page, heatmapWith({}));
+    expect((await legend())?.visible).toBe(false);
+    await runSpec(page, heatmapWith({ legend: true }));
+    expect(await legend()).toMatchObject({ title: 'heatmap', visible: true });
+
+    // Refused: two legends in a map, a legend the map's showUi hides, and a layer drawn in one color.
+    await expect(runSpec(page, twoScales({ legend: true }, { legend: true })))
+        .rejects.toThrow('Map 0: layers "Zones" and "Lots" each set legend: a map shows one legend.');
+    await expect(runSpec(page, twoScales({ legend: true }, {}, { showUi: false })))
+        .rejects.toThrow(`Layer "Zones": legend shows the layer in the map's legend, and the map's showUi is false, which hides the legend.`);
+    await expect(runSpec(page, twoScales({ legend: true, color: '#1f77b4' })))
+        .rejects.toThrow('Layer "Zones": legend shows the color scale of a layer colored by value, and the layer is drawn in one color.');
+});
+
 test('hides the features skippedComps names, on a layer of polygons, of lines or of points', async ({ page }) => {
     const red = '#d62728';
     const drawnIn = async (dataRef: string, options: Partial<MapLayerSpec>, name: string) => {

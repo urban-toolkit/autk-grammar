@@ -437,6 +437,16 @@ autk-map leaves out a building part that has no height: none of `height`, `build
 map: { layerRefs: [{ dataRef: 'downtown_buildings', buildingsZeroHeight: true }] }
 ```
 
+### `legend`
+
+A map's legend shows the color scale of one layer: the last layer whose colors autk-map set, about the last layer colored by value. A layer with `legend: true` is the one it shows, and on a raster layer, whose legend autk-map hides without a scale of its own, it shows it. Picking stays as the layers' `isPick` sets it: autk-map's own legend choice, `changeActiveLayer`, would also make the layer the only one of the map that picks.
+
+A run refuses `legend` on two layers of a map, on a layer drawn in one color, and on a map whose `showUi` is `false`, which has no legend.
+
+```ts
+map: { layerRefs: [{ dataRef: 'income', getFnv: 'median', legend: true }, { dataRef: 'schools', getFnv: 'enrollment', isPick: true }] }
+```
+
 ### `skippedComps`
 
 A layer's `skippedComps` lists the features it hides, by their positions among those it draws, as `map:picking` events and `highlightOnMap` give them: a filter the map applies as it is drawn. It hides features of every layer of polygons, lines, points or buildings. A run refuses it on a raster layer, and a position that is not a whole number from 0 or is past the last feature the layer draws. With autk-map 4.1.1, a hidden feature of a polygons or buildings layer can still be picked.

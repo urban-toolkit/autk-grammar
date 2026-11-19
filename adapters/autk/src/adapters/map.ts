@@ -51,14 +51,14 @@ function styleRenderInfo(layerRef: MapLayerSpec, layerId: string): Partial<Layer
 
 /**
  * Whether the layer is colored by value. An explicit `isColorMap` decides. A raster layer is colored by value
- * either way, and this only shows or hides its legend. Otherwise a layer with a `color` is drawn in it, and a
- * layer with a scheme or a `getFnv` value is colored by value.
+ * either way, and this only shows or hides its legend, which a scale of its own or `legend` shows. Otherwise a layer
+ * with a `color` is drawn in it, and a layer with a scheme or a `getFnv` value is colored by value.
  */
 function colorsByValue(layerRef: MapLayerSpec, type: LayerType): boolean {
     if (layerRef.isColorMap != null) return layerRef.isColorMap;
     if (type === 'raster')
         return layerRef.colorMapInterpolator != null || layerRef.colorMapRange != null || layerRef.colorMapCenter != null
-            || layerRef.colorMapReverse === true;
+            || layerRef.colorMapReverse === true || layerRef.legend === true;
     if (layerRef.color != null) return false;
     return layerRef.colorMapInterpolator != null || layerRef.getFnv != null;
 }
@@ -211,6 +211,31 @@ function applyWidthBy(map: AutkMap, layerId: string, path: string, type: LayerTy
     if (given === 0)
         throw new Error(`Layer "${layerId}": widthBy "${path}" gives no line of the layer a width: none has a positive number there.`);
     map.updateRenderInfo(layerId, { polylinesWidthByComponent: widths });
+}
+
+/** Refuses `legend` on two layers of a map, which shows one legend, and on a map whose `showUi` hides its legend. */
+function checkLegend(spec: MapSpec, index: number): void {
+    const legends = spec.layerRefs.filter((layerRef) => layerRef.legend === true).map(layerIdOf);
+    if (legends.length > 1)
+        throw new Error(`Map ${index}: layers ${legends.map((id) => `"${id}"`).join(' and ')} each set legend: a map shows one legend.`);
+    if (legends.length === 1 && spec.showUi === false)
+        throw new Error(`Layer "${legends[0]}": legend shows the layer in the map's legend, and the map's showUi is false, which hides the legend.`);
+}
+
+/**
+ * Shows the color scale of the layer that sets `legend` in the map's legend, which otherwise shows the last layer whose
+ * colors autk-map set. It sets the legend's layer alone, through the map UI's `activeLayer`: autk-map's
+ * `changeActiveLayer` would also make that layer the only one of the map that picks. It refuses a layer drawn in one color.
+ */
+function showLegendOf(map: AutkMap, spec: MapSpec): void {
+    const layerRef = spec.layerRefs.find((candidate) => candidate.legend === true);
+    if (!layerRef) return;
+    const layerId = layerIdOf(layerRef);
+    const layer = map.layerManager.searchByLayerId(layerId);
+    if (!layer?.layerRenderInfo.isColorMap)
+        throw new Error(`Layer "${layerId}": legend shows the color scale of a layer colored by value, and the layer is drawn in one color.`);
+    map.ui.activeLayer = layer;
+    map.ui.refreshLegend(null);
 }
 
 /** The layer types that draw each kind of geometry, and how a refusal says so. */
@@ -547,6 +572,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 }
                 checkPickedComps(spec);
                 checkMapColors(spec, index);
+                checkLegend(spec, index);
                 // Refused before the map is made, so a refused camera leaves nothing on the page.
                 const refusedCamera = spec.camera && cameraRefusal(spec.camera);
                 if(refusedCamera)
@@ -580,6 +606,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                     drawn = await loadLayers(map, context, spec);
                     if(spec.terrain)
                         await loadTerrain(map, context, spec.terrain, index);
+                    showLegendOf(map, spec);
                 } catch(error) {
                     try {
                         map.destroy();
