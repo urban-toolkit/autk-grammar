@@ -1627,10 +1627,11 @@ test('stores the tables of each workspace in the CRS and on the grid its workspa
         ],
     });
 
-    // The default workspace's zones, in Web Mercator meters, each coordinate on the 10 m grid.
+    // The default workspace's zones, in Web Mercator meters, each coordinate on the 10 m grid (autk-db's default grid,
+    // 1 cm, would leave them up to 5 m off it).
     const extents = await page.evaluate(() => window.featureExtents('zones'));
     expect(extents).toHaveLength(4);
-    expect(extents.flat().filter((value) => value % 10 !== 0), 'coordinates off the 10 m grid').toEqual([]);
+    expect(extents.flat().filter((value) => Math.abs(value - 10 * Math.round(value / 10)) > 1e-6), 'coordinates off the 10 m grid').toEqual([]);
     const side = (i: number, pick: (...values: number[]) => number) => pick(...extents.map((extent) => extent[i]));
     const [west, south] = webMercator(-73.99, 40.75);
     const [east, north] = webMercator(-73.975, 40.753);
