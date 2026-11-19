@@ -182,6 +182,22 @@ expect('sql source with an empty query', { data: [{ ...sql, query: '' }] }, fals
 expect('sql source with a query as lines', { data: [{ ...sql, query: ['SELECT *', 'FROM t'] }] }, false);
 expect('sql source without outputTableName', { data: [{ type: 'sql', query: sql.query }] }, false);
 expect('sql source with an unknown layer type', { data: [{ ...sql, layerType: 'rivers' }] }, false);
+const rows = { type: 'update', dataRef: 'sales', strategy: 'replace', jsonObject: [{ month: 'May', total: 7 }] };
+const features = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: point, properties: { id: 2 } }] };
+expect('update with rows replacing a table', { data: [csv, rows] }, true);
+expect('update of rows by an id column, in a workspace', { data: [csv, { ...rows, strategy: 'update', idColumn: 'month', workspace: 'west' }] }, true);
+expect('update of features by a property', { data: [{ type: 'update', dataRef: 'g', strategy: 'update', idColumn: 'properties.id', geojsonObject: features }] }, true);
+expect('update with features replacing a table', { data: [{ type: 'update', dataRef: 'g', strategy: 'replace', geojsonObject: features }] }, true);
+expect('update without rows', { data: [{ type: 'update', dataRef: 'sales', strategy: 'replace' }] }, false);
+expect('update with rows and features', { data: [{ ...rows, geojsonObject: features }] }, false);
+expect('update of rows without an id column', { data: [{ ...rows, strategy: 'update' }] }, false);
+expect('update of features without an id column', { data: [{ type: 'update', dataRef: 'g', strategy: 'update', geojsonObject: features }] }, false);
+expect('update without a strategy', { data: [{ type: 'update', dataRef: 'sales', jsonObject: rows.jsonObject }] }, false);
+expect('update with an unknown strategy', { data: [{ ...rows, strategy: 'upsert' }] }, false);
+expect('update without dataRef', { data: [{ type: 'update', strategy: 'replace', jsonObject: rows.jsonObject }] }, false);
+expect('update with no rows in jsonObject', { data: [{ ...rows, jsonObject: [] }] }, false);
+expect('update with an empty id column', { data: [{ ...rows, strategy: 'update', idColumn: '' }] }, false);
+expect('update with a FeatureCollection of no features', { data: [{ type: 'update', dataRef: 'g', strategy: 'replace', geojsonObject: { type: 'FeatureCollection', features: [] } }] }, false);
 expect('geojson without a source', { data: [{ type: 'geojson', outputTableName: 'g' }] }, false);
 expect('geojson with no features', { data: [{ type: 'geojson', outputTableName: 'g', geojsonObject: { type: 'FeatureCollection', features: [] } }] }, false);
 expect('linechart without transform', { plot: { ...plot, mark: 'linechart' } }, false);
@@ -346,6 +362,7 @@ const newKeys: Array<[string, string[]]> = [
     ['OsmDataSourceSpec', ['forceRefresh', 'autoLoadLayers.coordinateFormat']],
     ['MapLayerSpec', ['osmElements']],
     ['UrbanSpec', ['plot.osmElements']],
+    ['UpdateSourceSpec', ['', 'workspace', 'dataRef', 'strategy', 'idColumn', 'geojsonObject', 'jsonObject']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

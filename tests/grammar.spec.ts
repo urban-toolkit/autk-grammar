@@ -1407,6 +1407,44 @@ test('saves the rows of a sql source as a table, drawn as its layerType says, or
         .rejects.toThrow('SQL source "gone": Only SELECT queries are allowed for raw queries.');
 });
 
+test('replaces and updates the rows of a table with an update source, and the map and the plot draw them as they are now', async ({ page }) => {
+    /** Each bar of the plot, as its two axes' values. */
+    const bars = (axes: [string, string]) => page.evaluate((axes) => [...document.querySelectorAll('#plot rect.autkMark')]
+        .map((bar) => (bar as Element & { __data__?: Record<string, unknown> }).__data__ ?? {})
+        .map((datum) => `${datum[axes[0]]} ${datum[axes[1]]}`)
+        .sort(), axes);
+
+    // A table without a geometry, updated by month: February changes, and April, which matches no row, is added.
+    const sales: DataSourceSpec = { type: 'csv', outputTableName: 'sales', csvObject: [['month', 'total'], ['Jan', 3], ['Feb', 5], ['Mar', 2]] };
+    const salesPlot: PlotSpec = { dataRef: 'sales', mark: 'bar', axis: ['month', 'total'] };
+    await runSpec(page, {
+        data: [sales, { type: 'update', dataRef: 'sales', strategy: 'update', idColumn: 'month', jsonObject: [{ month: 'Feb', total: 9 }, { month: 'Apr', total: 4 }] }],
+        plot: salesPlot,
+    });
+    expect(await bars(['month', 'total'])).toEqual(['Apr 4', 'Feb 9', 'Jan 3', 'Mar 2']);
+    await runSpec(page, { data: [sales, { type: 'update', dataRef: 'sales', strategy: 'replace', jsonObject: [{ month: 'May', total: 7 }] }], plot: salesPlot });
+    expect(await bars(['month', 'total'])).toEqual(['May 7']);
+
+    // A table with a geometry, updated by a property with a feature of its own export, whose coordinates are the
+    // workspace's: zone 2 takes the value 99.
+    await runSpec(page, { data: [area, zones] });
+    const exported = await page.evaluate(async () => (await window.grammar.data.zones).features);
+    const changed = exported.filter((feature) => feature.properties?.id === 2).map((feature) => ({ ...feature, properties: { ...feature.properties, v: 99 } }));
+    expect(changed).toHaveLength(1);
+    await runSpec(page, {
+        data: [area, zones, { type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'properties.id', geojsonObject: { type: 'FeatureCollection', features: changed } } as DataSourceSpec],
+        map: { layerRefs: [{ dataRef: 'zones' }] },
+        plot: { dataRef: 'zones', mark: 'bar', axis: ['id', 'v'] },
+    });
+    // The map draws the new value, and so does the plot, which no longer reads the rows the GeoJSON source loaded.
+    expect((await page.evaluate(() => window.drawnRows('map0', 'zones'))).map((row) => `${row?.id} ${row?.v}`).sort()).toEqual(['0 0', '1 10', '2 99', '3 30']);
+    expect(await bars(['id', 'v'])).toEqual(['0 0', '1 10', '2 99', '3 30']);
+
+    // autk-db's refusal names the table.
+    await expect(runSpec(page, { data: [area, zones, { type: 'update', dataRef: 'nowhere', strategy: 'replace', jsonObject: [{ v: 1 }] }] }))
+        .rejects.toThrow('Update of "nowhere": Table nowhere not found.');
+});
+
 test('sets the radius of a points layer with pointSize', async ({ page }) => {
     const points = { type: 'MultiPoint' as const, coordinates: [[-74.0, 40.7], [-73.99, 40.71]] };
     await runSpec(page, {

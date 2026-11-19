@@ -398,10 +398,47 @@ export interface SqlSourceSpec extends TableSourceBase {
 }
 
 /**
+ * Replaces or changes the rows of a table already loaded, with rows given inline: a FeatureCollection for a table with
+ * a geometry, an array of objects for a table without one. Read by the Autark adapter only.
+ * @if { "required": ["geojsonObject"] }
+ * @then { "not": { "required": ["jsonObject"] }, "if": { "required": ["strategy"], "properties": { "strategy": { "const": "update" } } }, "then": { "required": ["idColumn"] } }
+ * @else { "required": ["jsonObject"], "if": { "required": ["strategy"], "properties": { "strategy": { "const": "update" } } }, "then": { "required": ["idColumn"] } }
+ */
+export interface UpdateSourceSpec {
+    type: 'update';
+    /** Workspace of the table. */
+    workspace?: WorkspaceName;
+    /** The table to change. */
+    dataRef: string;
+    /**
+     * `replace` swaps every row of the table for the given rows. `update` changes the rows whose `idColumn` value a
+     * given row has: in a table with a geometry, each takes the given row's geometry and properties, and no row is
+     * added; in a table without one, the given rows replace them, and those that match no row are added.
+     */
+    strategy: 'replace' | 'update';
+    /**
+     * With `update`, the column that matches a given row to the table's rows: a column such as `month`, or a feature
+     * property as `properties.<name>`, such as `properties.parcel_id`.
+     * @minLength 1
+     */
+    idColumn?: string;
+    /**
+     * The rows of a table with a geometry. autk-db stores their coordinates as they come, so they are in the
+     * workspace's CRS, as `AutkGrammar.data` gives a table's features.
+     */
+    geojsonObject?: InlineFeatureCollection;
+    /**
+     * The rows of a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`.
+     * @minItems 1
+     */
+    jsonObject?: Array<Record<string, unknown>>;
+}
+
+/**
  * One entry of `data`. The `type` field selects which fields apply.
  * @discriminator type
  */
-export type DataSourceSpec = OsmDataSourceSpec | CsvDataSourceSpec | JsonDataSourceSpec | CustomDataSourceSpec | GeoTiffDataSourceSpec | HeatmapSourceSpec | JoinSourceSpec | SqlSourceSpec;
+export type DataSourceSpec = OsmDataSourceSpec | CsvDataSourceSpec | JsonDataSourceSpec | CustomDataSourceSpec | GeoTiffDataSourceSpec | HeatmapSourceSpec | JoinSourceSpec | SqlSourceSpec | UpdateSourceSpec;
 
 /**
  * A color as `#rrggbb`.

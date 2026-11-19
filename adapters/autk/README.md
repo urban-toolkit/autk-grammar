@@ -43,8 +43,9 @@ Each entry of `data` loads or builds one table, in order. Its `type` selects its
 | `heatmap` | `joinDataRef`, `near`, `grid`, `groupBy` | A raster grid over the workspace's extent, whose cells aggregate the rows of another table. |
 | `join` | `dataRef`, `joinDataRef`, `near`, `groupBy` | No new table: it joins the rows of `joinDataRef` onto the features of `dataRef`, in place. |
 | `sql` | `query`, `layerType` | The rows of a SQL query over the workspace's tables (see [`sql` sources](#sql-sources)). |
+| `update` | `dataRef`, `strategy`, `idColumn`, `geojsonObject` or `jsonObject` | No new table: it replaces or changes the rows of `dataRef` (see [`update` sources](#update-sources)). |
 
-Every source but `join` names its table with `outputTableName`, and every source takes a `workspace` (see [Workspaces](#workspaces)).
+Every source but `join` and `update` names its table with `outputTableName`, and every source takes a `workspace` (see [Workspaces](#workspaces)).
 
 A `geotiff` source:
 
@@ -113,6 +114,29 @@ await grammar.run({
     },
   ],
   map: { layerRefs: [{ dataRef: 'neighborhoods', color: '#d9d9d9' }, { dataRef: 'noisiest', getFnv: 'complaints' }] },
+});
+```
+
+### `update` sources
+
+An `update` source replaces or changes the rows of a table already loaded, `dataRef`, with rows given in the spec:
+
+| Field | Effect |
+|---|---|
+| `strategy` | `replace` swaps every row of the table for the given rows. `update` changes the rows whose `idColumn` value a given row has: in a table with a geometry, each takes the given row's geometry and properties, and no row is added; in a table without one, the given rows replace them, and those that match no row are added. |
+| `idColumn` | With `update`, the column that matches a given row to the table's rows: a column such as `month`, or a feature property as `properties.<name>`. |
+| `geojsonObject` | The rows of a table with a geometry, as a FeatureCollection. autk-db stores their coordinates as they come, so they are in the workspace's CRS, as `grammar.data` gives a table's features. |
+| `jsonObject` | The rows of a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`, as an array of objects. |
+
+A source gives its rows in `geojsonObject` or in `jsonObject`, not both. The maps and plots after it draw the table's rows as they are now. The run's message names the table when autk-db refuses an update.
+
+```ts
+await grammar.run({
+  data: [
+    { type: 'csv', outputTableName: 'sales', csvObject: [['month', 'total'], ['Jan', 3], ['Feb', 5]] },
+    { type: 'update', dataRef: 'sales', strategy: 'update', idColumn: 'month', jsonObject: [{ month: 'Feb', total: 9 }, { month: 'Mar', total: 4 }] },
+  ],
+  plot: { dataRef: 'sales', mark: 'bar', axis: ['month', 'total'] },  // Jan 3, Feb 9, Mar 4
 });
 ```
 

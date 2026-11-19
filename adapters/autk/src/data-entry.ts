@@ -19,6 +19,7 @@ export type {
     HeatmapSourceSpec,
     JoinSourceSpec,
     SqlSourceSpec,
+    UpdateSourceSpec,
     WorkspaceName,
     WorkspaceSpec,
 } from '@urban-toolkit/the-urban-grammar';

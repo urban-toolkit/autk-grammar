@@ -176,6 +176,48 @@ test("a sql source saved under a GeoJSON table's name takes its rows out of the 
     assert.deepEqual([...cache.keys()], ['west/zones']);
 });
 
+// update sources: a table's rows replaced or changed, with rows given inline.
+const sales = [{ month: 'Feb', total: 9 }];
+const zone = {
+    type: 'FeatureCollection',
+    features: [{ type: 'Feature', id: 'autk-feature-2', geometry: { type: 'Point', coordinates: [0, 0] }, properties: { id: 2, v: 99 } }],
+};
+
+test('an update source hands autk-db its rows, its strategy and its id column', async () => {
+    assert.deepEqual(await callsFor({ type: 'update', dataRef: 'sales', strategy: 'update', idColumn: 'month', jsonObject: sales }), [
+        ['updateTable', { tableName: 'sales', data: sales, strategy: 'update', idColumn: 'month' }],
+    ]);
+    assert.deepEqual(await callsFor({ type: 'update', dataRef: 'zones', strategy: 'replace', geojsonObject: zone }), [
+        ['updateTable', { tableName: 'zones', data: zone, strategy: 'replace' }],
+    ]);
+});
+
+test('refuses an update source without exactly one set of rows, or an update without an id column, naming the table', async () => {
+    const refused = (source: object, message: string) => assert.rejects(callsFor({ type: 'update', dataRef: 'sales', ...source }), { message });
+    const rows = 'Update of "sales": give its rows in geojsonObject or in jsonObject, one of the two.';
+    await refused({ strategy: 'replace' }, rows);
+    await refused({ strategy: 'replace', jsonObject: sales, geojsonObject: zone }, rows);
+    await refused({ strategy: 'update', jsonObject: sales }, 'Update of "sales": the update strategy needs an idColumn, the column that matches a given row to the table\'s rows.');
+    const { db } = fakeDb();
+    Object.assign(db, { updateTable: async () => { throw new Error('Table sales not found.'); } });
+    await assert.rejects(
+        createDataAdapter().resolveSource(db, { type: 'update', dataRef: 'sales', strategy: 'replace', jsonObject: sales } as DataSourceSpec),
+        { message: 'Update of "sales": Table sales not found.' },
+    );
+});
+
+test('an update puts a layer in the cache the plots read first as autk-db now exports it, and takes a table without a geometry out', async () => {
+    const before = emptyCollection();
+    const cache = new Map([['zones', before], ['sales', emptyCollection()]]);
+    const { db, calls } = fakeDb([{ name: 'zones', type: 'polygons' }, { name: 'sales' }]);
+    const adapter = createDataAdapter(undefined, cache);
+    await adapter.resolveSource(db, { type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'properties.id', geojsonObject: zone } as DataSourceSpec);
+    await adapter.resolveSource(db, { type: 'update', dataRef: 'sales', strategy: 'replace', jsonObject: sales } as DataSourceSpec);
+    assert.deepEqual(calls.map(([method, ...args]) => (method === 'getLayer' ? [method, ...args] : method)), ['updateTable', ['getLayer', 'zones'], 'updateTable']);
+    assert.deepEqual([...cache.keys()], ['zones']);
+    assert.notStrictEqual(cache.get('zones'), before);
+});
+
 // A heatmap's bands, each from an entry of groupBy.
 test("a heatmap hands autk-db each band's normalize", async () => {
     const groupBy = [

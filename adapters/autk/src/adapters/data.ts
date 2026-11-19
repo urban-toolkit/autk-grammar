@@ -1,5 +1,5 @@
-import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec, SqlSourceSpec, WorkspaceSpec } from '@urban-toolkit/the-urban-grammar';
-import { AutkDb, DEFAULT_WORKSPACE_NAME } from '@urban-toolkit/autk-db';
+import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec, SqlSourceSpec, UpdateSourceSpec, WorkspaceSpec } from '@urban-toolkit/the-urban-grammar';
+import { AutkDb, DEFAULT_WORKSPACE_NAME, isRenderableTable } from '@urban-toolkit/autk-db';
 import type { LoadGeojsonParams } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Geometry } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
@@ -161,6 +161,18 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Requ
         }
     }
 
+    /**
+     * Puts a table a source changed in `cache` as autk-db now exports it, as a join's, or takes it out when autk-db does
+     * not export it as a layer: the plots read a table from the cache before autk-db.
+     */
+    async function recache(db: AutkDb, workspace: string | undefined, name: string): Promise<void> {
+        if (!cache) return;
+        const key = tableKey(workspace, name);
+        const table = db.getTablesMetadata().find((candidate) => candidate.name === name);
+        if (table && isRenderableTable(table)) cache.set(key, await db.getLayer(name));
+        else cache.delete(key);
+    }
+
     return {
         async resolveWorkspaces(context: AutkDb | undefined, workspaces: WorkspaceSpec[]): Promise<AutkDb> {
             const db = await database(context);
@@ -320,6 +332,28 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Requ
                     }
                     // A query saved under the name of a GeoJSON table replaces it, so the plots no longer read its rows.
                     cache?.delete(tableKey(workspace, sql.outputTableName));
+                    print(db, targets);
+                    return db;
+                }
+                case 'update': {
+                    const update = rest_spec as UpdateSourceSpec;
+                    const refuse = (message: string) => new Error(`Update of "${update.dataRef}": ${message}`);
+                    // The schema refuses these shapes too, but a spec that was not checked against it reaches here.
+                    if ((update.geojsonObject === undefined) === (update.jsonObject === undefined))
+                        throw refuse('give its rows in geojsonObject or in jsonObject, one of the two.');
+                    if (update.strategy === 'update' && !update.idColumn)
+                        throw refuse("the update strategy needs an idColumn, the column that matches a given row to the table's rows.");
+                    try {
+                        await db.updateTable({
+                            tableName: update.dataRef,
+                            data: (update.geojsonObject ?? update.jsonObject) as FeatureCollection | Record<string, unknown>[],
+                            strategy: update.strategy,
+                            ...(update.idColumn !== undefined && { idColumn: update.idColumn }),
+                        });
+                    } catch (err) {
+                        throw refuse(err instanceof Error ? err.message : String(err));
+                    }
+                    await recache(db, workspace, update.dataRef);
                     print(db, targets);
                     return db;
                 }
