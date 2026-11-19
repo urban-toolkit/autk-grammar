@@ -347,7 +347,7 @@ data: [
   { type: 'geojson', outputTableName: 'neighborhoods', geojsonFileUrl: '/data/mnt_neighs.geojson' },
   { type: 'geotiff', outputTableName: 'elevation', geotiffFileUrl: '/data/mnt_dem.tif', coordinateFormat: 'EPSG:3857' },
 ],
-map: { terrain: { dataRef: 'elevation' }, camera: { pitch: 60, bearing: 30 }, layerRefs: [{ dataRef: 'neighborhoods' }] },
+map: { terrain: { dataRef: 'elevation' }, camera: { zoom: 10, pitch: 60, bearing: 30 }, layerRefs: [{ dataRef: 'neighborhoods' }] },
 ```
 
 ### `style`
