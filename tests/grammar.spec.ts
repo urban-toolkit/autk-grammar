@@ -2296,3 +2296,41 @@ test('colors the ten noisiest neighborhoods of plot-colors alike on its map and 
     expect(lit.map((position) => drawn[position]?.name)).toEqual([first.datum?.name]);
     expect(await page.evaluate(() => window.plotAxisTitles())).toEqual(['Neighborhood', 'Noise complaints']);
 });
+
+test("reads each building part's outline in a pass's fromFeature table, as a GeoJSON source in its workspace's CRS gave it", async ({ page }) => {
+    // Three building parts, each 20 m wide, and four spots south of them, written in World Mercator meters, the
+    // workspace's CRS, as a host that hands its own tables writes them. autk-db keeps each feature of a buildings table
+    // in its building model, the geometry inside a GeometryCollection, where geometry.coordinates.0 finds no outline:
+    // the pass packed three empty boxes, and every spot read a width of 0.
+    const [x0, y0] = [-8235000, 4946000];
+    const square = (x: number, y: number, size: number) =>
+        ({ type: 'Polygon', coordinates: [[[x, y], [x + size, y], [x + size, y + size], [x, y + size], [x, y]]] });
+    const inMeters = (outputTableName: string, features: Array<{ properties: Record<string, unknown>; geometry: unknown }>, layerType?: string) => ({
+        type: 'geojson', outputTableName, coordinateFormat: 'EPSG:3395', ...(layerType && { layerType }),
+        geojsonObject: { type: 'FeatureCollection', features: features.map((feature) => ({ type: 'Feature', ...feature })) },
+    });
+    await runSpec(page, {
+        data: [
+            // autk-db cuts each table to the first polygon table it loads: a square kilometer around the others.
+            inMeters('ground', [{ properties: {}, geometry: square(x0 - 500, y0 - 500, 1000) }]),
+            inMeters('parts', [0, 1, 2].map((i) => ({ properties: { height: 10 + i }, geometry: square(x0 + i * 50, y0, 20) })), 'buildings'),
+            inMeters('spots', [0, 1, 2, 3].map((i) => ({ properties: { w: 1 }, geometry: { type: 'Point', coordinates: [x0 + i * 40, y0 - 100] } }))),
+        ],
+        compute: [{
+            dataRef: 'spots',
+            attributes: { w: 'w' },
+            uniformMatrices: { o: { fromFeature: { layer: 'parts', path: 'geometry.coordinates.0', iterate: 'batched' }, cols: 2 } },
+            outputColumnName: 'width',
+            // o packs [xmin,ymin, xmax,ymin, xmax,ymax, xmin,ymax] per part: sum the parts' widths.
+            wgslFunction: [
+                'var total = 0.0;',
+                'for (var i = 0u; i < u32(num_features); i++) { total += o[i * 8u + 2u] - o[i * 8u]; }',
+                'return total * w;',
+            ],
+        }],
+    } as unknown as UrbanSpec);
+    // Every spot reads the three parts' outlines in meters: 3 x 20 m.
+    const widths = await page.evaluate(() => Promise.all([0, 1, 2, 3].map((i) => window.valueAt('spots', i, 'compute.width'))));
+    expect(widths).toHaveLength(4);
+    for (const width of widths) expect(width as number).toBeCloseTo(60, 3);
+});
