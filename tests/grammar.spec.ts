@@ -2044,3 +2044,13 @@ test("colors a plot's marks by the scheme of numbers and the scheme of categorie
         plot: plotOf({ id: 't', dataRef: 'trees', mark: 'bar', axis: ['id', 'n'], color: 'kind', colorMapInterpolator: 'schemeSet1' }),
     })).rejects.toThrow('Plot "t": colorMapInterpolator "schemeSet1" is a categorical scheme');
 });
+
+test("colors a scatter plot's points by their color column from its first draw", async ({ page }) => {
+    // autk-plot's scatter plot drew every point in its mark color, and colored the points by value only once a
+    // selection restyled them.
+    await runSpec(page, { data: [area, zones], plot: plotOf({ id: 's', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], color: 'v' }) });
+    const points = await plotMarks(page);
+    expect(points).toHaveLength(4);
+    for (const { datum, fill } of points)
+        expect(fill, `point ${datum?.id}`).toBe(await schemeFill(page, Number(datum?.v), 'interpolateReds', [0, 30]));
+});

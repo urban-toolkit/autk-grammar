@@ -102,6 +102,10 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
                 ...(spec.margins   && { margins: spec.margins }),
                 ...(spec.transform && { transform: spec.transform as PlotTransformConfig }),
             });
+            // autk-plot's scatter plot draws every point in its mark color, and colors the points by `color` only when it
+            // styles them for a selection: style them once, with nothing selected.
+            if(spec.mark === 'scatter' && spec.color !== undefined)
+                plot.setSelection([]);
 
             plotRegistry?.set(plotKey(spec), plot);
             // autk-plot names a row by its position in the collection it draws.
