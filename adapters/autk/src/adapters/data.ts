@@ -138,8 +138,8 @@ export function extentOf(collection: FeatureCollection): [number, number, number
  *
  * A host calls it to load a spec's tables exactly as the grammar does, for example on a server without a map: the
  * `./data` entry exports it with autk-db as its only import. `targets.db` names an element that lists the tables
- * after each load. `cache`, when given, receives each GeoJSON table and each table a join wrote, under
- * {@link tableKey}.
+ * after each load. `cache`, when given, receives each GeoJSON table and each table a join or an update wrote, under
+ * {@link tableKey}, and loses each table a `sql` source replaces or a `drop` source drops.
  */
 export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Required<DataAdapter> {
 
