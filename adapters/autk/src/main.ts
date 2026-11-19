@@ -182,8 +182,9 @@ export class AutkGrammar {
         const plotColors = plotColorsOf(asList(spec.plot));
 
         this.destroy();
-        // autk-plot keeps one mark color and one highlight color for the page, which a plot reads as it draws.
-        setPlotColors(plotColors);
+        // autk-plot keeps one mark color and one highlight color for the page, which a plot reads as it draws. A run that
+        // draws no plot leaves them as they are.
+        if (asList(spec.plot).length > 0) setPlotColors(plotColors);
 
         this.grammarEngine = createEngine({
             spec,

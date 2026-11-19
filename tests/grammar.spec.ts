@@ -2264,6 +2264,9 @@ test('draws the marks of every plot of the page in one markColor, and the select
     await page.evaluate((spec) => window.runBeside(spec), { data: [area, zones], plot: zonesPlot({ id: 'c', mark: 'bar', markColor: '#1f77b4' }) });
     expect(await plotStyle()).toEqual({ markColor: '#1f77b4', highlightColor: '#5dade2' });
     expect(await fills('beside')).toEqual([[0, 'rgb(31, 119, 180)'], [1, 'rgb(31, 119, 180)'], [2, 'rgb(31, 119, 180)'], [3, 'rgb(31, 119, 180)']]);
+    // A run that draws no plot, such as a page's data-only spec, leaves the page's colors as they are.
+    await page.evaluate((spec) => window.runBeside(spec), { data: [area, zones] });
+    expect(await plotStyle()).toEqual({ markColor: '#1f77b4', highlightColor: '#5dade2' });
 });
 
 test('colors the ten noisiest neighborhoods of plot-colors alike on its map and its chart, and selects the noisiest', async ({ page }) => {

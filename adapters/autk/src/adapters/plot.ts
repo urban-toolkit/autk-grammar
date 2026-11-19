@@ -31,11 +31,12 @@ function grammarMarkToPlotType(mark: PlotMark): PlotType {
 let colorsBefore: { markColor: ColorHEX; highlightColor: ColorHEX } | undefined;
 
 /**
- * Sets the page's plot colors for a run. autk-plot keeps one mark color and one highlight color for the whole page
- * (`PlotStyle`), which every plot reads as it draws and as it shows a selection. So a run that sets them colors every
- * plot on the page, and a run whose spec sets neither gives back the colors autk-plot had before a run set any: a run
- * draws in the colors its own spec gives, though a host makes a new grammar for each run and never destroys the old
- * one. A page whose specs set neither never has its colors touched. `AutkGrammar.run` calls it before it draws a plot.
+ * Sets the page's plot colors for a run that draws plots. autk-plot keeps one mark color and one highlight color for the
+ * whole page (`PlotStyle`), which every plot reads as it draws and as it shows a selection. So a run that sets them
+ * colors every plot on the page, and a run whose plots set neither gives back the colors autk-plot had before a run set
+ * any: a run draws in the colors its own spec gives, though a host makes a new grammar for each run and never destroys
+ * the old one. A page whose specs set neither never has its colors touched. `AutkGrammar.run` calls it before it draws
+ * its first plot.
  */
 export function setPlotColors(colors: PlotColors): void {
     if (colors.markColor === undefined && colors.highlightColor === undefined && !colorsBefore) return;
