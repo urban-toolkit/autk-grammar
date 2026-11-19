@@ -325,6 +325,7 @@ A map's `camera` moves its view from the one that fits its layers:
 | `pitch` | The tilt from straight down, in degrees, at least 0 and less than 90. At 90 the eye would sit on the ground, edge-on to the flat layers, and the map could not pan, so a run refuses it. |
 | `bearing` | The compass heading the view faces, clockwise from north, from 0 to 360 degrees. |
 | `center` | The point the view looks at, `[longitude, latitude]` in degrees (see [`camera.center`](#cameracenter)). |
+| `motion` | A camera tour the map plays once it is drawn (see [`camera.motion`](#cameramotion)). |
 
 The camera turns around the point the map looks at, `center` or else the one the view that fits the layers sets: the eye moves on a sphere around that point, so the layers stay in view at any pitch and bearing. The view's up direction stays across its line of sight, as autk-map's own tilt leaves it, so the map's pan, tilt and zoom at the cursor carry on from the spec's view as they do from a view the user tilted.
 
@@ -341,6 +342,40 @@ map: {
   camera: { center: [-74.0110, 40.7069], zoom: 15, pitch: 50, bearing: 30 },  // the New York Stock Exchange
   layerRefs: [{ dataRef: 'fidi_surface' }, { dataRef: 'fidi_buildings' }],
 }
+```
+
+### `camera.motion`
+
+`motion` is a camera tour: steps the view takes one after another, through autk-core's `CameraMotion`, once the map is drawn, from the view the rest of `camera` sets. Each step is `{ type, amount, seconds, pan? }`, and its `amount` is in the unit of the camera field of the same name:
+
+| `type` | `amount` |
+|---|---|
+| `zoom` | Zoom levels: each halves the eye's distance from the point the view looks at, and a negative one doubles it. |
+| `pitch` | Degrees of tilt, away from straight down when positive. `pan` moves the point the view turns around by that many workspace units during the step, toward the top of the view when positive. |
+| `bearing` | Degrees of heading, clockwise when positive: the view turns around the point it looks at. |
+| `roll` | Degrees the view turns around its line of sight: the direction at the top of the view turns clockwise when positive. Looking straight down, a roll turns the heading, as `bearing` does; on a tilted view it banks the horizon. |
+
+Each step takes its `seconds`, more than 0, easing in and out, and sets the camera at every animation frame, so the map draws each one. A drag or a zoom of the map moves the view for good only once the tour ends. `run()` does not wait for the tour: `grammar.tours` holds the tour of each map, in the order of `grammar.maps`, and a tour's `done` settles once its last step ends, or once it is stopped. `destroy()`, and so the next run, stops the tours of its maps.
+
+A run refuses a tour before it draws the map when a step has another `type`, no `amount`, no time, or a `pan` on a step other than `pitch`. The camera's `pitch` and the tour's `pitch` steps add up, in order, to a tilt that stays at least 0 and less than 90 degrees, as `camera.pitch` does: at 90 the line of sight would meet the ground nowhere. A `pitch` step turns the view around its side, so after a `roll` of a tilted view it would also turn the heading: a run refuses a `pitch` step of a banked view until rolls undo the bank.
+
+```ts
+map: {
+  camera: {
+    center: [-74.0110, 40.7069], zoom: 14,
+    motion: [
+      { type: 'zoom', amount: 1.5, seconds: 2 },
+      { type: 'pitch', amount: 55, seconds: 2.5, pan: 150 },
+      { type: 'bearing', amount: 90, seconds: 4 },
+    ],
+  },
+  layerRefs: [{ dataRef: 'fidi_surface' }, { dataRef: 'fidi_buildings' }],
+}
+```
+
+```ts
+await grammar.run(spec);
+await grammar.tours[0]?.done;  // the tour has ended: the view is where its steps add up to
 ```
 
 ## Layer styling
@@ -553,7 +588,7 @@ const grammar = new AutkGrammar({ map: ['before', 'after'], plot: ['heights', 'a
 
 ## Lifecycle
 
-`destroy()` releases what the last run made: it destroys each map (its layers' GPU buffers, its textures, its canvas context, the controls it adds to the page and its event handlers) and clears the grammar's registries, caches and event forwarding. autk-map's maps share one GPU device, which stays for the maps of the next run. `run()` calls it before it starts, so running a new spec on the same instance does not leak the maps of the old one, and its maps and plots draw only its own tables. Call it yourself before the page or the canvases go away. A map whose layers fail to load is destroyed as the run fails, so it leaves nothing on the page.
+`destroy()` releases what the last run made: it stops each map's camera tour, destroys each map (its layers' GPU buffers, its textures, its canvas context, the controls it adds to the page and its event handlers) and clears the grammar's registries, caches and event forwarding. autk-map's maps share one GPU device, which stays for the maps of the next run. `run()` calls it before it starts, so running a new spec on the same instance does not leak the maps of the old one, and its maps and plots draw only its own tables. Call it yourself before the page or the canvases go away. A map whose layers fail to load is destroyed as the run fails, so it leaves nothing on the page.
 
 ## JSON Schema
 
@@ -583,6 +618,7 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 | `tableKey(workspace, name)` | The key of a table in those caches: its name in the default workspace, `<workspace>/<name>` in another. |
 | `applyCamera(map, camera)` | Moves an `AutkMap`'s camera as a map's `camera` says, from the view that fits its layers, and refuses a `pitch` that is not at least 0 and less than 90. The map adapter calls it once the layers are loaded, before the map's first `draw()`. It looks at a `center` that `resolveCameraCenter` put on the map, and refuses any other, so a host's later turns of a map the grammar drew keep its center. |
 | `resolveCameraCenter(db, map, center)` | Puts `center`, `[longitude, latitude]` in degrees, in the CRS of the workspace `db` works in, and keeps it with `map` for `applyCamera`. The map adapter calls it once the layers are loaded, with the map's workspace current; a host that builds its own map calls it after `enterWorkspace(db, workspace)`. |
+| `playCameraMotion(map, motion)` | Plays a camera tour on an `AutkMap` from the view its camera has now, and returns it as `{ done, stop() }` without waiting for it. A tour played on a map stops the one it was playing. It refuses a tour as a run does, from the map's own tilt and bank. The map adapter calls it once a map is drawn; a host that frames a map itself and turns it with `applyCamera` calls it after that turn, so the tour starts from the host's view. |
 | `arrangeViews(spec)` | Where each view of a spec goes on the page, as its `layout` says: a grid of panes, one per view (see [Arranging the views](#arranging-the-views)). It refuses a `layout` it cannot arrange, with a sentence that names the value. |
 
 `@urban-toolkit/autk-grammar/data` exports `createDataAdapter`, `enterWorkspace` and `tableKey` with their types, as an ES module and a CommonJS one. Its code imports `@urban-toolkit/autk-db` alone, never autk-map, autk-plot, autk-compute or autk-core, so it loads where they cannot, such as Node:

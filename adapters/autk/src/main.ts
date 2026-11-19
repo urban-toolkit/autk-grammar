@@ -13,6 +13,8 @@ import { checkPlotKeys, plotColorsOf, plotKey } from "./plot-options";
 import { layerIdOf } from "./adapters/map";
 import { enterWorkspace } from "./workspace";
 import { createComputeAdapter } from "./adapters/compute";
+import { tourOf } from "./camera";
+import type { CameraTour } from "./camera";
 import { Targets, PlotRegistry, GeoJsonCache, ComputeCache, ComputeLayerTypes, GrammarEventEmitter } from "./types";
 import type { GrammarMapLayer, GrammarPlotSelectionEvent, MapId } from "./types";
 import { DrawnLayer, DrawnLayers, LayerExports, PlotLinks, PlotRows, addPlotLink, isOnMap, mapIdOf } from "./drawn";
@@ -105,6 +107,20 @@ export class AutkGrammar {
     }
 
     /**
+     * The camera tour each map of the last {@link run} plays, or last played, in the order of {@link maps}: `undefined`
+     * for a map that played none. A map plays the `motion` of its `camera` once it is drawn, and the run does not wait
+     * for it. A tour's `done` settles once its last step ends, or once it is stopped: `destroy()`, and so the next run,
+     * stops the tours of the maps it destroys, and a tour played on a map stops the one it was playing.
+     *
+     * @example
+     * await grammar.run(spec);
+     * await grammar.tours[0]?.done; // the first map's tour has ended
+     */
+    get tours(): ReadonlyArray<CameraTour | undefined> {
+        return this._maps.map((map) => tourOf(map));
+    }
+
+    /**
      * Every layer the maps of the last {@link run} draw for a table, found by the table's name (a layer's `dataRef`):
      * for each, the map that draws it and the layer's id in that map, which is its `title`, else its `dataRef`. The
      * maps come in the spec's order, each map's layers bottom first. Empty when no map draws the table.
@@ -150,7 +166,10 @@ export class AutkGrammar {
     destroy(): void {
         for (const cleanup of this._fwdCleanups) cleanup();
         this._fwdCleanups = [];
-        for (const map of this._maps) map.destroy();
+        for (const map of this._maps) {
+            tourOf(map)?.stop();
+            map.destroy();
+        }
         this._maps.length = 0;
         this._layers.length = 0;
         this._plotRegistry.clear();

@@ -12,7 +12,7 @@ import { AutkDb } from '@urban-toolkit/autk-db';
 import { extentOf } from './data';
 import { checkPointSize, planarPointSize } from '../point-size';
 import { HEX_COLOR, buildDomainSpec, colorMapRangeRefusal } from '../color-keys';
-import { centerOnMap, centerRefusal, resolveCameraCenter } from '../camera';
+import { centerOnMap, centerRefusal, motionRefusal, playCameraMotion, resolveCameraCenter } from '../camera';
 
 /** The id a layer has in its map: its `title`, else its `dataRef`. */
 export function layerIdOf(layerRef: MapLayerSpec): string {
@@ -166,13 +166,14 @@ function rasterBand(collection: { features?: { properties?: unknown }[] }, getFn
 
 /**
  * Why a run refuses `camera`, or `undefined` when it takes it: a pitch that is not at least 0 and less than 90 degrees,
- * or a center that is not `[longitude, latitude]` in degrees. At 90 the eye would sit on the ground, edge-on to the
- * map's flat layers, and autk-map's pan, which moves the eye by its height, would stand still. The schema refuses the
- * same pitches and centers.
+ * a center that is not `[longitude, latitude]` in degrees, or a motion `motionRefusal` refuses from the view the camera
+ * sets. At 90 the eye would sit on the ground, edge-on to the map's flat layers, and autk-map's pan, which moves the eye
+ * by its height, would stand still. The schema refuses the same pitches and centers, and the steps of a shape it reads.
  */
 function cameraRefusal(camera: CameraSpec): string | undefined {
     const { pitch } = camera as { pitch?: unknown };
-    if (pitch === undefined || (typeof pitch === 'number' && pitch >= 0 && pitch < 90)) return centerRefusal(camera.center);
+    if (pitch === undefined || (typeof pitch === 'number' && pitch >= 0 && pitch < 90))
+        return centerRefusal(camera.center) ?? motionRefusal(camera.motion, { tilt: camera.pitch ?? 0, bank: 0 });
     const shown = typeof pitch === 'number' ? String(pitch) : JSON.stringify(pitch);
     return `camera.pitch must be at least 0 and less than 90 degrees, not ${shown}: at 90 the eye would sit on the ground, edge-on to the map's flat layers, and the map could not pan.`;
 }
@@ -424,6 +425,10 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                     applyCamera(map, spec.camera);
 
                 map.draw();
+
+                // The camera tour starts from the view just drawn; the run does not wait for it.
+                if(spec.camera?.motion?.length)
+                    playCameraMotion(map, spec.camera.motion);
             }
         }
     }

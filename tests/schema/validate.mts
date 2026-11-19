@@ -304,6 +304,27 @@ expect('camera center longitude above 180', cameraWith({ center: [181, 40.75] })
 expect('camera center latitude below -90', cameraWith({ center: [-73.98, -90.5] }), false);
 expect('camera center as strings', cameraWith({ center: ['-73.98', '40.75'] }), false);
 expect('camera center as an object', cameraWith({ center: { lon: -73.98, lat: 40.75 } }), false);
+const tourStep = (fields: Record<string, unknown>) => ({ type: 'zoom', amount: 1, seconds: 2, ...fields });
+expect('camera motion of each step type', cameraWith({
+    pitch: 30,
+    motion: [
+        tourStep({}),
+        tourStep({ type: 'pitch', amount: 20, pan: 500 }),
+        tourStep({ type: 'bearing', amount: -90, seconds: 3 }),
+        tourStep({ type: 'roll', amount: 15, seconds: 0.5 }),
+    ],
+}), true);
+expect('camera motion with no steps', cameraWith({ motion: [] }), true);
+expect('camera motion as one step', cameraWith({ motion: tourStep({}) }), false);
+expect('camera motion step of an unknown type', cameraWith({ motion: [tourStep({ type: 'spin' })] }), false);
+expect('camera motion step without an amount', cameraWith({ motion: [{ type: 'zoom', seconds: 2 }] }), false);
+expect('camera motion step without seconds', cameraWith({ motion: [{ type: 'zoom', amount: 1 }] }), false);
+expect('camera motion step of no time', cameraWith({ motion: [tourStep({ seconds: 0 })] }), false);
+expect('camera motion step of negative seconds', cameraWith({ motion: [tourStep({ seconds: -1 })] }), false);
+expect('camera motion step amount as a string', cameraWith({ motion: [tourStep({ amount: '1' })] }), false);
+expect('camera motion zoom step with a pan', cameraWith({ motion: [tourStep({ pan: 100 })] }), false);
+expect('camera motion bearing step with a pan', cameraWith({ motion: [tourStep({ type: 'bearing', pan: 100 })] }), false);
+expect('camera motion pitch step pan as a string', cameraWith({ motion: [tourStep({ type: 'pitch', pan: '100' })] }), false);
 expect('layout with an unknown type', { map: layers, layout: { type: 'diagonal' } }, false);
 expect('layout grid with zero columns', { map: layers, layout: { type: 'grid', columns: 0 } }, false);
 expect('layout grid with columns that are not a whole number', { map: layers, layout: { type: 'grid', columns: 2.5 } }, false);
@@ -437,6 +458,8 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['plot.selection']],
     ['UrbanSpec', ['plot.markColor', 'plot.highlightColor']],
     ['UrbanSpec', ['map.camera.center']],
+    ['UrbanSpec', ['map.camera.motion', 'map.camera.motion.type', 'map.camera.motion.amount', 'map.camera.motion.seconds', 'map.camera.motion.pan']],
+    ['CameraMotionStep', ['']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

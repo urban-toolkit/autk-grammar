@@ -1,10 +1,10 @@
 import { test, expect, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
 import type {
-    CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec, MapSpec, PlotSpec,
-    RenderComputeSpec, UrbanSpec,
+    CameraMotionStep, CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec, MapSpec,
+    PlotSpec, RenderComputeSpec, UrbanSpec,
 } from '@urban-toolkit/the-urban-grammar';
-import type { DrawnMark, LayerState, PaneBox, RunSummary } from './app/main';
+import type { CameraView, DrawnMark, LayerState, PaneBox, RunSummary } from './app/main';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
 import { spec as heatmapGeojson } from '../gallery/src/examples/heatmap-vis-geojson';
 
@@ -1577,6 +1577,129 @@ test("looks at camera.center, put in the CRS of the map's workspace, and turns t
         .rejects.toThrow('Map 0: camera.center must be [longitude, latitude] in degrees');
     await expect(runSpec(page, spec({ center: [-73.98, 90] })))
         .rejects.toThrow('Map 0: camera.center [-73.98, 90] has no point in EPSG:3395');
+});
+
+/**
+ * A view as a camera tour leaves it, in a map's world: tilted `tilt` degrees from straight down, facing `heading`
+ * clockwise from north and banked `bank` degrees, `distance` from the point `[x, y]` of the ground it looks at.
+ */
+type TourView = { tilt: number; heading: number; distance: number; x: number; y: number; bank?: number };
+
+/**
+ * Checks a map's camera, as window.cameraView reads it, against `expected`: its eye, the point of the ground its line of
+ * sight meets, and its up direction, which a bank turns around the line of sight, clockwise as the viewer sees it.
+ */
+function expectTourView(name: string, view: CameraView, expected: TourView): void {
+    const radians = (degrees: number) => (degrees * Math.PI) / 180;
+    const [t, h, k] = [radians(expected.tilt), radians(expected.heading), radians(expected.bank ?? 0)];
+    const eye = [
+        expected.x - expected.distance * Math.sin(t) * Math.sin(h),
+        expected.y - expected.distance * Math.sin(t) * Math.cos(h),
+        expected.distance * Math.cos(t),
+    ];
+    const sight = [Math.sin(t) * Math.sin(h), Math.sin(t) * Math.cos(h), -Math.cos(t)];
+    const level = [Math.cos(t) * Math.sin(h), Math.cos(t) * Math.cos(h), Math.sin(t)];
+    const side = [sight[1] * level[2] - sight[2] * level[1], sight[2] * level[0] - sight[0] * level[2], sight[0] * level[1] - sight[1] * level[0]];
+    const up = level.map((value, i) => value * Math.cos(k) + side[i] * Math.sin(k));
+    const reach = -view.eye[2] / view.sight[2];
+    const ground = [view.eye[0] + view.sight[0] * reach, view.eye[1] + view.sight[1] * reach];
+    const length = Math.hypot(view.up[0], view.up[1], view.up[2]);
+    eye.forEach((value, i) => expect(Math.abs(view.eye[i] - value), `${name}: eye ${i}`).toBeLessThan(0.05));
+    [expected.x, expected.y].forEach((value, i) => expect(Math.abs(ground[i] - value), `${name}: ground point ${i}`).toBeLessThan(0.05));
+    up.forEach((value, i) => expect(Math.abs(view.up[i] / length - value), `${name}: up ${i}`).toBeLessThan(1e-4));
+}
+
+test("plays camera.motion once the map is drawn, from the view its camera sets, and ends where the steps add up to", async ({ page }) => {
+    const camera: CameraSpec = { zoom: 12, pitch: 30 };
+    const motion: CameraMotionStep[] = [
+        { type: 'zoom', amount: 1, seconds: 0.25 },
+        { type: 'pitch', amount: 20, seconds: 0.25, pan: 200 },
+        { type: 'bearing', amount: 90, seconds: 0.25 },
+        { type: 'roll', amount: 30, seconds: 0.25 },
+    ];
+    const spec = (withMotion: boolean): UrbanSpec => ({
+        data: [area, zones], map: { camera: { ...camera, ...(withMotion && { motion }) }, layerRefs: [{ dataRef: 'zones' }] },
+    });
+    // The view the camera sets, which the tour starts from: 2500 units from the point the map looks at, tilted 30 degrees.
+    await runSpec(page, spec(false));
+    const start = await page.evaluate(() => window.cameraView('map0'));
+    expectTourView('the view before the tour', start, { tilt: 30, heading: 0, distance: 2500, x: start.lookAt[0], y: start.lookAt[1] });
+    expect(await page.evaluate(() => window.grammar.tours.map((tour) => tour === undefined))).toEqual([true]);
+
+    // The run does not wait for the tour; its done settles once the last step ends. One level in halves the distance,
+    // the pitch step tilts 20 degrees further and moves the point it turns around 200 units north, the top of the view,
+    // the bearing turns the heading clockwise to east, and the roll banks the view 30 degrees.
+    await runSpec(page, spec(true));
+    expect(await page.evaluate(async () => {
+        const tours = window.grammar.tours;
+        await tours[0]?.done;
+        return tours.map((tour) => tour === undefined);
+    })).toEqual([false]);
+    const end = await page.evaluate(() => window.cameraView('map0'));
+    expectTourView('the end of the tour', end, { tilt: 50, heading: 90, distance: 1250, x: start.lookAt[0], y: start.lookAt[1] + 200, bank: 30 });
+    await expectDrawn(page, 'map0');
+});
+
+test('turns the view of a camera tour at the times a clock the test controls says', async ({ page }) => {
+    // The clock runs the page's time from here: CameraMotion reads performance.now() and turns the camera in animation
+    // frames, which this clock draws every 16 ms of its time, each called with that time.
+    await page.clock.install();
+    await runSpec(page, { data: [area, zones], map: { camera: { zoom: 12, pitch: 30 }, layerRefs: [{ dataRef: 'zones' }] } });
+    const start = await page.evaluate(() => window.cameraView('map0'));
+    const [x, y] = start.lookAt;
+
+    // Stop the clock, on a frame's time, then play a tour from the view the camera set, with the grammar's player.
+    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
+    const ticks = await page.evaluate(() => performance.now());
+    await page.clock.runFor((16 - (ticks % 16)) % 16);
+    await page.evaluate((motion) => window.playTour('map0', motion), [
+        { type: 'zoom', amount: 1, seconds: 0.512 },
+        { type: 'bearing', amount: -90, seconds: 0.512 },
+    ] as CameraMotionStep[]);
+
+    // Each step eases in and out over its 512 ms: an eighth of the way at a quarter of it, half at half.
+    const after = async (ms: number, name: string, expected: TourView) => {
+        await page.clock.runFor(ms);
+        expectTourView(name, await page.evaluate(() => window.cameraView('map0')), expected);
+    };
+    await after(128, 'a quarter of the zoom', { tilt: 30, heading: 0, distance: 2500 * 2 ** -0.125, x, y });
+    await after(128, 'half the zoom', { tilt: 30, heading: 0, distance: 2500 * 2 ** -0.5, x, y });
+    await after(256, 'the end of the zoom', { tilt: 30, heading: 0, distance: 1250, x, y });
+    await after(256, 'half the bearing, turning counterclockwise', { tilt: 30, heading: -45, distance: 1250, x, y });
+    expect(await page.evaluate(() => window.tourEnded), 'the tour plays on until its last step ends').toBe(false);
+    await after(256, 'the end of the bearing', { tilt: 30, heading: -90, distance: 1250, x, y });
+    expect(await page.evaluate(() => window.tourEnded), 'done settles as the last step ends').toBe(true);
+});
+
+test('stops a camera tour when the grammar is destroyed, and refuses a tour that would tilt the view to 90 or take no time', async ({ page }) => {
+    await runSpec(page, {
+        data: [area, zones],
+        map: { camera: { zoom: 12, pitch: 30, motion: [{ type: 'bearing', amount: 360, seconds: 60 }] }, layerRefs: [{ dataRef: 'zones' }] },
+    });
+    // destroy() stops the tour, whose done settles at once, and its steps no longer turn the map's camera.
+    expect(await page.evaluate(async () => {
+        const map = window.grammar.maps[0];
+        const tour = window.grammar.tours[0]!;
+        window.grammar.destroy();
+        const settled = await Promise.race([
+            tour.done.then(() => 'stopped'),
+            new Promise((resolve) => setTimeout(() => resolve('still playing'), 5000)),
+        ]);
+        const eye = [...map.camera.getEye()];
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return { settled, still: map.camera.getEye().every((value, i) => value === eye[i]) };
+    })).toEqual({ settled: 'stopped', still: true });
+
+    // The camera's pitch and the pitch steps add up to a tilt below 90, and a step takes some time; a tour that breaks
+    // either is refused before the map is made.
+    const run = (motion: CameraMotionStep[]) => runSpec(page, {
+        data: [area, zones], map: { camera: { pitch: 30, motion }, layerRefs: [{ dataRef: 'zones' }] },
+    });
+    await expect(run([{ type: 'zoom', amount: 1, seconds: 1 }, { type: 'pitch', amount: 60, seconds: 1 }]))
+        .rejects.toThrow('Map 0: camera.motion[1]: this pitch step would tilt the view 90 degrees from straight down.');
+    expect(await page.evaluate(() => window.grammar.maps.length)).toBe(0);
+    await expect(run([{ type: 'zoom', amount: 1, seconds: 0 }]))
+        .rejects.toThrow('Map 0: camera.motion[0]: seconds must be a number greater than 0, not 0.');
 });
 
 test('draws the second run of a reused grammar from its own table, though the first run loaded a GeoJSON table of that name', async ({ page }) => {

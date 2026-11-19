@@ -628,6 +628,37 @@ export type CameraSpec = {
      * fits the map's layers. Read by the Autark adapter only.
      */
     center?: [longitude: Longitude, latitude: Latitude],
+    /**
+     * A camera tour: steps the view takes one after another once the map is drawn, each over its own `seconds`, from
+     * the view the other fields set. The run does not wait for it. Read by the Autark adapter only.
+     */
+    motion?: CameraMotionStep[],
+}
+
+/**
+ * One step of a camera tour. `amount` is in the unit of the camera field of the same name: `zoom` levels, each of which
+ * halves the eye's distance (zooming out when negative); `pitch` degrees of tilt, away from straight down when positive;
+ * `bearing` degrees of heading, clockwise when positive. `roll` turns the view around its line of sight, by `amount`
+ * degrees: when positive, the direction at the top of the view turns clockwise, so a roll of a view that looks straight
+ * down turns its heading as `bearing` does, and a roll of a tilted view banks it.
+ * @if { "not": { "properties": { "type": { "const": "pitch" } } } }
+ * @then { "not": { "required": ["pan"] } }
+ */
+export type CameraMotionStep = {
+    /** What the step changes: `zoom`, `pitch`, `bearing` or `roll`. */
+    type: 'zoom' | 'pitch' | 'bearing' | 'roll',
+    /** How much the step changes it, in the unit of its `type`. */
+    amount: number,
+    /**
+     * How long the step takes, in seconds, greater than 0: the view eases in and out of it.
+     * @exclusiveMinimum 0
+     */
+    seconds: number,
+    /**
+     * With a `pitch` step only: how far the point the view turns around moves during the step, in workspace units,
+     * toward the top of the view when positive.
+     */
+    pan?: number,
 }
 
 /**

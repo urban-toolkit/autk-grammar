@@ -12,7 +12,7 @@
     "install:all": "npm install --workspaces",
     "test:e2e": "playwright test -c tests/playwright.config.ts",
     "test:schema": "tsx tests/schema/validate.mts",
-    "test:unit": "tsx tests/unit/compute-params.mts && tsx tests/unit/point-size.mts && tsx tests/unit/data-entry.mts && tsx tests/unit/rows.mts && tsx tests/unit/arrange-views.mts && tsx tests/unit/data-sources.mts && tsx tests/unit/plot-options.mts && tsx tests/unit/source-crs.mts"
+    "test:unit": "tsx tests/unit/compute-params.mts && tsx tests/unit/point-size.mts && tsx tests/unit/data-entry.mts && tsx tests/unit/rows.mts && tsx tests/unit/arrange-views.mts && tsx tests/unit/data-sources.mts && tsx tests/unit/plot-options.mts && tsx tests/unit/source-crs.mts && tsx tests/unit/camera-motion.mts"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

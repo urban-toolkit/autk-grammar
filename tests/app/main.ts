@@ -1,5 +1,6 @@
-import { AutkGrammar, applyCamera } from '@urban-toolkit/autk-grammar';
-import type { CameraSpec, UrbanSpec } from '@urban-toolkit/the-urban-grammar';
+import { AutkGrammar, applyCamera, playCameraMotion } from '@urban-toolkit/autk-grammar';
+import type { CameraTour } from '@urban-toolkit/autk-grammar';
+import type { CameraMotionStep, CameraSpec, UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import { ColorMap } from '@urban-toolkit/autk-core';
 import type { ColorMapInterpolator, ColorRGB } from '@urban-toolkit/autk-core';
 import { AutkMap } from '@urban-toolkit/autk-map';
@@ -33,10 +34,11 @@ export type LayerState = {
 export type LegendState = { title: string | null; labels: string[]; visible: boolean };
 
 /**
- * Where a map's camera is, in the map's world: its eye, the point it looks at and its up direction, with the map's
- * origin, the point of the workspace's CRS the world is relative to.
+ * Where a map's camera is, in the map's world: its eye, the point it looks at, its line of sight (a unit vector, read
+ * from its view matrix) and its up direction, with the map's origin, the point of the workspace's CRS the world is
+ * relative to.
  */
-export type CameraView = { eye: number[]; lookAt: number[]; up: number[]; origin: number[] };
+export type CameraView = { eye: number[]; lookAt: number[]; sight: number[]; up: number[]; origin: number[] };
 
 /** A mark a plot draws: the row autk-plot binds to it, and its fill and stroke as the page computes them, `rgb(r, g, b)`. */
 export type DrawnMark = { datum: Record<string, unknown> | null; fill: string; stroke: string };
@@ -69,6 +71,9 @@ declare global {
         cameraState: (canvasId: string) => { eye: number[]; lookAt: number[] };
         cameraView: (canvasId: string) => CameraView;
         turnCamera: (canvasId: string, camera: CameraSpec) => void;
+        playTour: (canvasId: string, motion: CameraMotionStep[]) => void;
+        tour?: CameraTour;
+        tourEnded?: boolean;
         rasterCells: (canvasId: string, layerId: string) => { values: number[]; rgba: number[] };
         legend: () => LegendState | null;
         plotMarks: (target?: string) => DrawnMark[];
@@ -255,15 +260,40 @@ window.cameraState = (canvasId: string) => {
     return { eye: [...camera.getEye()], lookAt: [...camera.getLookAt()] };
 };
 
-/** Where the camera of the map on #canvasId is, with its up direction and the map's origin. */
+/**
+ * Where the camera of the map on #canvasId is, with its line of sight, its up direction and the map's origin. The line
+ * of sight comes from the view matrix: a tour's roll leaves the point the camera looks at one unit from the eye, too near
+ * for float32 coordinates to give the direction.
+ */
 window.cameraView = (canvasId: string) => {
     const map = mapOn(canvasId);
     const { camera } = map;
-    return { eye: [...camera.getEye()], lookAt: [...camera.getLookAt()], up: [...camera.getUp()], origin: [...map.layerManager.origin] };
+    camera.update();
+    const matrix = camera.getModelViewMatrix();
+    return {
+        eye: [...camera.getEye()],
+        lookAt: [...camera.getLookAt()],
+        sight: [-matrix[2], -matrix[6], -matrix[10]],
+        up: [...camera.getUp()],
+        origin: [...map.layerManager.origin],
+    };
 };
 
 /** Turns the camera of the map on #canvasId with the grammar's `applyCamera`, as a host does. */
 window.turnCamera = (canvasId: string, camera: CameraSpec) => applyCamera(mapOn(canvasId), camera);
+
+/**
+ * Plays a camera tour on the map on #canvasId with the grammar's `playCameraMotion`, as a host does. `window.tour` holds
+ * the tour, and `window.tourEnded` turns true once its `done` settles.
+ */
+window.playTour = (canvasId: string, motion: CameraMotionStep[]) => {
+    const tour = playCameraMotion(mapOn(canvasId), motion);
+    window.tour = tour;
+    window.tourEnded = false;
+    void tour.done.then(() => {
+        if (window.tour === tour) window.tourEnded = true;
+    });
+};
 
 /** The render state autk-map holds for each layer of the map on #canvasId, in its layer order. */
 window.mapLayers = (canvasId: string) => mapOn(canvasId).layerManager.layers.map((layer) => {
