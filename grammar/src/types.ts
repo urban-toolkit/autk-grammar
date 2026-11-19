@@ -587,7 +587,11 @@ export type MapLayerSpec = {
      * update changed are drawn row by row, as without it. Read by the Autark adapter only.
      */
     osmElements?: boolean,
-    /** Dot path to the thematic value, relative to `feature.properties` (for example `tags.highway` or `compute.result`). */
+    /**
+     * Dot path to the thematic value, relative to `feature.properties` (for example `tags.highway` or `compute.result`).
+     * On a raster layer, the band to draw, by its id (`band_1`, ...) or its label (`count.noise` for a heatmap band labeled
+     * `count_noise`), the first band without it; on a raster of several bands, one that names none of them is refused.
+     */
     getFnv?: string,
     /** `categorical` reads the value as a string for discrete palettes; `quantitative` reads it as a number for continuous scales. Read by the deck.gl adapter; the Autark adapter ignores it. */
     getFnvType?: 'categorical' | 'quantitative',

@@ -348,6 +348,8 @@ Besides `dataRef`, a layer of `map.layerRefs` takes these styling options:
 | `colorMapReverse` | On a raster layer, runs the color scale from the highest value to the lowest, or from `colorMapRange`'s high to its low. |
 | `transferFunction` | On a raster layer, how opaque its cells are by value: autk-map's transfer function (`mode`, `opacityMin`, `opacityMax`, `gamma`, `zeroCenter`). `{ opacityMin: 1, opacityMax: 1 }` draws every cell with a value fully opaque. |
 
+On a raster layer, `getFnv` names the band to draw: by its id, such as a GeoTIFF's `band_24`, or by its label, such as `count.noise` for a heatmap's `count_noise`. Without it, the layer draws the first band. A run refuses a `getFnv` that names none of the bands of a raster of several, and a raster of one band draws that band.
+
 After a run, `grammar.mapLayer(dataRef)` finds the layer a map draws for a table: the `AutkMap` and the layer's id in it, the last map's when several maps draw the table. `grammar.mapLayers(dataRef)` lists every layer that draws it, in every map. `highlightOnMap`, `clearHighlightOnMap` and a plot's `mapRef` also name layers by their `dataRef` (see [Interactions](#interactions)).
 
 ```ts

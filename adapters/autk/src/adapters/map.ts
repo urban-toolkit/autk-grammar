@@ -153,14 +153,22 @@ function setValueAtPath(obj: Record<string, unknown>, path: string, value: unkno
 }
 
 /**
- * Resolves a grammar value path such as `count.noise` to the raster band that holds it.
- * autk-db stores heatmap values in bands (`band_1`, ...) labelled `<aggregateFn>_<table>`.
+ * Resolves a grammar value path such as `count.noise` to the raster band that holds it, by the band's id (`band_1`, ...)
+ * or its label: autk-db labels a heatmap's bands `<aggregateFn>_<table>`. Without a path, the first band. A raster of
+ * one band is read whatever the path names; on a raster of several, a path that names none of them is refused, since
+ * another band would show other values. `refuse` makes the error from the sentence that says so.
  */
-function rasterBand(collection: { features?: { properties?: unknown }[] }, getFnv?: string): string {
+function rasterBand(collection: { features?: { properties?: unknown }[] }, path: string | undefined, refuse: (message: string) => Error): string {
     const props = collection.features?.[0]?.properties as { bands?: { id: string; label?: string }[] } | undefined;
     const bands = props?.bands ?? [];
-    const band = bands.find((b) => b.id === getFnv || b.label === getFnv?.replace(/\./g, '_'));
-    return band?.id ?? bands[0]?.id ?? getFnv ?? '';
+    if (path === undefined) return bands[0]?.id ?? '';
+    const band = bands.find((b) => b.id === path || b.label === path.replace(/\./g, '_'));
+    if (band) return band.id;
+    if (bands.length > 1) {
+        const names = bands.map((b) => (b.label && b.label !== b.id ? `${b.id} (${b.label})` : b.id));
+        throw refuse(`"${path}" names none of its ${bands.length} bands: ${names.join(', ')}.`);
+    }
+    return bands[0]?.id ?? path;
 }
 
 /**
@@ -252,7 +260,9 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
             const rows = rawData.features ?? [];
             const kept = type === 'raster' ? [] : rows.flatMap((feature, row) => (feature?.geometry != null ? [row] : []));
             const data = type === 'raster' ? rawData : { ...rawData, features: kept.map((row) => rows[row]) };
-            const band = type === 'raster' ? rasterBand(data, getFnv) : '';
+            const band = type === 'raster'
+                ? rasterBand(data, getFnv, (message) => new Error(`Layer "${layerId}": getFnv ${message}`))
+                : '';
 
             if(type === 'raster') {
                 map.loadCollection(layerId, { collection: data, type: 'raster', property: band });

@@ -62,6 +62,7 @@ declare global {
         drawnRows: (canvasId: string, layerId: string) => Array<Record<string, unknown> | null>;
         cameraState: (canvasId: string) => { eye: number[]; lookAt: number[] };
         rasterCells: (canvasId: string, layerId: string) => { values: number[]; rgba: number[] };
+        handedBand: (canvasId: string, layerId: string, band: string) => number[];
         legend: () => LegendState | null;
         plotMarks: (target?: string) => DrawnMark[];
         plotTicks: (target: string, selector: string) => Array<Array<[unknown, string]>>;
@@ -289,6 +290,14 @@ window.rasterCells = (canvasId: string, layerId: string) => {
         { rasterValues?: Float32Array; rasterData?: Float32Array } | null;
     if (!layer?.rasterValues || !layer.rasterData) throw new Error(`#${canvasId} has no raster layer ${layerId}`);
     return { values: Array.from(layer.rasterValues), rgba: Array.from(layer.rasterData) };
+};
+
+/** The values of a band of the raster collection autk-map was handed for a layer of the map on #canvasId. */
+window.handedBand = (canvasId: string, layerId: string, band: string) => {
+    const collection = handed.get(mapOn(canvasId))?.get(layerId);
+    const values = (collection?.features[0]?.properties as Record<string, unknown> | null | undefined)?.[band];
+    if (!values) throw new Error(`#${canvasId} was handed no band ${band} for ${layerId}`);
+    return Array.from(values as ArrayLike<number>);
 };
 
 /** The legend of the page's map. */

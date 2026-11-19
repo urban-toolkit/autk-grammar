@@ -1249,6 +1249,33 @@ test('loads a GeoTIFF as a raster layer', async ({ page }) => {
     await expectDrawn(page, 'map0');
 });
 
+test('draws the band of a raster that getFnv names, refuses one that names none of several, and draws a raster of one band', async ({ page }) => {
+    // The temperature GeoTIFF holds 24 bands, one a year from 2001 to 2024. A name that matched no band drew band_1,
+    // 2001's, without a word.
+    const area = { type: 'Polygon' as const, coordinates: [[[-43.2, -22.95], [-43.0, -22.95], [-43.0, -22.8], [-43.2, -22.8], [-43.2, -22.95]]] };
+    const temperatureBy = (getFnv: string): UrbanSpec => ({
+        data: [
+            { type: 'geotiff', outputTableName: 'lst', geotiffFileUrl: '/data/niteroi_lst_verao_2001_2024.tif' },
+            { type: 'geojson', outputTableName: 'area', geojsonObject: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: area, properties: {} }] } },
+        ],
+        map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'lst', title: 'Temperature', getFnv }] },
+    });
+    const bands = Array.from({ length: 24 }, (_, i) => `band_${i + 1}`).join(', ');
+    await expect(runSpec(page, temperatureBy('band_25')))
+        .rejects.toThrow(`Layer "Temperature": getFnv "band_25" names none of its 24 bands: ${bands}.`);
+    await expect(runSpec(page, temperatureBy('temperature.2024'))).rejects.toThrow('getFnv "temperature.2024" names none of its 24 bands');
+
+    // A band by its id: the layer draws 2024's values, not 2001's.
+    await runSpec(page, temperatureBy('band_24'));
+    const drawn = await page.evaluate(() => window.rasterCells('map0', 'Temperature').values);
+    expect(drawn).toEqual(await page.evaluate(() => window.handedBand('map0', 'Temperature', 'band_24')));
+    expect(drawn).not.toEqual(await page.evaluate(() => window.handedBand('map0', 'Temperature', 'band_1')));
+
+    // A heatmap of one band draws it, whatever getFnv names: autk-db labels it count_noise.
+    await runSpec(page, heatmapWith({ getFnv: 'sum.noise' }));
+    await heatmapLayer(page);
+});
+
 test('draws a GeoJSON polygon layer as parks when layerType says so', async ({ page }) => {
     const square = { type: 'Polygon' as const, coordinates: [[[-74.01, 40.70], [-74.0, 40.70], [-74.0, 40.71], [-74.01, 40.71], [-74.01, 40.70]]] };
     await runSpec(page, {
