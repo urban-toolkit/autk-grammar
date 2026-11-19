@@ -286,6 +286,8 @@ expect('osm tag key starting with a colon', withTagSets([tagSet({ tags: [{ key: 
 expect('osm tag with an empty value', withTagSets([tagSet({ tags: [{ key: 'amenity', value: '' }] })]), false);
 expect('osm tag value of 256 characters', withTagSets([tagSet({ tags: [{ key: 'name', value: 'x'.repeat(256) }] })]), false);
 expect('camera pitch above 90', { map: { ...layers, camera: { pitch: 91 } } }, false);
+expect('camera pitch of 90, which puts the eye on the ground', { map: { ...layers, camera: { pitch: 90 } } }, false);
+expect('camera pitch just below 90', { map: { ...layers, camera: { pitch: 89.9 } } }, true);
 expect('camera pitch below 0', { map: { ...layers, camera: { pitch: -1 } } }, false);
 expect('camera bearing above 360', { map: { ...layers, camera: { bearing: 361 } } }, false);
 expect('camera zoom below 0', { map: { ...layers, camera: { zoom: -1 } } }, false);

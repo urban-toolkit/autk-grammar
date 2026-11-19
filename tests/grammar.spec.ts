@@ -1487,6 +1487,33 @@ test('turns the camera around the point it looks at', async ({ page }) => {
     expect(after.eye[1]).toBeCloseTo(after.lookAt[1], 3);
 });
 
+test("keeps the camera's up direction across its line of sight at any pitch below 90, and refuses a pitch of 90", async ({ page }) => {
+    const spec = (camera: CameraSpec): UrbanSpec => ({ data: [area, zones], map: { camera, layerRefs: [{ dataRef: 'zones' }] } });
+    const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const unit = (a: number[]) => a.map((value) => value / Math.sqrt(dot(a, a)));
+    for (const pitch of [0, 55, 89.9]) {
+        await runSpec(page, spec({ zoom: 12, pitch, bearing: 30 }));
+        const view = await page.evaluate(() => {
+            const camera = window.grammar.maps[0].camera;
+            return {
+                eye: camera.getEye(), lookAt: camera.getLookAt(), up: camera.getUp(), fovy: camera.getFovyRadians(),
+                center: camera.getWorldRayDirection(0.5, 0.5), top: camera.getWorldRayDirection(0.5, 1),
+            };
+        });
+        // autk-map's tilt, pan and zoom at the cursor move along the up direction, and take it to be across the line of
+        // sight. Up to 5.0.0 it lay flat, along the bearing, so at a pitch of 55 it leaned 55 degrees into the line of sight.
+        const sight = unit(view.lookAt.map((value, i) => value - view.eye[i]));
+        expect(Math.abs(dot(unit(view.up), sight)), `pitch ${pitch}: up across the line of sight`).toBeLessThan(1e-5);
+        expect(view.up[2], `pitch ${pitch}: up toward the sky`).toBeGreaterThanOrEqual(0);
+        // So the ray through the top of the view, which a zoom there follows, leaves half the field of view above the
+        // ray through its center (about 10 degrees rather than 22.5 at a pitch of 55 with the up lying flat).
+        expect(Math.acos(Math.min(1, dot(unit(view.top), unit(view.center)))), `pitch ${pitch}: the top ray`).toBeCloseTo(view.fovy / 2, 4);
+    }
+    // At 90 the eye would sit on the ground, edge-on to the flat layers, and the map could not pan.
+    await expect(runSpec(page, spec({ zoom: 12, pitch: 90 })))
+        .rejects.toThrow('Map 0: camera.pitch must be at least 0 and less than 90 degrees, not 90');
+});
+
 test('draws the second run of a reused grammar from its own table, though the first run loaded a GeoJSON table of that name', async ({ page }) => {
     // The grammar kept each GeoJSON table it loaded, which its plots read before the database, until the instance went
     // away: run again with a table of the same name from a CSV, a plot drew the first run's GeoJSON rows.

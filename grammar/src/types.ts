@@ -610,9 +610,10 @@ export type CameraSpec = {
      */
     zoom?: number,
     /**
-     * Tilt from straight down, in degrees.
+     * Tilt from straight down, in degrees, less than 90: at 90 the eye would sit on the ground, edge-on to the map's flat
+     * layers, and the map could not pan.
      * @minimum 0
-     * @maximum 90
+     * @exclusiveMaximum 90
      */
     pitch?: number,
     /**
