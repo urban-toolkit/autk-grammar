@@ -2263,3 +2263,31 @@ test('draws the marks of every plot of the page in one markColor, and the select
     await page.evaluate(() => window.grammar.destroy());
     expect(await plotStyle()).toEqual({ markColor: '#bfbfbf', highlightColor: '#5dade2' });
 });
+
+test('colors the ten noisiest neighborhoods of plot-colors alike on its map and its chart, and selects the noisiest', async ({ page }) => {
+    const spec = await exampleSpec(page, 'plot-colors');
+    expect(spec.plot).toMatchObject({ colorMapInterpolator: 'interpolateReds', colorMapRange: [0, 80], selection: [0], highlightColor: '#1f77b4' });
+    const { tables, plotSvgs } = await run(page, 'plot-colors');
+    expect(tables.noisiest.features).toBe(10);
+    expect(plotSvgs).toBe(1);
+    await expectDrawn(page, 'map0');
+
+    // The layer colors the counts over the range the chart colors them over.
+    expect((await layerById(page))['Noise complaints']).toMatchObject({ isColorMap: true, interpolator: 'interpolateReds', domain: [0, 80] });
+    const bars = await plotMarks(page);
+    expect(bars).toHaveLength(10);
+    const counts = bars.map(({ datum }) => Number(datum?.complaints));
+    expect(counts.every((count) => count > 0)).toBe(true);
+    // The first row, the noisiest neighborhood, is selected, in the chart's highlight color; each other bar is in the
+    // color of its count over [0, 80].
+    const [first, ...others] = bars;
+    expect(Number(first.datum?.complaints)).toBe(Math.max(...counts));
+    expect(first.fill).toBe('rgb(31, 119, 180)');
+    for (const { datum, fill } of others)
+        expect(fill, String(datum?.name)).toBe(await schemeFill(page, Number(datum?.complaints), 'interpolateReds', [0, 80]));
+    // The link lights the same neighborhood on the map, and the chart titles its axes.
+    const drawn = await page.evaluate(() => window.drawnRows('map0', 'Noise complaints'));
+    const lit = (await layerById(page))['Noise complaints'].highlightedIds ?? [];
+    expect(lit.map((position) => drawn[position]?.name)).toEqual([first.datum?.name]);
+    expect(await page.evaluate(() => window.plotAxisTitles())).toEqual(['Neighborhood', 'Noise complaints']);
+});
