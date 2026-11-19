@@ -96,7 +96,7 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
                 collection: geojson,
                 attributes: { axis: spec.axis, ...(spec.color && { color: spec.color }) },
                 events,
-                ...plotOptions(spec),
+                ...plotOptions(spec, geojson.features ?? []),
                 ...(spec.width     && { width: spec.width }),
                 ...(spec.height    && { height: spec.height }),
                 ...(spec.margins   && { margins: spec.margins }),

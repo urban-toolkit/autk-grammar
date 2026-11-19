@@ -409,6 +409,23 @@ A run refuses a `scheme*` name as `colorMapInterpolator`, and an `interpolate*` 
 plot: { dataRef: 'parcels', mark: 'bar', axis: ['id', 'area'], color: 'landuse', categoricalColorMapInterpolator: ColorMapInterpolator.CAT_SET2 }
 ```
 
+### `colorMapRange`, `colorMapDomain` and `normalization`
+
+These set the domain of a plot's color scale as they set a map layer's:
+
+| Key | Effect |
+|---|---|
+| `colorMapRange` | The ends of the scale of numbers, `[low, high]` with low less than high. The plot is colored over this range instead of its own lowest and highest values, so plots and map layers that set the same range color the same value alike. A plot colored by categories ignores it, as a layer with a categorical scheme does, and a plot cannot set both `colorMapRange` and `colorMapDomain`. |
+| `colorMapDomain` | The categories the plot is colored over, in order: the first takes the scheme of categories' first color, and so on. The values are read as categories, numbers too, and a mark whose value it does not name is drawn in the mark color. |
+| `normalization` | How the ends of the scale of numbers are found: `{ mode: 'minMax' }`, the default, takes the lowest and highest values, and `{ mode: 'percentile', lowerPercentile, upperPercentile }` the values at those percentiles, 2 and 98 when it gives neither, else 0 and 100 for the one it leaves out. |
+
+Parallel coordinates read them for their `color` column, and keep them for any axis a click on its title colors the lines by: under a `colorMapRange`, an axis of categories colors no line.
+
+```ts
+map: { layerRefs: [{ dataRef: 'tracts', getFnv: 'income', colorMapInterpolator: ColorMapInterpolator.SEQ_BLUES, colorMapRange: [0, 200000] }] },
+plot: { dataRef: 'tracts', mark: 'scatter', axis: ['area', 'income'], color: 'income', colorMapInterpolator: ColorMapInterpolator.SEQ_BLUES, colorMapRange: [0, 200000] },
+```
+
 ## Interactions
 
 A layer with `isPick` and a plot with `events` report what the user selects on `grammar.interactions`: `map:picking` and `plot:selection` give feature ids, the positions of the selected features among those the layer or the plot draws (a map layer leaves out features without a geometry). Every map of the spec reports its picks, though several draw one table. To link a selection to other tables, name the columns whose values identify those rows with `selectFields` on the layer or the plot, for example `selectFields: ['nta2020']`. The grammar does not read it; the events still report feature ids, and the app reads the key values from those rows.

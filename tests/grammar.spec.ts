@@ -2054,3 +2054,51 @@ test("colors a scatter plot's points by their color column from its first draw",
     for (const { datum, fill } of points)
         expect(fill, `point ${datum?.id}`).toBe(await schemeFill(page, Number(datum?.v), 'interpolateReds', [0, 30]));
 });
+
+/** autk-plot's mark color: the fill of a mark that is neither colored by value nor selected. */
+const markGray = 'rgb(191, 191, 191)';
+
+test("colors a plot over its colorMapRange, colorMapDomain's categories or normalization's percentiles", async ({ page }) => {
+    const bar = (fields: Record<string, unknown>) => plotOf({ id: 'z', dataRef: 'zones', mark: 'bar', axis: ['id', 'v'], color: 'v', ...fields });
+
+    // One range on two plots: zones (0 to 30) and lots (0 to 60) color each value over [0, 60], so 20 has one color in
+    // both, where each plot's own values would put it two thirds up the zones' scale and a third up the lots'.
+    await runSpec(page, {
+        data: [area, zones, lots],
+        plot: [bar({ colorMapRange: [0, 60] }), bar({ id: 'l', dataRef: 'lots', colorMapRange: [0, 60] })],
+    }, 'each');
+    const ranged = [...(await plotMarks(page, 'plot0')), ...(await plotMarks(page, 'plot1'))].map(({ datum, fill }) => ({ v: Number(datum?.v), fill }));
+    expect(ranged).toHaveLength(8);
+    for (const { v, fill } of ranged) expect(fill, `bar of ${v}`).toBe(await schemeFill(page, v, 'interpolateReds', [0, 60]));
+    expect(new Set(ranged.filter(({ v }) => v === 20).map(({ fill }) => fill)).size).toBe(1);
+
+    // The 25th and 75th percentiles of the zones' values, 7.5 and 22.5, end the scale.
+    await runSpec(page, { data: [area, zones], plot: bar({ normalization: { mode: 'percentile', lowerPercentile: 25, upperPercentile: 75 } }) });
+    for (const { datum, fill } of await plotMarks(page))
+        expect(fill, `bar ${datum?.id}`).toBe(await schemeFill(page, Number(datum?.v), 'interpolateReds', [7.5, 22.5]));
+
+    // colorMapDomain reads the values as categories, in its order: 10 takes Observable10's first color and 20 its
+    // second, and 0 and 30, which it does not name, take the mark color.
+    await runSpec(page, { data: [area, zones], plot: bar({ colorMapDomain: ['10', '20'] }) });
+    const byValue = Object.fromEntries((await plotMarks(page)).map(({ datum, fill }) => [String(datum?.v), fill]));
+    expect(byValue).toEqual({
+        '0': markGray,
+        '10': await schemeFill(page, 0, 'schemeObservable10', [10, 20]),
+        '20': await schemeFill(page, 1, 'schemeObservable10', [10, 20]),
+        '30': markGray,
+    });
+
+    // A plot colored by categories ignores the range, as a layer with a categorical scheme does: each kind keeps its
+    // color, where autk-core would read the range as two categories, 0 and 60, and draw every bar in the mark color.
+    await runSpec(page, {
+        data: [trees],
+        plot: plotOf({ id: 't', dataRef: 'trees', mark: 'bar', axis: ['id', 'n'], color: 'kind', colorMapRange: [0, 60] }),
+    });
+    const kinds = ['oak', 'elm', 'ash'];
+    for (const { datum, fill } of await plotMarks(page))
+        expect(fill, `bar ${datum?.id}`).toBe(await schemeFill(page, kinds.indexOf(String(datum?.kind)) / 2, 'schemeObservable10', [0, 1, 2]));
+
+    // A low above its high is refused when the spec runs, as on a layer, since JSON Schema cannot compare two values.
+    await expect(runSpec(page, { data: [area, zones], plot: bar({ colorMapRange: [30, 0] }) }))
+        .rejects.toThrow('Plot "z": colorMapRange low (30) must be less than high (0).');
+});

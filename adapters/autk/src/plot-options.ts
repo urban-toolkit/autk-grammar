@@ -1,6 +1,9 @@
 import type { PlotSpec } from '@urban-toolkit/the-urban-grammar';
-import { ColorMap, ColorMapInterpolator } from '@urban-toolkit/autk-core';
+import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator, valueAtPath } from '@urban-toolkit/autk-core';
+import type { ColorMapDomainSpec } from '@urban-toolkit/autk-core';
 import type { PlotConfig } from '@urban-toolkit/autk-plot';
+import type { Feature } from 'geojson';
+import { buildDomainSpec, colorMapRangeRefusal } from './color-keys';
 
 /**
  * What a plot spec sets of autk-plot's config, and what a run refuses of it before any view is drawn. Nothing here needs
@@ -13,7 +16,7 @@ export function plotKey(spec: PlotSpec): string {
 }
 
 /** What a plot spec sets of autk-plot's config, beside the plot's type, rows, columns, events and size. */
-export type PlotOptions = Pick<PlotConfig, 'labels' | 'colorMapInterpolator' | 'categoricalColorMapInterpolator'>;
+export type PlotOptions = Pick<PlotConfig, 'labels' | 'colorMapInterpolator' | 'categoricalColorMapInterpolator' | 'domainSpec'>;
 
 const SCHEMES = new Set<string>(Object.values(ColorMapInterpolator));
 
@@ -37,12 +40,43 @@ function schemeRefusal(key: 'colorMapInterpolator' | 'categoricalColorMapInterpo
  */
 export function checkPlotKeys(spec: PlotSpec): void {
     const refusal = schemeRefusal('colorMapInterpolator', spec.colorMapInterpolator, false)
-        ?? schemeRefusal('categoricalColorMapInterpolator', spec.categoricalColorMapInterpolator, true);
+        ?? schemeRefusal('categoricalColorMapInterpolator', spec.categoricalColorMapInterpolator, true)
+        ?? colorMapRangeRefusal(spec.colorMapRange, spec.colorMapDomain);
     if (refusal) throw new Error(`Plot "${plotKey(spec)}": ${refusal}`);
 }
 
-/** The part of autk-plot's config a plot spec sets, beside its type, rows, columns, events and size. */
-export function plotOptions(spec: PlotSpec): PlotOptions {
+/**
+ * Whether autk-plot colors a plot's marks by categories: when a value of its `color` column is a string that does not
+ * read as a number. A heat matrix's cells, which `@transform` names, hold counts or sums.
+ */
+function colorsByCategories(color: string | undefined, rows: readonly (Feature | null | undefined)[]): boolean {
+    if (color === undefined || color === '@transform') return false;
+    return rows.some((row) => {
+        const value = valueAtPath(row?.properties ?? {}, color);
+        return typeof value === 'string' && isNaN(Number(value));
+    });
+}
+
+/**
+ * How autk-plot finds the domain of the plot's color scale, or `undefined` to leave it autk-plot's, the lowest and
+ * highest values. `colorMapRange` sets the ends of a scale of numbers, and a plot colored by categories ignores it, as a
+ * layer with a categorical scheme does: autk-core would read the range's two numbers as the only categories. Otherwise
+ * a layer's rule applies (`buildDomainSpec`): `colorMapDomain`'s categories, else `normalization`'s percentiles.
+ */
+function domainSpecOf(spec: PlotSpec, rows: readonly (Feature | null | undefined)[]): ColorMapDomainSpec | undefined {
+    const range = spec.colorMapRange;
+    if (range !== undefined && !colorsByCategories(spec.color, rows))
+        return { type: ColorMapDomainStrategy.USER, params: [range[0], range[1]] };
+    if (spec.normalization === undefined && spec.colorMapDomain === undefined) return undefined;
+    return buildDomainSpec(spec.normalization, spec.colorMapDomain);
+}
+
+/**
+ * The part of autk-plot's config a plot spec sets, beside its type, rows, columns, events and size. `rows` are the
+ * features the plot draws.
+ */
+export function plotOptions(spec: PlotSpec, rows: readonly (Feature | null | undefined)[]): PlotOptions {
+    const domainSpec = domainSpecOf(spec, rows);
     return {
         labels: { axis: spec.axis, title: spec.title },
         // The grammar's scheme names are autk-core's, as strings.
@@ -50,5 +84,6 @@ export function plotOptions(spec: PlotSpec): PlotOptions {
         ...(spec.categoricalColorMapInterpolator !== undefined && {
             categoricalColorMapInterpolator: spec.categoricalColorMapInterpolator as unknown as ColorMapInterpolator,
         }),
+        ...(domainSpec && { domainSpec }),
     };
 }

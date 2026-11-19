@@ -670,18 +670,39 @@ export interface PlotBase {
     color?: string,
     /**
      * Color scheme of marks colored by numbers: a sequential or diverging `interpolate*` scheme, `interpolateReds` by
-     * default. The scale runs from the lowest value, which takes the scheme's first color, to the highest, which takes
-     * its last. A categorical `scheme*` name is refused, since categories take `categoricalColorMapInterpolator`. Read
-     * by the Autark adapter; the deck.gl adapter ignores it.
+     * default. The scale's low end takes the scheme's first color and its high end its last: the lowest and highest
+     * values, unless `colorMapRange` or `normalization` sets them. A categorical `scheme*` name is refused, since
+     * categories take `categoricalColorMapInterpolator`. Read by the Autark adapter; the deck.gl adapter ignores it.
      */
     colorMapInterpolator?: ContinuousColorMapInterpolator,
     /**
      * Color scheme of marks colored by categories: a categorical `scheme*` scheme, `schemeObservable10` by default.
-     * The categories take the scheme's colors in the order they first appear, and those past the scheme's last color
-     * take that one. A sequential or diverging `interpolate*` name is refused. Read by the Autark adapter; the deck.gl
-     * adapter ignores it.
+     * The categories take the scheme's colors in the order they first appear, or in `colorMapDomain`'s order, and those
+     * past the scheme's last color take that one. A sequential or diverging `interpolate*` name is refused. Read by the
+     * Autark adapter; the deck.gl adapter ignores it.
      */
     categoricalColorMapInterpolator?: CategoricalColorMapInterpolator,
+    /**
+     * How the ends of the color scale of numbers are found: `minMax`, the default, takes the lowest and highest
+     * values; `percentile` takes the values at the `lowerPercentile` and `upperPercentile` percentiles, 2 and 98 when
+     * it gives neither, else 0 and 100 for the one it leaves out. Categories ignore it. A map layer's `normalization`
+     * reads the same way. Read by the Autark adapter; the deck.gl adapter ignores it.
+     */
+    normalization?: MapLayerSpec['normalization'],
+    /**
+     * Ends of the color scale of numbers, as `[low, high]` with low less than high. The plot is colored over this range
+     * instead of its lowest and highest values, so plots and map layers that set the same range color the same value
+     * alike. Values that are categories ignore it, as a layer with a categorical scheme does, and it cannot be set with
+     * `colorMapDomain`. Read by the Autark adapter; the deck.gl adapter ignores it.
+     * @uniqueItems true
+     */
+    colorMapRange?: [low: number, high: number],
+    /**
+     * Categories the plot is colored over, in order: the first takes the categorical scheme's first color, and so on.
+     * The values are read as categories, numbers too, and a mark whose value is not among them is drawn in the mark
+     * color. It cannot be set with `colorMapRange`. Read by the Autark adapter; the deck.gl adapter ignores it.
+     */
+    colorMapDomain?: string[],
     title?: string,
     /** Interactions the plot emits. */
     events?: PlotEvent[],
@@ -758,6 +779,8 @@ export interface HeatmatrixPlotSpec extends PlotBase {
 /**
  * A plot view. The `mark` field selects which transforms apply.
  * @discriminator mark
+ * @if { "required": ["colorMapRange"] }
+ * @then { "not": { "required": ["colorMapDomain"] } }
  */
 export type PlotSpec = ScatterPlotSpec | BarPlotSpec | LinePlotSpec | ParallelCoordinatesPlotSpec | TablePlotSpec | HeatmatrixPlotSpec;
 

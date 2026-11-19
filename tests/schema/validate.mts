@@ -311,6 +311,22 @@ expect('plot diverging scheme', plotWith({ colorMapInterpolator: 'interpolateRdB
 expect('plot colorMapInterpolator of categories', plotWith({ colorMapInterpolator: 'schemeSet1' }), false);
 expect('plot categoricalColorMapInterpolator of numbers', plotWith({ categoricalColorMapInterpolator: 'interpolateBlues' }, 'scatter'), false);
 expect('plot with an unknown color scheme', plotWith({ colorMapInterpolator: 'rainbow' }), false);
+expect('plot color range', plotWith({ colorMapRange: [0, 60] }), true);
+expect('plot color domain', plotWith({ colorMapDomain: ['oak', 'elm'] }, 'parallel-coordinates'), true);
+expect('plot percentile normalization', plotWith({ normalization: { mode: 'percentile', lowerPercentile: 5, upperPercentile: 95 } }), true);
+expect('plot min-max normalization with a range', plotWith({ normalization: { mode: 'minMax' }, colorMapRange: [-1, 1] }, 'scatter'), true);
+expect('plot colorMapRange with one number', plotWith({ colorMapRange: [0] }), false);
+expect('plot colorMapRange with three numbers', plotWith({ colorMapRange: [0, 5, 10] }), false);
+expect('plot colorMapRange with a string', plotWith({ colorMapRange: [0, '10'] }), false);
+expect('plot colorMapRange as a number', plotWith({ colorMapRange: 10 }), false);
+expect('plot colorMapRange with low equal to high', plotWith({ colorMapRange: [5, 5] }), false);
+expect('plot colorMapRange with colorMapDomain', plotWith({ colorMapRange: [0, 10], colorMapDomain: ['a', 'b'] }), false);
+expect('plot colorMapRange with an empty colorMapDomain', plotWith({ colorMapRange: [0, 10], colorMapDomain: [] }, 'scatter'), false);
+expect('plot colorMapDomain as a string', plotWith({ colorMapDomain: 'oak' }), false);
+expect('plot colorMapDomain with a number', plotWith({ colorMapDomain: ['oak', 3] }), false);
+expect('plot normalization of an unknown mode', plotWith({ normalization: { mode: 'log' } }), false);
+expect('plot normalization without a mode', plotWith({ normalization: { lowerPercentile: 5 } }), false);
+expect('plot normalization as a string', plotWith({ normalization: 'percentile' }), false);
 
 // Each layer styling option is documented in the schema.
 const layerProperties = schema.definitions?.MapLayerSpec?.properties ?? {};
@@ -380,6 +396,7 @@ const newKeys: Array<[string, string[]]> = [
     ['UpdateSourceSpec', ['', 'workspace', 'dataRef', 'strategy', 'idColumn', 'geojsonObject', 'jsonObject']],
     ['DropSourceSpec', ['', 'workspace', 'dataRef']],
     ['UrbanSpec', ['plot.color', 'plot.colorMapInterpolator', 'plot.categoricalColorMapInterpolator']],
+    ['UrbanSpec', ['plot.normalization', 'plot.colorMapRange', 'plot.colorMapDomain']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {
