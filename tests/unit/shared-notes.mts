@@ -90,7 +90,7 @@ async function runPass(data: { createDataAdapter: typeof dataEntry.createDataAda
     const cache = new Map<string, FeatureCollection>();
     const dataAdapter = data.createDataAdapter(undefined, cache);
     let db: AutkDb = fakeDb();
-    for (const source of sources) db = await dataAdapter.resolveSource(db, source);
+    for (const source of sources) db = await dataAdapter.resolveSource(db, source) as AutkDb;
     await mainEntry.createComputeAdapter(new Map(), new Map(), cache).resolveCompute(db, pass);
     assert.equal(dispatched.length, 1);
     return dispatched[0];
