@@ -27,7 +27,7 @@ export const spec: UrbanSpec = {
             polygons: '#2a3d52',
         },
         showUi: false,
-        camera: { pitch: 45, bearing: 30 },
+        camera: { zoom: 13, pitch: 45, bearing: 30 },
         layerRefs: [
             { dataRef: 'fidi_surface' },
             { dataRef: 'fidi_parks' },
