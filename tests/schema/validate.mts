@@ -157,6 +157,13 @@ expect('windows pass without outputTableName', { compute: [(({ outputTableName, 
 expect('windows pass without dataRef', { compute: [(({ dataRef, ...rest }) => rest)(windowsPass)] }, false);
 expect('windows pass with floors as a string', { compute: [{ ...windowsPass, floors: '3' }] }, false);
 expect('windows pass with an unknown layer type', { compute: [{ ...windowsPass, layerType: 'windows' }] }, false);
+const clustersPass = { type: 'clusters', dataRef: 'b', outputColumnName: 'cluster' };
+expect('clusters pass in place', { compute: [clustersPass] }, true);
+expect('clusters pass into a new table, drawn as polygons, in a workspace', { compute: [{ ...clustersPass, outputTableName: 'blocks', layerType: 'polygons', workspace: 'west' }] }, true);
+expect('clusters pass without outputColumnName', { compute: [(({ outputColumnName, ...rest }) => rest)(clustersPass)] }, false);
+expect('clusters pass without dataRef', { compute: [(({ dataRef, ...rest }) => rest)(clustersPass)] }, false);
+expect('clusters pass with outputColumnName as a number', { compute: [{ ...clustersPass, outputColumnName: 3 }] }, false);
+expect('clusters pass with an unknown layer type', { compute: [{ ...clustersPass, outputTableName: 'blocks', layerType: 'blocks' }] }, false);
 const heat = { type: 'heatmap', outputTableName: 'h', joinDataRef: 'n', near: { distance: 500 }, grid: { rows: 10, columns: 10 } };
 expect('heatmap with useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: false } }] }, true);
 expect('heatmap with a non-boolean useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: 'no' } }] }, false);
@@ -469,6 +476,7 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['map.camera.motion', 'map.camera.motion.type', 'map.camera.motion.amount', 'map.camera.motion.seconds', 'map.camera.motion.pan']],
     ['CameraMotionStep', ['']],
     ['WindowsComputeSpec', ['', 'type', 'workspace', 'dataRef', 'floors', 'outputTableName', 'layerType']],
+    ['ClustersComputeSpec', ['', 'type', 'workspace', 'dataRef', 'outputColumnName', 'outputTableName', 'layerType']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

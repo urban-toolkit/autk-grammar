@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import type { Feature, FeatureCollection, Point, Polygon } from 'geojson';
 import { TriangulatorBuildingWithWindows } from '@urban-toolkit/autk-core';
-import { windowsTable } from '../../adapters/autk/src/compute-tables.ts';
+import { clustersTable, windowsTable } from '../../adapters/autk/src/compute-tables.ts';
 
 const rect = (x: number, y: number, width: number, height: number): Polygon => ({
     type: 'Polygon',
@@ -46,6 +46,40 @@ const rect = (x: number, y: number, width: number, height: number): Polygon => (
         features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [0, 0] } }],
     };
     assert.throws(() => windowsTable(points, 1), /unsupported part geometry Point/);
+}
+
+// clusters: the cluster of touching geometries, through autk-core's computeIntersectingClusterIds.
+{
+    const square = (x: number, y: number) => rect(x, y, 10, 10);
+    const table: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: [
+            { type: 'Feature', id: 7, properties: { name: 'a', compute: { height: 3 } }, geometry: square(0, 0) },
+            // Shares a's east edge, and a's feature id, which must not join them a second way or part them.
+            { type: 'Feature', id: 7, properties: { name: 'b' }, geometry: square(10, 0) },
+            { type: 'Feature', properties: { name: 'none' }, geometry: null as unknown as Polygon },
+            { type: 'Feature', properties: { name: 'c' }, geometry: square(100, 0) },
+            // Touches c at a corner only.
+            { type: 'Feature', properties: { name: 'd' }, geometry: square(110, 10) },
+            // Empty, as a GeoJSON source's row without a geometry is loaded.
+            { type: 'Feature', properties: { name: 'empty' }, geometry: { type: 'GeometryCollection', geometries: [] } },
+            // A line apart from all, and a point inside a.
+            { type: 'Feature', properties: { name: 'e' }, geometry: { type: 'LineString', coordinates: [[50, 5], [60, 5]] } },
+            { type: 'Feature', properties: { name: 'f' }, geometry: { type: 'Point', coordinates: [5, 5] } },
+        ],
+    };
+    const before = JSON.stringify(table);
+    const result = clustersTable(table, 'cluster');
+    // The first row's cluster is 0, and each next cluster takes the next number in the order of its first row; the rows
+    // without a geometry, or with an empty one, are in none. autk-core alone would give the empty row a cluster of its own.
+    assert.deepEqual(result.features.map((feature) => feature.properties?.compute?.cluster), [0, 0, null, 1, 1, null, 2, 0]);
+    // The other properties and compute columns stay, and so do the ids; the table handed in is left as it was.
+    assert.deepEqual(result.features[0].properties, { name: 'a', compute: { height: 3, cluster: 0 } });
+    assert.deepEqual(result.features.map((feature) => feature.id), table.features.map((feature) => feature.id));
+    assert.equal(JSON.stringify(table), before);
+    // A second pass writes its own column beside the first.
+    const again = clustersTable(result, 'group');
+    assert.deepEqual(again.features[3].properties?.compute, { cluster: 1, group: 1 });
 }
 
 console.log('compute-tables: all cases passed');

@@ -1369,6 +1369,63 @@ test("places buildings' windows in a table of their own, the points a building-w
     })).rejects.toThrow('Windows pass "w": autk-core places no windows on "spots"');
 });
 
+test('writes the cluster of touching geometries to a column, in place or into a new table', async ({ page }) => {
+    // Four squares inside area: a and b share an edge, c stands apart, and d touches c at a corner only.
+    const square = (name: string, x: number, y: number) => ({
+        type: 'Feature' as const,
+        properties: { name },
+        geometry: { type: 'Polygon' as const, coordinates: [[[x, y], [x + 0.001, y], [x + 0.001, y + 0.001], [x, y + 0.001], [x, y]]] },
+    });
+    const blocks: DataSourceSpec = {
+        type: 'geojson',
+        outputTableName: 'blocks',
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [square('a', -73.99, 40.75), square('b', -73.989, 40.75), square('c', -73.985, 40.75), square('d', -73.984, 40.751)],
+        },
+    };
+    const clustersOf = (table: string, column: string) => page.evaluate(async ([name, key]) =>
+        Object.fromEntries((await window.grammar.data[name]).features.map((feature) =>
+            [feature.properties?.name, feature.properties?.compute?.[key] ?? null])), [table, column] as const);
+
+    // Into a new table, which the map draws as the table it was computed from; the blocks stay as they are.
+    await runSpec(page, {
+        data: [area, blocks],
+        compute: [{ type: 'clusters', dataRef: 'blocks', outputColumnName: 'cluster', outputTableName: 'joined' }],
+        map: { layerRefs: [{ dataRef: 'joined', getFnv: 'compute.cluster' }] },
+    });
+    const joined = await clustersOf('joined', 'cluster');
+    expect(joined.a).toBe(joined.b);
+    expect(joined.c).toBe(joined.d);
+    expect(joined.a).not.toBe(joined.c);
+    expect([joined.a, joined.c].sort()).toEqual([0, 1]);
+    // The first row's cluster is 0.
+    expect(await page.evaluate(() => window.valueAt('joined', 0, 'compute.cluster'))).toBe(0);
+    expect(await clustersOf('blocks', 'cluster')).toEqual({ a: null, b: null, c: null, d: null });
+    expect((await mapLayers(page)).map((layer) => [layer.id, layer.type, layer.isColorMap])).toEqual([['joined', 'polygons', true]]);
+
+    // In place, beside the column of an earlier pass.
+    await runSpec(page, {
+        data: [area, blocks],
+        compute: [
+            { type: 'clusters', dataRef: 'blocks', outputColumnName: 'first' },
+            { type: 'clusters', dataRef: 'blocks', outputColumnName: 'second' },
+        ],
+    });
+    expect(await clustersOf('blocks', 'second')).toEqual(await clustersOf('blocks', 'first'));
+    expect(await clustersOf('blocks', 'first')).toEqual(joined);
+
+    // The buildings around Wall Street: walls shared along a block put many in one cluster.
+    await runSpec(page, { ...boxSpec({ bbox: BOX }), compute: [{ type: 'clusters', dataRef: 'box_buildings', outputColumnName: 'block' }] });
+    const ids = await page.evaluate(async () =>
+        (await window.grammar.data.box_buildings).features.map((feature) => feature.properties?.compute?.block as number));
+    const clusters = [...new Set(ids)].sort((a, b) => a - b);
+    expect(ids.every((id) => Number.isInteger(id) && id >= 0), 'every building has a cluster').toBe(true);
+    expect(clusters, 'the ids run from 0 with no gap').toEqual(clusters.map((_, i) => i));
+    expect(clusters.length, 'buildings that share walls share a cluster').toBeLessThan(ids.length);
+    expect(ids[0]).toBe(0);
+});
+
 test('refuses a points layer in a render pass, and names the layer', async ({ page }) => {
     // autk-compute would skip it with only a warning. The schema refuses the type too.
     await expect(runSpec(page, {

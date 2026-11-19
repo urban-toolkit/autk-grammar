@@ -1,11 +1,11 @@
-import { ComputeAdapter, ComputeSpec, GpgpuComputeSpec, RenderComputeSpec, WindowsComputeSpec } from '@urban-toolkit/the-urban-grammar';
+import { ClustersComputeSpec, ComputeAdapter, ComputeSpec, GpgpuComputeSpec, RenderComputeSpec, WindowsComputeSpec } from '@urban-toolkit/the-urban-grammar';
 import type { LayerType, RenderLayerSpec, WorkspaceName } from '@urban-toolkit/the-urban-grammar';
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkComputeEngine } from '@urban-toolkit/autk-compute';
 import { FeatureCollection } from 'geojson';
 import { ComputeCache, ComputeLayerTypes, GeoJsonCache } from '../types';
 import { computeLayerNames, runCompute } from '../compute-params';
-import { windowsTable } from '../compute-tables';
+import { clustersTable, windowsTable } from '../compute-tables';
 import { enterWorkspace, inWorkspaceCrs, tableKey } from '../workspace';
 
 /**
@@ -21,8 +21,8 @@ function layerTypeOf(db: AutkDb, name: string, workspace: string | undefined, ty
 
 /**
  * The compute adapter `AutkGrammar` runs. Its `resolveCompute(db, pass)` runs one entry of a spec's `compute`, in the
- * pass's workspace, which it leaves current: a GPGPU pass or a render pass on autk-compute, or a windows pass on the CPU
- * through autk-core. It does nothing without a database.
+ * pass's workspace, which it leaves current: a GPGPU pass or a render pass on autk-compute, or a windows or clusters
+ * pass on the CPU through autk-core. It does nothing without a database.
  *
  * A host calls it to run compute passes exactly as the grammar does. GPGPU and render passes need WebGPU, and results are
  * kept only in the caches: `cache` receives each pass's result under {@link tableKey} of its `outputTableName`, or of
@@ -98,6 +98,14 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
         store(db, windows, spec.dataRef, spec, 'points');
     }
 
+    async function resolveClusters(db: AutkDb, spec: ClustersComputeSpec): Promise<void> {
+        if (typeof spec.outputColumnName !== 'string' || spec.outputColumnName === '')
+            throw new Error(`Clusters pass over "${spec.dataRef}": outputColumnName must name the column of the cluster ids, not ${JSON.stringify(spec.outputColumnName)}.`);
+        // The table is read as a GPGPU pass reads its own: as an earlier pass wrote it, else as autk-db keeps it.
+        const table = await read(db, spec.dataRef, spec.workspace);
+        store(db, clustersTable(table, spec.outputColumnName), spec.dataRef, spec);
+    }
+
     async function resolveGpgpu(db: AutkDb, spec: GpgpuComputeSpec): Promise<void> {
         // A table an earlier compute pass wrote is read from the cache, so passes chain.
         // Only the pass's own table must load; a `fromFeature` table that cannot
@@ -131,6 +139,7 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
             await enterWorkspace(context, spec.workspace);
             if (spec.type === 'render') await resolveRender(context, spec);
             else if (spec.type === 'windows') await resolveWindows(context, spec);
+            else if (spec.type === 'clusters') await resolveClusters(context, spec);
             else await resolveGpgpu(context, spec);
             return context;
         }

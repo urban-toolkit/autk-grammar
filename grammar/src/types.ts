@@ -922,7 +922,10 @@ type GpgpuComputeBase = {
     wgslFunction: string | string[]
 }
 
-/** Where a GPGPU pass writes its result. A render pass declares its own `outputTableName` and `layerType`. */
+/**
+ * Where a GPGPU or clusters pass writes its result. A render or windows pass declares its own `outputTableName` and
+ * `layerType`.
+ */
 type ComputeOutput = {
     /**
      * Name of a new table that receives the result, so the source table stays as it is and later passes, maps and
@@ -1086,10 +1089,28 @@ export type WindowsComputeSpec = {
 }
 
 /**
- * One entry of `compute`: a {@link GpgpuComputeSpec} without a `type` or with `type: 'gpgpu'`, a {@link RenderComputeSpec}
- * with `type: 'render'`, or a {@link WindowsComputeSpec} with `type: 'windows'`.
+ * Cluster ids of touching geometries: rows whose geometries intersect or touch, directly or through other rows, share a
+ * cluster. The id, a whole number from 0, is written to `feature.properties.compute.<outputColumnName>`; the first row's
+ * cluster is 0, and each other cluster takes the next number in the order of its first row. A row without a geometry,
+ * or with an empty one, is in no cluster, and its id is `null`. Runs on the CPU. Read by the Autark adapter only.
  */
-export type ComputeSpec = GpgpuComputeSpec | RenderComputeSpec | WindowsComputeSpec
+export type ClustersComputeSpec = ComputeOutput & {
+    /** Selects a clusters pass. */
+    type: 'clusters',
+    /** Workspace of the tables the pass reads and writes. */
+    workspace?: WorkspaceName,
+    /** Name of the table whose rows the pass clusters. */
+    dataRef: string,
+    /** Column written with each row's cluster id. */
+    outputColumnName: string,
+}
+
+/**
+ * One entry of `compute`: a {@link GpgpuComputeSpec} without a `type` or with `type: 'gpgpu'`, a {@link RenderComputeSpec}
+ * with `type: 'render'`, a {@link WindowsComputeSpec} with `type: 'windows'`, or a {@link ClustersComputeSpec} with
+ * `type: 'clusters'`.
+ */
+export type ComputeSpec = GpgpuComputeSpec | RenderComputeSpec | WindowsComputeSpec | ClustersComputeSpec
 
 /**
  * How the maps and plots of a specification are arranged on the page.
