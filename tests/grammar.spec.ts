@@ -2250,18 +2250,20 @@ test('draws the marks of every plot of the page in one markColor, and the select
         plot: [zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c' }), zonesPlot({ id: 'b', mark: 'bar', markColor: '#1f77b4' })],
     }, 'each')).rejects.toThrow('Plots "a" and "b" set different markColor values, "#2ca02c" and "#1f77b4": autk-plot draws every plot of a page in one mark color.');
 
-    // The colors are the page's: the plot of a second grammar, whose spec sets neither, takes the first one's mark color.
-    await runSpec(page, { data: [area, zones], plot: zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c', selection: [0] }) });
+    // The colors are the page's, and each run draws in its own spec's: a second grammar's run whose spec sets neither
+    // draws in autk-plot's own colors, though the first grammar's still sets a mark color...
+    await runSpec(page, { data: [area, zones], plot: zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c' }) });
+    expect(await fills('plot')).toEqual([[0, green], [1, green], [2, green], [3, green]]);
     await page.evaluate((spec) => window.runBeside(spec), { data: [area, zones], plot: zonesPlot({ id: 'c', mark: 'bar', selection: [3] }) });
-    expect(await fills('beside')).toEqual([[0, green], [1, green], [2, green], [3, highlightBlue]]);
-    // A later run of the second that sets one colors the page; once it is destroyed, the first one's comes back, and
-    // once neither is left, autk-plot's own.
+    expect(await fills('beside')).toEqual([[0, markGray], [1, markGray], [2, markGray], [3, highlightBlue]]);
+    expect(await plotStyle()).toEqual({ markColor: '#bfbfbf', highlightColor: '#5dade2' });
+    // ...which the first grammar's plot takes as it shows its next selection, since autk-plot keeps one of each for the
+    // page. A later run that sets a mark color sets it for the page again.
+    await page.evaluate(() => window.grammar.setPlotSelection('a', [1]));
+    expect(await fills('plot')).toEqual([[0, markGray], [1, highlightBlue], [2, markGray], [3, markGray]]);
     await page.evaluate((spec) => window.runBeside(spec), { data: [area, zones], plot: zonesPlot({ id: 'c', mark: 'bar', markColor: '#1f77b4' }) });
     expect(await plotStyle()).toEqual({ markColor: '#1f77b4', highlightColor: '#5dade2' });
-    await page.evaluate(() => window.besideGrammar?.destroy());
-    expect(await plotStyle()).toEqual({ markColor: '#2ca02c', highlightColor: '#5dade2' });
-    await page.evaluate(() => window.grammar.destroy());
-    expect(await plotStyle()).toEqual({ markColor: '#bfbfbf', highlightColor: '#5dade2' });
+    expect(await fills('beside')).toEqual([[0, 'rgb(31, 119, 180)'], [1, 'rgb(31, 119, 180)'], [2, 'rgb(31, 119, 180)'], [3, 'rgb(31, 119, 180)']]);
 });
 
 test('colors the ten noisiest neighborhoods of plot-colors alike on its map and its chart, and selects the noisiest', async ({ page }) => {

@@ -719,14 +719,16 @@ export interface PlotBase {
     colorMapDomain?: string[],
     /**
      * Color of the marks that are neither colored by value nor selected, as `#rrggbb`: `#bfbfbf` by default. autk-plot
-     * keeps one mark color for the page, so every plot it draws there takes it, and a run refuses two plots that set
-     * different ones. Read by the Autark adapter; the deck.gl adapter ignores it.
+     * keeps one mark color for the page, so every plot it draws there takes it: a run refuses two plots that set
+     * different ones, and a run whose plots set none gives back autk-plot's. Read by the Autark adapter; the deck.gl
+     * adapter ignores it.
      */
     markColor?: HexColor,
     /**
      * Color of the selected marks, and of a table's selected rows, as `#rrggbb`: `#5dade2` by default. autk-plot keeps
-     * one highlight color for the page, so every plot it draws there takes it, and a run refuses two plots that set
-     * different ones. Read by the Autark adapter; the deck.gl adapter ignores it.
+     * one highlight color for the page, so every plot it draws there takes it: a run refuses two plots that set
+     * different ones, and a run whose plots set none gives back autk-plot's. Read by the Autark adapter; the deck.gl
+     * adapter ignores it.
      */
     highlightColor?: HexColor,
     /**

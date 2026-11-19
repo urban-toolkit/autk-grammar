@@ -8,7 +8,7 @@ import type { PlotEventData } from "@urban-toolkit/autk-plot";
 import { FeatureCollection } from "geojson";
 import { createDataAdapter } from "./adapters/data";
 import { createMapAdapter } from "./adapters/map";
-import { askPlotColors, createPlotAdapter, linkPlotToLayer, releasePlotColors } from "./adapters/plot";
+import { createPlotAdapter, linkPlotToLayer, setPlotColors } from "./adapters/plot";
 import { checkPlotKeys, plotColorsOf, plotKey } from "./plot-options";
 import { layerIdOf } from "./adapters/map";
 import { enterWorkspace } from "./workspace";
@@ -142,10 +142,10 @@ export class AutkGrammar {
 
     /**
      * Releases what the last run created: every map (its layers' GPU buffers, its textures, its canvas context, the
-     * controls it adds to the page and its event handlers), the grammar's own registries, caches and event forwarding,
-     * and the mark and highlight colors its plots set for the page. autk-map's maps share one GPU device, which stays for
-     * the maps of the next run. Call it before the page or the container goes away; `run` calls it before it starts, so
-     * running a new spec on the same instance does not leak the maps of the old one.
+     * controls it adds to the page and its event handlers) and the grammar's own registries, caches and event
+     * forwarding. autk-map's maps share one GPU device, which stays for the maps of the next run. Call it before the
+     * page or the container goes away; `run` calls it before it starts, so running a new spec on the same instance
+     * does not leak the maps of the old one.
      */
     destroy(): void {
         for (const cleanup of this._fwdCleanups) cleanup();
@@ -162,7 +162,6 @@ export class AutkGrammar {
         this._computeTypes.clear();
         this.grammarEngine = undefined;
         this._data = {};
-        releasePlotColors(this);
     }
 
     async run(spec: UrbanSpec) {
@@ -184,7 +183,7 @@ export class AutkGrammar {
 
         this.destroy();
         // autk-plot keeps one mark color and one highlight color for the page, which a plot reads as it draws.
-        askPlotColors(this, plotColors);
+        setPlotColors(plotColors);
 
         this.grammarEngine = createEngine({
             spec,

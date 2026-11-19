@@ -27,45 +27,21 @@ function grammarMarkToPlotType(mark: PlotMark): PlotType {
     return mapping[mark];
 }
 
-/**
- * autk-plot keeps one mark color and one highlight color for the whole page (`PlotStyle`), which every plot reads as it
- * draws and as it restyles its marks for a selection. So each grammar whose last run set them asks for them here, and
- * the page's plots take the colors of the last run, among those still asking, that set each. Once none asks, they take
- * back the colors autk-plot had before the first did. A page whose specs set neither never has its colors touched.
- */
-const askedColors: Array<{ owner: object; colors: PlotColors }> = [];
+/** autk-plot's colors before a run set its own, which a run whose spec sets neither gives back. */
 let colorsBefore: { markColor: ColorHEX; highlightColor: ColorHEX } | undefined;
 
-function applyPlotColors(): void {
-    if (askedColors.length === 0) {
-        if (colorsBefore) {
-            PlotStyle.setDefaultColor(colorsBefore.markColor);
-            PlotStyle.setHighlightColor(colorsBefore.highlightColor);
-        }
-        colorsBefore = undefined;
-        return;
-    }
-    colorsBefore ??= { markColor: PlotStyle.default, highlightColor: PlotStyle.highlight };
-    const last = (key: keyof PlotColors) => [...askedColors].reverse().find(({ colors }) => colors[key] !== undefined)?.colors[key];
-    PlotStyle.setDefaultColor((last('markColor') ?? colorsBefore.markColor) as ColorHEX);
-    PlotStyle.setHighlightColor((last('highlightColor') ?? colorsBefore.highlightColor) as ColorHEX);
-}
-
 /**
- * Asks for the colors a run's plots set, for every plot autk-plot draws on the page, in place of what `owner`, the
- * run's grammar, asked for before. `AutkGrammar.run` calls it before it draws any plot.
+ * Sets the page's plot colors for a run. autk-plot keeps one mark color and one highlight color for the whole page
+ * (`PlotStyle`), which every plot reads as it draws and as it shows a selection. So a run that sets them colors every
+ * plot on the page, and a run whose spec sets neither gives back the colors autk-plot had before a run set any: a run
+ * draws in the colors its own spec gives, though a host makes a new grammar for each run and never destroys the old
+ * one. A page whose specs set neither never has its colors touched. `AutkGrammar.run` calls it before it draws a plot.
  */
-export function askPlotColors(owner: object, colors: PlotColors): void {
-    const before = askedColors.findIndex((asked) => asked.owner === owner);
-    if (before >= 0) askedColors.splice(before, 1);
-    const asks = colors.markColor !== undefined || colors.highlightColor !== undefined;
-    if (asks) askedColors.push({ owner, colors });
-    if (asks || before >= 0) applyPlotColors();
-}
-
-/** Takes back the colors `owner` asked for, when it asked for any. `AutkGrammar.destroy` calls it. */
-export function releasePlotColors(owner: object): void {
-    askPlotColors(owner, {});
+export function setPlotColors(colors: PlotColors): void {
+    if (colors.markColor === undefined && colors.highlightColor === undefined && !colorsBefore) return;
+    colorsBefore ??= { markColor: PlotStyle.default, highlightColor: PlotStyle.highlight };
+    PlotStyle.setDefaultColor((colors.markColor ?? colorsBefore.markColor) as ColorHEX);
+    PlotStyle.setHighlightColor((colors.highlightColor ?? colorsBefore.highlightColor) as ColorHEX);
 }
 
 /**

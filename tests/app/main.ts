@@ -302,11 +302,17 @@ window.legend = () => {
 
 /**
  * The marks the plots in the element #target draw (every `.autkMark`: a point, a bar, a cell, a line or a table row),
- * in the page's order, each with the row autk-plot binds to it and its colors as the page computes them.
+ * in the page's order, each with the row autk-plot binds to it and its colors as the page computes them. A value autk-db
+ * read as a BIGINT, such as a CSV table's whole numbers, comes back as a number.
  */
 window.plotMarks = (target = 'plot') => Array.from(document.querySelectorAll(`#${target} .autkMark`), (mark) => {
     const style = getComputedStyle(mark);
-    return { datum: (mark as Element & { __data__?: Record<string, unknown> }).__data__ ?? null, fill: style.fill, stroke: style.stroke };
+    const datum = (mark as Element & { __data__?: Record<string, unknown> }).__data__;
+    return {
+        datum: datum ? Object.fromEntries(Object.entries(datum).map(([key, value]) => [key, typeof value === 'bigint' ? Number(value) : value])) : null,
+        fill: style.fill,
+        stroke: style.stroke,
+    };
 });
 
 /**

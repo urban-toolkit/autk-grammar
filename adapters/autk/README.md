@@ -459,7 +459,7 @@ plot: { dataRef: 'parcels', mark: 'bar', axis: ['area', '@transform'], transform
 | `markColor` | The color of the marks that are neither colored by value nor selected, `#rrggbb`. autk-plot's is `#bfbfbf`. |
 | `highlightColor` | The color of the selected marks, and of a table's selected rows, `#rrggbb`. autk-plot's is `#5dade2`. |
 
-autk-plot keeps one mark color and one highlight color for the whole page, which every plot on it reads as it draws and as it shows a selection. So the plots of one spec cannot differ: a run refuses two plots that set different ones, and a plot that sets neither takes the others'. A run that sets them colors every plot on the page, other specs' too. When its grammar is destroyed, or runs a spec that sets neither, the page's plots take the colors of the last run still on the page that set them, else the colors autk-plot had before.
+autk-plot keeps one mark color and one highlight color for the whole page, which every plot on it reads as it draws and as it shows a selection. So the plots of one spec cannot differ: a run refuses two plots that set different ones, and a plot that sets neither takes the others'. A run sets them for the page, other specs' plots too, and a run whose spec sets neither gives back autk-plot's own: each run draws in the colors its spec gives. A page whose specs never set them keeps the colors autk-plot has.
 
 ```ts
 plot: [
@@ -539,7 +539,7 @@ const grammar = new AutkGrammar({ map: ['before', 'after'], plot: ['heights', 'a
 
 ## Lifecycle
 
-`destroy()` releases what the last run made: it destroys each map (its layers' GPU buffers, its textures, its canvas context, the controls it adds to the page and its event handlers), clears the grammar's registries, caches and event forwarding, and gives back the plot colors its spec set for the page (see [`markColor` and `highlightColor`](#markcolor-and-highlightcolor)). autk-map's maps share one GPU device, which stays for the maps of the next run. `run()` calls it before it starts, so running a new spec on the same instance does not leak the maps of the old one, and its maps and plots draw only its own tables. Call it yourself before the page or the canvases go away. A map whose layers fail to load is destroyed as the run fails, so it leaves nothing on the page.
+`destroy()` releases what the last run made: it destroys each map (its layers' GPU buffers, its textures, its canvas context, the controls it adds to the page and its event handlers) and clears the grammar's registries, caches and event forwarding. autk-map's maps share one GPU device, which stays for the maps of the next run. `run()` calls it before it starts, so running a new spec on the same instance does not leak the maps of the old one, and its maps and plots draw only its own tables. Call it yourself before the page or the canvases go away. A map whose layers fail to load is destroyed as the run fails, so it leaves nothing on the page.
 
 ## JSON Schema
 
