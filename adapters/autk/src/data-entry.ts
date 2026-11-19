@@ -20,6 +20,7 @@ export type {
     JoinSourceSpec,
     SqlSourceSpec,
     UpdateSourceSpec,
+    DropSourceSpec,
     WorkspaceName,
     WorkspaceSpec,
 } from '@urban-toolkit/the-urban-grammar';

@@ -218,6 +218,29 @@ test('an update puts a layer in the cache the plots read first as autk-db now ex
     assert.notStrictEqual(cache.get('zones'), before);
 });
 
+// drop sources: a table dropped.
+test('a drop source removes its table from autk-db, and from the cache the plots read first', async () => {
+    const cache = new Map([['blocks', emptyCollection()], ['west/blocks', emptyCollection()]]);
+    const { db, calls } = fakeDb([{ name: 'blocks', type: 'polygons' }]);
+    await createDataAdapter(undefined, cache).resolveSource(db, { type: 'drop', dataRef: 'blocks' } as DataSourceSpec);
+    assert.deepEqual(calls, [['removeLayer', 'blocks']]);
+    assert.deepEqual([...cache.keys()], ['west/blocks']);
+});
+
+test('refuses to drop a table the workspace does not hold, naming the table and the workspace', async () => {
+    const { db, calls } = fakeDb([{ name: 'blocks', type: 'polygons' }]);
+    const adapter = createDataAdapter();
+    await assert.rejects(
+        adapter.resolveSource(db, { type: 'drop', dataRef: 'block' } as DataSourceSpec),
+        { message: 'Drop of "block": the default workspace holds no table of that name.' },
+    );
+    await assert.rejects(
+        adapter.resolveSource(db, { type: 'drop', dataRef: 'block', workspace: 'west' } as DataSourceSpec),
+        { message: 'Drop of "block": the workspace "west" holds no table of that name.' },
+    );
+    assert.deepEqual(calls, [['setWorkspace', 'west']]);
+});
+
 // A heatmap's bands, each from an entry of groupBy.
 test("a heatmap hands autk-db each band's normalize", async () => {
     const groupBy = [

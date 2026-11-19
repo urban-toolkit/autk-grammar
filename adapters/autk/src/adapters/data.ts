@@ -1,4 +1,4 @@
-import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec, SqlSourceSpec, UpdateSourceSpec, WorkspaceSpec } from '@urban-toolkit/the-urban-grammar';
+import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, DropSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec, SqlSourceSpec, UpdateSourceSpec, WorkspaceSpec } from '@urban-toolkit/the-urban-grammar';
 import { AutkDb, DEFAULT_WORKSPACE_NAME, isRenderableTable } from '@urban-toolkit/autk-db';
 import type { LoadGeojsonParams } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Geometry } from 'geojson';
@@ -354,6 +354,16 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Requ
                         throw refuse(err instanceof Error ? err.message : String(err));
                     }
                     await recache(db, workspace, update.dataRef);
+                    print(db, targets);
+                    return db;
+                }
+                case 'drop': {
+                    const drop = rest_spec as DropSourceSpec;
+                    // autk-db drops a table it does not hold without a word, so a name that names none is refused here.
+                    if (!db.getTablesMetadata().some((table) => table.name === drop.dataRef))
+                        throw new Error(`Drop of "${drop.dataRef}": ${workspaceLabel(workspace)} holds no table of that name.`);
+                    await db.removeLayer(drop.dataRef);
+                    cache?.delete(tableKey(workspace, drop.dataRef));
                     print(db, targets);
                     return db;
                 }

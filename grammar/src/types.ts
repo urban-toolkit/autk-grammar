@@ -435,10 +435,22 @@ export interface UpdateSourceSpec {
 }
 
 /**
+ * Drops a table, so the sources, compute passes, maps and plots after it no longer find it, and `AutkGrammar.data` no
+ * longer lists it. Read by the Autark adapter only.
+ */
+export interface DropSourceSpec {
+    type: 'drop';
+    /** Workspace of the table. */
+    workspace?: WorkspaceName;
+    /** The table to drop. */
+    dataRef: string;
+}
+
+/**
  * One entry of `data`. The `type` field selects which fields apply.
  * @discriminator type
  */
-export type DataSourceSpec = OsmDataSourceSpec | CsvDataSourceSpec | JsonDataSourceSpec | CustomDataSourceSpec | GeoTiffDataSourceSpec | HeatmapSourceSpec | JoinSourceSpec | SqlSourceSpec | UpdateSourceSpec;
+export type DataSourceSpec = OsmDataSourceSpec | CsvDataSourceSpec | JsonDataSourceSpec | CustomDataSourceSpec | GeoTiffDataSourceSpec | HeatmapSourceSpec | JoinSourceSpec | SqlSourceSpec | UpdateSourceSpec | DropSourceSpec;
 
 /**
  * A color as `#rrggbb`.

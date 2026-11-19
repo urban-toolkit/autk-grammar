@@ -1445,6 +1445,16 @@ test('replaces and updates the rows of a table with an update source, and the ma
         .rejects.toThrow('Update of "nowhere": Table nowhere not found.');
 });
 
+test('drops a table with a drop source, so data no longer lists it and a map no longer finds it', async ({ page }) => {
+    const dropped: UrbanSpec = { data: [area, zones, blocks, { type: 'drop', dataRef: 'blocks' }] };
+    const { tables } = await runSpec(page, { ...dropped, map: { layerRefs: [{ dataRef: 'zones' }] } });
+    expect(Object.keys(tables).sort()).toEqual(['area', 'zones']);
+    await expect(runSpec(page, { ...dropped, map: { layerRefs: [{ dataRef: 'blocks' }] } })).rejects.toThrow('Table blocks not found.');
+    // A drop of a table the workspace does not hold is refused, rather than passed over.
+    await expect(runSpec(page, { data: [area, zones, { type: 'drop', dataRef: 'block' }] }))
+        .rejects.toThrow('Drop of "block": the default workspace holds no table of that name.');
+});
+
 test('sets the radius of a points layer with pointSize', async ({ page }) => {
     const points = { type: 'MultiPoint' as const, coordinates: [[-74.0, 40.7], [-73.99, 40.71]] };
     await runSpec(page, {

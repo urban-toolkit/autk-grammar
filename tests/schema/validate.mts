@@ -198,6 +198,10 @@ expect('update without dataRef', { data: [{ type: 'update', strategy: 'replace',
 expect('update with no rows in jsonObject', { data: [{ ...rows, jsonObject: [] }] }, false);
 expect('update with an empty id column', { data: [{ ...rows, strategy: 'update', idColumn: '' }] }, false);
 expect('update with a FeatureCollection of no features', { data: [{ type: 'update', dataRef: 'g', strategy: 'replace', geojsonObject: { type: 'FeatureCollection', features: [] } }] }, false);
+expect('drop', { data: [csv, { type: 'drop', dataRef: 'c' }] }, true);
+expect('drop in a workspace', { data: [{ type: 'drop', dataRef: 'c', workspace: 'west' }] }, true);
+expect('drop without dataRef', { data: [{ type: 'drop' }] }, false);
+expect('drop with dataRef as a number', { data: [{ type: 'drop', dataRef: 3 }] }, false);
 expect('geojson without a source', { data: [{ type: 'geojson', outputTableName: 'g' }] }, false);
 expect('geojson with no features', { data: [{ type: 'geojson', outputTableName: 'g', geojsonObject: { type: 'FeatureCollection', features: [] } }] }, false);
 expect('linechart without transform', { plot: { ...plot, mark: 'linechart' } }, false);
@@ -363,6 +367,7 @@ const newKeys: Array<[string, string[]]> = [
     ['MapLayerSpec', ['osmElements']],
     ['UrbanSpec', ['plot.osmElements']],
     ['UpdateSourceSpec', ['', 'workspace', 'dataRef', 'strategy', 'idColumn', 'geojsonObject', 'jsonObject']],
+    ['DropSourceSpec', ['', 'workspace', 'dataRef']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

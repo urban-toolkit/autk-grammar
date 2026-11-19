@@ -44,8 +44,9 @@ Each entry of `data` loads or builds one table, in order. Its `type` selects its
 | `join` | `dataRef`, `joinDataRef`, `near`, `groupBy` | No new table: it joins the rows of `joinDataRef` onto the features of `dataRef`, in place. |
 | `sql` | `query`, `layerType` | The rows of a SQL query over the workspace's tables (see [`sql` sources](#sql-sources)). |
 | `update` | `dataRef`, `strategy`, `idColumn`, `geojsonObject` or `jsonObject` | No new table: it replaces or changes the rows of `dataRef` (see [`update` sources](#update-sources)). |
+| `drop` | `dataRef` | No new table: it drops `dataRef` (see [`drop` sources](#drop-sources)). |
 
-Every source but `join` and `update` names its table with `outputTableName`, and every source takes a `workspace` (see [Workspaces](#workspaces)).
+Every source but `join`, `update` and `drop` names its table with `outputTableName`, and every source takes a `workspace` (see [Workspaces](#workspaces)).
 
 A `geotiff` source:
 
@@ -138,6 +139,19 @@ await grammar.run({
   ],
   plot: { dataRef: 'sales', mark: 'bar', axis: ['month', 'total'] },  // Jan 3, Feb 9, Mar 4
 });
+```
+
+### `drop` sources
+
+A `drop` source drops a table, `dataRef`, from its workspace: the sources, compute passes, maps and plots after it no longer find it, and `grammar.data` no longer lists it. It suits a table a spec needs only on the way, such as the rows a join aggregates. The run refuses a drop of a table the workspace does not hold, with a message that names the table.
+
+```ts
+data: [
+  { type: 'geojson', outputTableName: 'neighborhoods', geojsonFileUrl: 'neighborhoods.geojson' },
+  { type: 'csv', outputTableName: 'noise', csvFileUrl: 'noise.csv', geometryColumns: true },
+  { type: 'join', dataRef: 'neighborhoods', joinDataRef: 'noise', groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }] },
+  { type: 'drop', dataRef: 'noise' },
+],
 ```
 
 ### Workspaces
