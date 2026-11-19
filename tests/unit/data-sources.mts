@@ -13,23 +13,24 @@ import type { DataSourceSpec } from '@urban-toolkit/autk-grammar/data';
 type Call = [method: string, ...args: unknown[]];
 
 /** A table the fake database holds, as autk-db's metadata gives it. */
-type FakeTable = { name: string; type?: string };
+type FakeTable = { name: string; type?: string; columns?: Array<{ name: string; type: string }> };
 
 /**
- * A fake AutkDb that records the calls the adapter makes and holds the tables `tables` lists. It starts in the default
- * workspace, as autk-db does after `init()`.
+ * A fake AutkDb that records the calls the adapter makes and holds the tables `tables` lists, whose exports are
+ * `layers` (an empty collection for a table it does not name). It starts in the default workspace, as autk-db does
+ * after `init()`.
  */
-function fakeDb(tables: FakeTable[] = []): { db: AutkDb; calls: Call[] } {
+function fakeDb(tables: FakeTable[] = [], layers: Record<string, FeatureCollection> = {}): { db: AutkDb; calls: Call[] } {
     const calls: Call[] = [];
     let current = DEFAULT_WORKSPACE_NAME;
     const recorded = (method: string) => async (...args: unknown[]) => { calls.push([method, ...args]); };
     const db = {
         getCurrentWorkspace: () => current,
         setWorkspace: async (name: string, ...rest: unknown[]) => { calls.push(['setWorkspace', name, ...rest]); current = name; },
-        getTablesMetadata: () => tables,
+        getTablesMetadata: () => tables.map((table) => ({ columns: [], ...table })),
         getLayer: async (name: string) => {
             calls.push(['getLayer', name]);
-            return { type: 'FeatureCollection', features: [] };
+            return layers[name] ?? { type: 'FeatureCollection', features: [] };
         },
         loadOsm: recorded('loadOsm'),
         loadCsv: recorded('loadCsv'),
@@ -206,16 +207,74 @@ test('refuses an update source without exactly one set of rows, or an update wit
     );
 });
 
+// A GeoJSON layer's columns, and its four zones as autk-db exports them: each under its feature id, valued id * 10.
+const geojsonColumns = ['id', 'geojson_id', 'geometry', 'properties'].map((name) => ({ name, type: name === 'geometry' ? 'GEOMETRY' : 'JSON' }));
+const zoneRows = (ids: Array<string | number | null>, keys: unknown[] = [0, 1, 2, 3]): FeatureCollection => ({
+    type: 'FeatureCollection',
+    features: ids.map((id, i) => ({
+        type: 'Feature', ...(id !== null && { id }), geometry: { type: 'Point', coordinates: [i, 0] }, properties: { id: keys[i], v: i * 10 },
+    })),
+});
+const zoneIds = ['autk-feature-0', 'autk-feature-1', 'autk-feature-2', 'autk-feature-3'];
+
 test('an update puts a layer in the cache the plots read first as autk-db now exports it, and takes a table without a geometry out', async () => {
     const before = emptyCollection();
     const cache = new Map([['zones', before], ['sales', emptyCollection()]]);
-    const { db, calls } = fakeDb([{ name: 'zones', type: 'polygons' }, { name: 'sales' }]);
+    const { db, calls } = fakeDb([{ name: 'zones', type: 'polygons', columns: geojsonColumns }, { name: 'sales' }], { zones: zoneRows(zoneIds) });
     const adapter = createDataAdapter(undefined, cache);
     await adapter.resolveSource(db, { type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'properties.id', geojsonObject: zone } as DataSourceSpec);
     await adapter.resolveSource(db, { type: 'update', dataRef: 'sales', strategy: 'replace', jsonObject: sales } as DataSourceSpec);
-    assert.deepEqual(calls.map(([method, ...args]) => (method === 'getLayer' ? [method, ...args] : method)), ['updateTable', ['getLayer', 'zones'], 'updateTable']);
+    // The zones are read to match the key, updated, and read again for the cache; the sales are updated alone.
+    assert.deepEqual(
+        calls.map(([method, ...args]) => (method === 'getLayer' ? [method, ...args] : method)),
+        [['getLayer', 'zones'], 'updateTable', ['getLayer', 'zones'], 'updateTable'],
+    );
     assert.deepEqual([...cache.keys()], ['zones']);
     assert.notStrictEqual(cache.get('zones'), before);
+});
+
+// autk-db 4.1.1 matches a `properties.<name>` key with `table.properties->>'name' = staging.properties->>'name'`, which
+// DuckDB reads so that the comparison is NULL: a layer update keyed by a property changed no row. The adapter matches
+// the key itself and hands autk-db the rows keyed by their feature ids, a plain column it compares as written.
+test('a layer update keyed by a feature property reaches autk-db keyed by the feature ids of the rows it matches', async () => {
+    const changed = { type: 'Feature', geometry: { type: 'Point', coordinates: [2, 0] }, properties: { id: 2, v: 99 } };
+    const { db, calls } = fakeDb([{ name: 'zones', type: 'polygons', columns: geojsonColumns }], { zones: zoneRows(zoneIds) });
+    await createDataAdapter().resolveSource(db, {
+        type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'properties.id', geojsonObject: { type: 'FeatureCollection', features: [changed] },
+    } as DataSourceSpec);
+    assert.deepEqual(calls, [
+        ['getLayer', 'zones'],
+        ['updateTable', { tableName: 'zones', strategy: 'update', idColumn: 'geojson_id', data: { type: 'FeatureCollection', features: [{ ...changed, id: 'autk-feature-2' }] } }],
+    ]);
+});
+
+test("a layer update goes to every row a key matches, compares keys as text, and uses the rows' id without a geojson_id", async () => {
+    // An OSM-like table, whose export names each row by its id: rows 101 and 102 share the key "primary", and row 103's
+    // key, the number 5, reads as the text "5", which the given string matches.
+    const columns = ['id', 'properties', 'geometry'].map((name) => ({ name, type: name === 'id' ? 'BIGINT' : 'JSON' }));
+    const given = (key: unknown, v: number) => ({ type: 'Feature', geometry: null, properties: { id: key, v } });
+    const { db, calls } = fakeDb([{ name: 'roads', type: 'roads', columns }], { roads: zoneRows([101, 102, 103], ['primary', 'primary', 5]) });
+    await createDataAdapter().resolveSource(db, {
+        type: 'update', dataRef: 'roads', strategy: 'update', idColumn: 'properties.id',
+        geojsonObject: { type: 'FeatureCollection', features: [given('primary', 1), given('5', 2), given('motorway', 3)] },
+    } as DataSourceSpec);
+    assert.deepEqual(calls[1], ['updateTable', {
+        tableName: 'roads', strategy: 'update', idColumn: 'id',
+        data: { type: 'FeatureCollection', features: [{ ...given('primary', 1), id: 101 }, { ...given('primary', 1), id: 102 }, { ...given('5', 2), id: 103 }] },
+    }]);
+});
+
+test('a layer update whose keys match no row leaves autk-db alone, and one of rows without feature ids is refused', async () => {
+    const update = (dataRef: string) => ({
+        type: 'update', dataRef, strategy: 'update', idColumn: 'properties.id',
+        geojsonObject: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: null, properties: { id: 7 } }] },
+    } as DataSourceSpec);
+    const unmatched = fakeDb([{ name: 'zones', type: 'polygons', columns: geojsonColumns }], { zones: zoneRows(zoneIds) });
+    await createDataAdapter().resolveSource(unmatched.db, update('zones'));
+    assert.deepEqual(unmatched.calls, [['getLayer', 'zones']]);
+    const anonymous = fakeDb([{ name: 'zones', type: 'polygons', columns: geojsonColumns }], { zones: zoneRows([null, null, null, null], [7, 7, 7, 7]) });
+    await assert.rejects(createDataAdapter().resolveSource(anonymous.db, update('zones')), { message: 'Update of "zones": its rows have no feature id to update them by.' });
+    assert.deepEqual(anonymous.calls, [['getLayer', 'zones']]);
 });
 
 // drop sources: a table dropped.

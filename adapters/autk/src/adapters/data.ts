@@ -1,6 +1,6 @@
 import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, DropSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec, SqlSourceSpec, UpdateSourceSpec, WorkspaceSpec } from '@urban-toolkit/the-urban-grammar';
-import { AutkDb, DEFAULT_WORKSPACE_NAME, isRenderableTable } from '@urban-toolkit/autk-db';
-import type { LoadGeojsonParams } from '@urban-toolkit/autk-db';
+import { AutkDb, DEFAULT_WORKSPACE_NAME, isRenderableTable, isVectorTable } from '@urban-toolkit/autk-db';
+import type { LoadGeojsonParams, Table } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Geometry } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
 import { enterWorkspace, tableKey } from '../workspace';
@@ -96,6 +96,36 @@ function crsAdvice(coordinateFormat: string | undefined): string {
 /** How a message names a workspace: the default one, or another by its name. */
 function workspaceLabel(name: string | undefined): string {
     return name === undefined || name === DEFAULT_WORKSPACE_NAME ? 'the default workspace' : `the workspace "${name}"`;
+}
+
+/** A feature property's value as SQL's `->>` reads it: a string as it is, any other value as its JSON. */
+function propertyText(value: unknown): string | undefined {
+    if (value === undefined || value === null) return undefined;
+    return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+/**
+ * The rows of an update of a layer keyed by a feature property, `properties.<name>`, keyed instead by the feature ids of
+ * the table's rows they match. autk-db 4.1.1 matches such a key with `table.properties->>'name' =
+ * staging.properties->>'name'`, which DuckDB reads so that the comparison is NULL: no row matches, and nothing is
+ * updated. It matches a plain column as written. So each given feature goes to every row whose property has its value,
+ * compared as text, as `->>` reads it, under that row's id in autk-db's export: its `geojson_id`, else its `id`.
+ */
+async function updateByFeatureId(db: AutkDb, table: Table, rows: FeatureCollection, property: string): Promise<{ data: FeatureCollection, idColumn: string }> {
+    const ids = new Map<string, Array<string | number>>();
+    for (const row of (await db.getLayer(table.name)).features) {
+        const key = propertyText((row.properties as Record<string, unknown> | null)?.[property]);
+        if (key === undefined) continue;
+        if (row.id === undefined || row.id === null)
+            throw new Error('its rows have no feature id to update them by.');
+        ids.set(key, [...(ids.get(key) ?? []), row.id]);
+    }
+    const features = rows.features.flatMap((feature) => {
+        const key = propertyText((feature.properties as Record<string, unknown> | null)?.[property]);
+        return key === undefined ? [] : (ids.get(key) ?? []).map((id) => ({ ...feature, id }));
+    });
+    const idColumn = table.columns.some((column) => column.name === 'geojson_id') ? 'geojson_id' : 'id';
+    return { data: { ...rows, features }, idColumn };
 }
 
 /** The database a source loads into: `context`, else a new one. */
@@ -343,12 +373,24 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Requ
                         throw refuse('give its rows in geojsonObject or in jsonObject, one of the two.');
                     if (update.strategy === 'update' && !update.idColumn)
                         throw refuse("the update strategy needs an idColumn, the column that matches a given row to the table's rows.");
+                    let data = (update.geojsonObject ?? update.jsonObject) as FeatureCollection | Record<string, unknown>[];
+                    let idColumn = update.idColumn;
                     try {
+                        // A layer keyed by a feature property is matched here, then updated by its rows' feature ids.
+                        const table = db.getTablesMetadata().find((candidate) => candidate.name === update.dataRef);
+                        if (update.strategy === 'update' && update.geojsonObject && idColumn?.startsWith('properties.') && table && isVectorTable(table)) {
+                            ({ data, idColumn } = await updateByFeatureId(db, table, update.geojsonObject as FeatureCollection, idColumn.slice('properties.'.length)));
+                            // No row has a given key, so the table stays as it is, as autk-db leaves it.
+                            if ((data as FeatureCollection).features.length === 0) {
+                                print(db, targets);
+                                return db;
+                            }
+                        }
                         await db.updateTable({
                             tableName: update.dataRef,
-                            data: (update.geojsonObject ?? update.jsonObject) as FeatureCollection | Record<string, unknown>[],
+                            data,
                             strategy: update.strategy,
-                            ...(update.idColumn !== undefined && { idColumn: update.idColumn }),
+                            ...(idColumn !== undefined && { idColumn }),
                         });
                     } catch (err) {
                         throw refuse(err instanceof Error ? err.message : String(err));
