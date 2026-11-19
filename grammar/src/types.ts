@@ -1,6 +1,6 @@
 import { DataAdapter, PlotAdapter, MapAdapter, ComputeAdapter } from "./adapters";
 import { BBox, GeoJsonProperties, Geometry } from 'geojson';
-import { DataSourceType, LayerType, ColorMapInterpolator, PlotEvent, PlotTransformPreset, AggregateFunction, HeatmapAggregateFunction, NormalizationMode } from "./constants";
+import { DataSourceType, LayerType, ColorMapInterpolator, PlotEvent, PlotTransformPreset, AggregateFunction, HeatmapAggregateFunction, NormalizationMode, CategoricalColorMapInterpolator, ContinuousColorMapInterpolator } from "./constants";
 
 /**
  * Name of a workspace: an isolated set of tables with its own extent. The first source loaded into a workspace sets its
@@ -660,7 +660,28 @@ export interface PlotBase {
      * @minItems 1
      */
     axis: string[],
+    /**
+     * Column whose values color the marks: a scatter plot's points, a bar chart's bars, and the lines of parallel
+     * coordinates, which a click on an axis's title colors by that axis instead. When every value is a number, or a
+     * string that reads as one, the marks take `colorMapInterpolator`'s scheme; otherwise the values are categories,
+     * and take `categoricalColorMapInterpolator`'s. A heat matrix colors its cells by their values, which `@transform`
+     * names. Line charts and tables color no mark by value.
+     */
     color?: string,
+    /**
+     * Color scheme of marks colored by numbers: a sequential or diverging `interpolate*` scheme, `interpolateReds` by
+     * default. The scale runs from the lowest value, which takes the scheme's first color, to the highest, which takes
+     * its last. A categorical `scheme*` name is refused, since categories take `categoricalColorMapInterpolator`. Read
+     * by the Autark adapter; the deck.gl adapter ignores it.
+     */
+    colorMapInterpolator?: ContinuousColorMapInterpolator,
+    /**
+     * Color scheme of marks colored by categories: a categorical `scheme*` scheme, `schemeObservable10` by default.
+     * The categories take the scheme's colors in the order they first appear, and those past the scheme's last color
+     * take that one. A sequential or diverging `interpolate*` name is refused. Read by the Autark adapter; the deck.gl
+     * adapter ignores it.
+     */
+    categoricalColorMapInterpolator?: CategoricalColorMapInterpolator,
     title?: string,
     /** Interactions the plot emits. */
     events?: PlotEvent[],

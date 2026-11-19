@@ -31,6 +31,9 @@ export type LayerState = {
 /** A map's legend as the page shows it: its heading, its labels left to right, and whether it shows. */
 export type LegendState = { title: string | null; labels: string[]; visible: boolean };
 
+/** A mark a plot draws: the row autk-plot binds to it, and its fill and stroke as the page computes them, `rgb(r, g, b)`. */
+export type DrawnMark = { datum: Record<string, unknown> | null; fill: string; stroke: string };
+
 const examples = import.meta.glob<{ spec: UrbanSpec }>('../../gallery/src/examples/*.ts');
 
 function element(tag: 'canvas' | 'div', id: string): HTMLElement {
@@ -56,6 +59,7 @@ declare global {
         cameraState: (canvasId: string) => { eye: number[]; lookAt: number[] };
         rasterCells: (canvasId: string, layerId: string) => { values: number[]; rgba: number[] };
         legend: () => LegendState | null;
+        plotMarks: (target?: string) => DrawnMark[];
         schemeColor: (value: number, interpolator: string, domain: number[]) => ColorRGB;
         domainLabels: (domain: number[]) => string[];
     }
@@ -273,6 +277,15 @@ window.legend = () => {
         visible: el.style.visibility !== 'hidden',
     };
 };
+
+/**
+ * The marks the plots in the element #target draw (every `.autkMark`: a point, a bar, a cell, a line or a table row),
+ * in the page's order, each with the row autk-plot binds to it and its colors as the page computes them.
+ */
+window.plotMarks = (target = 'plot') => Array.from(document.querySelectorAll(`#${target} .autkMark`), (mark) => {
+    const style = getComputedStyle(mark);
+    return { datum: (mark as Element & { __data__?: Record<string, unknown> }).__data__ ?? null, fill: style.fill, stroke: style.stroke };
+});
 
 /** autk-core's color for a value on a scheme over a domain, as autk-map colors a raster cell. */
 window.schemeColor = (value: number, interpolator: string, domain: number[]) =>

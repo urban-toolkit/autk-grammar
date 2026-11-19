@@ -4,6 +4,7 @@ import { Targets, PlotRegistry, GeoJsonCache, ComputeCache } from '../types';
 import { addPlotLink, exportKey, exportOf, exportOptions } from '../drawn';
 import type { DrawnLayer, DrawnLayers, LayerExports, PlotLinks, PlotRows } from '../drawn';
 import { rowKeys, translateIds } from '../rows';
+import { plotKey, plotOptions } from '../plot-options';
 import { AutkDb, isRenderableTable } from '@urban-toolkit/autk-db';
 import { AutkPlot, PlotEvent as AutkPlotEvent } from '@urban-toolkit/autk-plot';
 import type { PlotEventData, PlotType, PlotTransformConfig } from '@urban-toolkit/autk-plot';
@@ -22,11 +23,6 @@ function grammarMarkToPlotType(mark: PlotMark): PlotType {
         'heatmatrix': 'heatmatrix',
     };
     return mapping[mark];
-}
-
-/** How a plot is known to links and to `AutkGrammar`: its `id`, else its `dataRef`. */
-export function plotKey(spec: PlotSpec): string {
-    return spec.id ?? spec.dataRef;
 }
 
 /**
@@ -99,8 +95,8 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
                 type: grammarMarkToPlotType(spec.mark),
                 collection: geojson,
                 attributes: { axis: spec.axis, ...(spec.color && { color: spec.color }) },
-                labels: { axis: spec.axis, title: spec.title },
                 events,
+                ...plotOptions(spec),
                 ...(spec.width     && { width: spec.width }),
                 ...(spec.height    && { height: spec.height }),
                 ...(spec.margins   && { margins: spec.margins }),

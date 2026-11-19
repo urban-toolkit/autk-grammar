@@ -8,7 +8,8 @@ import type { PlotEventData } from "@urban-toolkit/autk-plot";
 import { FeatureCollection } from "geojson";
 import { createDataAdapter } from "./adapters/data";
 import { createMapAdapter } from "./adapters/map";
-import { createPlotAdapter, linkPlotToLayer, plotKey } from "./adapters/plot";
+import { createPlotAdapter, linkPlotToLayer } from "./adapters/plot";
+import { checkPlotKeys, plotKey } from "./plot-options";
 import { layerIdOf } from "./adapters/map";
 import { enterWorkspace } from "./workspace";
 import { createComputeAdapter } from "./adapters/compute";
@@ -177,6 +178,7 @@ export class AutkGrammar {
             throw new Error('Compute adapter not initialized. Please call the constructor first.');
 
         checkViewIds(spec);
+        for (const plot of asList(spec.plot)) checkPlotKeys(plot);
 
         this.destroy();
 

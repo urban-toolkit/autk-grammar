@@ -4,7 +4,7 @@ import type {
     CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec, MapSpec, PlotSpec,
     RenderComputeSpec, UrbanSpec,
 } from '@urban-toolkit/the-urban-grammar';
-import type { LayerState, PaneBox, RunSummary } from './app/main';
+import type { DrawnMark, LayerState, PaneBox, RunSummary } from './app/main';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
 import { spec as heatmapGeojson } from '../gallery/src/examples/heatmap-vis-geojson';
 
@@ -1991,4 +1991,56 @@ test('maps the ten neighborhoods of sql-source with the most noise complaints, w
     // The map colors them by that count, over the neighborhoods drawn in gray.
     expect((await layerById(page))['Noise complaints, the ten noisiest']).toMatchObject({ type: 'polygons', isColorMap: true, interpolator: 'interpolateReds' });
     await expectDrawn(page, 'map0');
+});
+
+// Plot keys: `zones` (above) holds four values, 0 to 30, and `trees` a kind of tree in each of four rows, oak, elm, ash
+// and oak again, so its kinds are categories in that order.
+const trees: DataSourceSpec = {
+    type: 'csv',
+    outputTableName: 'trees',
+    csvObject: [['id', 'kind', 'n'], ['a', 'oak', 4], ['b', 'elm', 2], ['c', 'ash', 3], ['d', 'oak', 1]],
+};
+
+/** A plot spec with the fields given, typed as the grammar's (a scheme is written by its name). */
+const plotOf = (fields: Record<string, unknown>) => fields as unknown as PlotSpec;
+
+/** The marks the plots in #target draw, with the row each stands for and its colors (see window.plotMarks). */
+function plotMarks(page: Page, target = 'plot'): Promise<DrawnMark[]> {
+    return page.evaluate((id) => window.plotMarks(id), target);
+}
+
+/** autk-core's color for a value on a scheme over a domain, as autk-plot paints a mark: `rgb(r, g, b)`. */
+async function schemeFill(page: Page, value: number, interpolator: string, domain: number[]): Promise<string> {
+    const { r, g, b } = await page.evaluate(([v, i, d]) => window.schemeColor(v, i, d), [value, interpolator, domain] as [number, string, number[]]);
+    return `rgb(${r}, ${g}, ${b})`;
+}
+
+test("colors a plot's marks by the scheme of numbers and the scheme of categories it names, and refuses one of the other kind", async ({ page }) => {
+    // Numbers: each bar in the color of its value on viridis, rather than autk-plot's reds, from the lowest value, 0, to
+    // the highest, 30.
+    await runSpec(page, {
+        data: [area, zones],
+        plot: plotOf({ id: 'z', dataRef: 'zones', mark: 'bar', axis: ['id', 'v'], color: 'v', colorMapInterpolator: 'interpolateViridis' }),
+    });
+    const bars = await plotMarks(page);
+    expect(bars).toHaveLength(4);
+    for (const { datum, fill } of bars)
+        expect(fill, `bar ${datum?.id}`).toBe(await schemeFill(page, Number(datum?.v), 'interpolateViridis', [0, 30]));
+
+    // Categories: oak, elm and ash, in the order they first appear, take Set1's first three colors, rather than
+    // autk-plot's Observable10.
+    await runSpec(page, {
+        data: [trees],
+        plot: plotOf({ id: 't', dataRef: 'trees', mark: 'bar', axis: ['id', 'n'], color: 'kind', categoricalColorMapInterpolator: 'schemeSet1' }),
+    });
+    const set1: Record<string, string> = { oak: 'rgb(228, 26, 28)', elm: 'rgb(55, 126, 184)', ash: 'rgb(77, 175, 74)' };
+    const kinds = await plotMarks(page);
+    expect(kinds.map(({ datum }) => datum?.kind).sort()).toEqual(['ash', 'elm', 'oak', 'oak']);
+    for (const { datum, fill } of kinds) expect(fill, `bar ${datum?.id}`).toBe(set1[String(datum?.kind)]);
+
+    // A scheme of the other kind is refused before anything is drawn.
+    await expect(runSpec(page, {
+        data: [trees],
+        plot: plotOf({ id: 't', dataRef: 'trees', mark: 'bar', axis: ['id', 'n'], color: 'kind', colorMapInterpolator: 'schemeSet1' }),
+    })).rejects.toThrow('Plot "t": colorMapInterpolator "schemeSet1" is a categorical scheme');
 });

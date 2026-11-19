@@ -390,6 +390,25 @@ await grammar.run({
 });
 ```
 
+## Plot styling
+
+Besides its table, mark and columns, a plot takes these keys. The Autark adapter reads them; the deck.gl adapter ignores them.
+
+### `colorMapInterpolator` and `categoricalColorMapInterpolator`
+
+A plot colors its marks by the values of its `color` column: a scatter plot's points, a bar chart's bars, and the lines of parallel coordinates, which a click on an axis's title colors by that axis instead. A heat matrix colors its cells by their values. Line charts and tables color no mark by value. When every value is a number, or a string that reads as one, the marks take the scheme of numbers; otherwise the values are categories, and take the scheme of categories.
+
+| Key | Effect |
+|---|---|
+| `colorMapInterpolator` | The scheme of numbers: a sequential or diverging `interpolate*` scheme, `interpolateReds` by default. The lowest value takes its first color and the highest its last. |
+| `categoricalColorMapInterpolator` | The scheme of categories: a `scheme*` scheme, `schemeObservable10` by default. The categories take its colors in the order they first appear, and those past its last color take that one. |
+
+A run refuses a `scheme*` name as `colorMapInterpolator`, and an `interpolate*` name as `categoricalColorMapInterpolator`.
+
+```ts
+plot: { dataRef: 'parcels', mark: 'bar', axis: ['id', 'area'], color: 'landuse', categoricalColorMapInterpolator: ColorMapInterpolator.CAT_SET2 }
+```
+
 ## Interactions
 
 A layer with `isPick` and a plot with `events` report what the user selects on `grammar.interactions`: `map:picking` and `plot:selection` give feature ids, the positions of the selected features among those the layer or the plot draws (a map layer leaves out features without a geometry). Every map of the spec reports its picks, though several draw one table. To link a selection to other tables, name the columns whose values identify those rows with `selectFields` on the layer or the plot, for example `selectFields: ['nta2020']`. The grammar does not read it; the events still report feature ids, and the app reads the key values from those rows.

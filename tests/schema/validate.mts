@@ -303,6 +303,15 @@ expect('link without a target', { map: layers, links: [{ source: 'p' }] }, false
 expect('link with an empty layer', { map: layers, links: [{ source: 'p', target: 'm', layer: '' }] }, false);
 expect('links as an object', { map: layers, links: { source: 'p', target: 'm' } }, false);
 
+// Plot keys, valid and refused. Keys the schema does not name are allowed, so each refused form is valid until its
+// key is typed.
+const plotWith = (fields: Record<string, unknown>, mark = 'bar') => ({ plot: { ...plot, mark, color: 'b', ...fields } });
+expect('plot color schemes', plotWith({ colorMapInterpolator: 'interpolateViridis', categoricalColorMapInterpolator: 'schemeTableau10' }), true);
+expect('plot diverging scheme', plotWith({ colorMapInterpolator: 'interpolateRdBu' }, 'scatter'), true);
+expect('plot colorMapInterpolator of categories', plotWith({ colorMapInterpolator: 'schemeSet1' }), false);
+expect('plot categoricalColorMapInterpolator of numbers', plotWith({ categoricalColorMapInterpolator: 'interpolateBlues' }, 'scatter'), false);
+expect('plot with an unknown color scheme', plotWith({ colorMapInterpolator: 'rainbow' }), false);
+
 // Each layer styling option is documented in the schema.
 const layerProperties = schema.definitions?.MapLayerSpec?.properties ?? {};
 for (const key of ['title', 'color', 'width', 'pointSize', 'stroke', 'colorMapCenter', 'colorMapReverse', 'colorMapRange', 'transferFunction']) {
@@ -370,6 +379,7 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['plot.osmElements']],
     ['UpdateSourceSpec', ['', 'workspace', 'dataRef', 'strategy', 'idColumn', 'geojsonObject', 'jsonObject']],
     ['DropSourceSpec', ['', 'workspace', 'dataRef']],
+    ['UrbanSpec', ['plot.color', 'plot.colorMapInterpolator', 'plot.categoricalColorMapInterpolator']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {
