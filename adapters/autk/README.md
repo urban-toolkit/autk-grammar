@@ -387,6 +387,14 @@ const { map, layerId } = grammar.mapLayer('routes')!; // layerId is 'Fastest rou
 map.updateRenderInfo(layerId, { opacity: 0.5 });
 ```
 
+### `buildingsZeroHeight`
+
+autk-map leaves out a building part that has no height: none of `height`, `building:height`, `levels` and `building:levels`. A buildings layer with `buildingsZeroHeight: true` draws each such part with a random height of 3 to 7 floors of 3.4 m, from 10.2 to 23.8 m, so a city whose map data gives few heights is not left half empty. The heights are drawn again at each run. A part with one of those keys whose height is not above its minimum, such as `height: 0`, is still left out. Other layers ignore it.
+
+```ts
+map: { layerRefs: [{ dataRef: 'downtown_buildings', buildingsZeroHeight: true }] }
+```
+
 ## Plots and links
 
 A plot reads only its table's properties, so it also draws a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`.

@@ -320,7 +320,9 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
             if(type === 'raster') {
                 map.loadCollection(layerId, { collection: data, type: 'raster', property: band });
             } else {
-                map.loadCollection(layerId, { collection: data, type });
+                // autk-map leaves out a building part without a height, unless it is told to give each a random one.
+                const zeroHeight = type === 'buildings' && layerRef.buildingsZeroHeight === true;
+                map.loadCollection(layerId, { collection: data, type, ...(zeroHeight ? { loadConfig: { buildingsZeroHeight: true } } : {}) });
             }
 
             if(layerRef.opacity != null)

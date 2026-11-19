@@ -575,6 +575,14 @@ export type MapLayerSpec = {
     pickedComps?: RowPosition[],
     /** How values are rescaled before coloring. */
     normalization?: { mode: NormalizationMode; lowerPercentile?: number; upperPercentile?: number },
+    /**
+     * Draw the parts of a buildings layer that have no height, each with a random height of 3 to 7 floors of 3.4 m (10.2
+     * to 23.8 m), rather than leave them out: autk-map's `buildingsZeroHeight`. A part has no height when it has none of
+     * `height`, `building:height`, `levels` and `building:levels`; a part with one of them whose height is not above its
+     * minimum, such as `0`, is still left out. The heights change at each run. Read by the Autark adapter for buildings
+     * layers; other layers and the deck.gl adapter ignore it.
+     */
+    buildingsZeroHeight?: boolean,
     /** Load the layer without drawing it. */
     isSkip?: boolean,
     /**

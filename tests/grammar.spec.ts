@@ -955,6 +955,47 @@ test('refuses a pointSize that is not a number of meters greater than 0, on any 
     await refused('zones', { pointSize: 0 }, 'pointSize must be a number of meters greater than 0, not 0.');
 });
 
+test('draws the buildings that have no height with buildingsZeroHeight, each 3 to 7 floors tall, and leaves them out without it', async ({ page }) => {
+    // Six footprints in a row: three 30 m tall, and three with none of height, building:height, levels and building:levels.
+    const footprint = (i: number) => {
+        const x = -73.99 + i * 0.004;
+        return { type: 'Polygon' as const, coordinates: [[[x, 40.75], [x + 0.002, 40.75], [x + 0.002, 40.752], [x, 40.752], [x, 40.75]]] };
+    };
+    const footprints: DataSourceSpec = {
+        type: 'geojson', outputTableName: 'footprints', layerType: 'buildings',
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [0, 1, 2, 3, 4, 5].map((i) => ({ type: 'Feature' as const, properties: i % 2 === 0 ? { id: i, height: 30 } : { id: i }, geometry: footprint(i) })),
+        },
+    };
+    const buildingsWith = (options: Partial<MapLayerSpec>): UrbanSpec => ({
+        data: [area, footprints],
+        map: { layerRefs: [{ dataRef: 'footprints', title: 'Footprints', ...options }] },
+    });
+    const tops = () => page.evaluate(() => window.buildingTops('map0', 'Footprints'));
+    const tall = (heights: Array<number | null>) => heights.filter((top) => top !== null && Math.abs(top - 30) < 1e-3);
+
+    // Without it, autk-map draws the three that have a height and leaves out the others.
+    await runSpec(page, buildingsWith({}));
+    const without = await tops();
+    expect(without).toHaveLength(6);
+    expect(tall(without)).toHaveLength(3);
+    expect(without.filter((top) => top === null)).toHaveLength(3);
+
+    // With it, the others stand too, each at a random height of 3 to 7 floors of 3.4 m: only that range is checked.
+    await runSpec(page, buildingsWith({ buildingsZeroHeight: true }));
+    const withIt = await tops();
+    expect(tall(withIt)).toHaveLength(3);
+    const fallback = withIt.filter((top) => top === null || Math.abs(top - 30) >= 1e-3);
+    expect(fallback).toHaveLength(3);
+    for (const top of fallback) {
+        expect(top).not.toBeNull();
+        expect(top!).toBeGreaterThanOrEqual(10.2 - 1e-3);
+        expect(top!).toBeLessThanOrEqual(23.8 + 1e-3);
+    }
+    await expectDrawn(page, 'map0');
+});
+
 test('colors two vector layers with different value ranges over one colorMapRange', async ({ page }) => {
     const twoLayers = (options: Partial<MapLayerSpec>): UrbanSpec => ({
         data: [area, zones, lots],

@@ -80,6 +80,7 @@ declare global {
         rasterCells: (canvasId: string, layerId: string) => { values: number[]; rgba: number[] };
         handedBand: (canvasId: string, layerId: string, band: string) => number[];
         terrain: (canvasId: string) => TerrainState | null;
+        buildingTops: (canvasId: string, layerId: string) => Array<number | null>;
         legend: () => LegendState | null;
         plotMarks: (target?: string) => DrawnMark[];
         plotTicks: (target: string, selector: string) => Array<Array<[unknown, string]>>;
@@ -324,6 +325,25 @@ window.handedBand = (canvasId: string, layerId: string, band: string) => {
     const values = (collection?.features[0]?.properties as Record<string, unknown> | null | undefined)?.[band];
     if (!values) throw new Error(`#${canvasId} was handed no band ${band} for ${layerId}`);
     return Array.from(values as ArrayLike<number>);
+};
+
+/**
+ * The top of each building a buildings layer of the map on #canvasId draws, one per feature it was handed, at its
+ * positions: the highest height of the feature's vertices, or null when autk-map draws none of its parts.
+ */
+window.buildingTops = (canvasId: string, layerId: string) => {
+    const layer = mapOn(canvasId).layerManager.searchByLayerId(layerId) as unknown as
+        { position?: Float32Array; components?: Array<{ nPoints: number }> } | null;
+    const position = layer?.position;
+    if (!position || !layer.components) throw new Error(`#${canvasId} draws no buildings layer ${layerId}`);
+    let first = 0;
+    return layer.components.map(({ nPoints }) => {
+        // A component's nPoints counts the vertices up to its own last, x, y and height each.
+        let top: number | null = null;
+        for (let vertex = first; vertex < nPoints; vertex++) top = Math.max(top ?? -Infinity, position[vertex * 3 + 2]);
+        first = nPoints;
+        return top;
+    });
 };
 
 /** The terrain of the map on #canvasId, or null when it draws none (see `TerrainState`). */

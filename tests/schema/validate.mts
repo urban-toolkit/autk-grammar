@@ -308,6 +308,8 @@ expect('layer pickedComps of a negative position', layer({ isPick: true, pickedC
 expect('layer pickedComps of a position between two', layer({ isPick: true, pickedComps: [1.5] }), false);
 expect('layer pickedComps as strings', layer({ isPick: true, pickedComps: ['1'] }), false);
 expect('layer pickedComps as a number', layer({ isPick: true, pickedComps: 1 }), false);
+expect('layer buildingsZeroHeight', layer({ buildingsZeroHeight: true }), true);
+expect('layer buildingsZeroHeight as a string', layer({ buildingsZeroHeight: 'yes' }), false);
 expect('layout with an unknown type', { map: layers, layout: { type: 'diagonal' } }, false);
 expect('layout grid with zero columns', { map: layers, layout: { type: 'grid', columns: 0 } }, false);
 expect('layout grid with columns that are not a whole number', { map: layers, layout: { type: 'grid', columns: 2.5 } }, false);
@@ -443,6 +445,7 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['map.terrain', 'map.terrain.dataRef', 'map.terrain.band']],
     ['TerrainSpec', ['']],
     ['MapLayerSpec', ['pickedComps', 'isPick']],
+    ['MapLayerSpec', ['buildingsZeroHeight']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {
