@@ -368,4 +368,10 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         supportedAdapters: ['autk'],
         load: () => import('./examples/sql-source'),
     },
+    'plot-colors': {
+        title: 'Plot: Noise Complaints in the Colors of the Map',
+        layout: 'map+plot',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/plot-colors'),
+    },
 };

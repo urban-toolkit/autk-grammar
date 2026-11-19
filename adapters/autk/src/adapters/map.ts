@@ -1,5 +1,5 @@
 import type { FeatureCollection } from 'geojson';
-import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
+import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, ComputeCache, ComputeLayerTypes } from '../types';
 import { DrawnLayers, LayerExports, exportKey, exportOf, exportOptions, mapIdOf } from '../drawn';
@@ -7,10 +7,11 @@ import { rowKeys } from '../rows';
 import { AutkMap } from '@urban-toolkit/autk-map';
 import type { LayerRenderInfo } from '@urban-toolkit/autk-map';
 import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator } from '@urban-toolkit/autk-core';
-import type { ColorHEX, ColorMapConfig, ColorMapDomainSpec, ColorRGB, LayerType, TransferFunction } from '@urban-toolkit/autk-core';
+import type { ColorHEX, ColorMapConfig, ColorRGB, LayerType, TransferFunction } from '@urban-toolkit/autk-core';
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { extentOf } from './data';
 import { checkPointSize, planarPointSize } from '../point-size';
+import { HEX_COLOR, buildDomainSpec, colorMapRangeRefusal } from '../color-keys';
 
 /** The id a layer has in its map: its `title`, else its `dataRef`. */
 export function layerIdOf(layerRef: MapLayerSpec): string {
@@ -27,8 +28,6 @@ function checkLayerIds(spec: MapSpec, index: number): void {
         ids.add(id);
     }
 }
-
-const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 
 function hexColor(value: string, key: string, layerId: string): ColorRGB {
     if (!HEX_COLOR.test(value))
@@ -125,35 +124,13 @@ function checkColorMapRange(layerRef: MapLayerSpec): void {
     const range: unknown = layerRef.colorMapRange;
     if (range === undefined) return;
     const refuse = (message: string) => new Error(`Layer "${layerIdOf(layerRef)}": ${message}`);
-    if (!Array.isArray(range) || range.length !== 2 || !range.every((value) => typeof value === 'number' && Number.isFinite(value)))
-        throw refuse('colorMapRange must hold two numbers, [low, high].');
+    const refusal = colorMapRangeRefusal(range, layerRef.colorMapDomain);
+    if (refusal)
+        throw refuse(refusal);
     const [low, high] = range as [number, number];
-    if (low >= high)
-        throw refuse(`colorMapRange low (${low}) must be less than high (${high}).`);
-    if (layerRef.colorMapDomain !== undefined)
-        throw refuse('set colorMapRange or colorMapDomain, not both.');
     const center = layerRef.colorMapCenter;
     if (center != null && (center < low || center > high))
         throw refuse(`colorMapCenter (${center}) must lie within colorMapRange [${low}, ${high}].`);
-}
-
-function buildDomainSpec(
-    normalization: MapSpec['layerRefs'][number]['normalization'],
-    colorMapDomain?: string[],
-): ColorMapDomainSpec {
-    if (colorMapDomain && colorMapDomain.length > 0)
-        return { type: ColorMapDomainStrategy.USER, params: colorMapDomain };
-    if (normalization?.mode === NormalizationMode.PERCENTILE) {
-        const hasExplicitBounds =
-            normalization.lowerPercentile !== undefined || normalization.upperPercentile !== undefined;
-        if (hasExplicitBounds)
-            return {
-                type: ColorMapDomainStrategy.PERCENTILE,
-                params: [normalization.lowerPercentile ?? 0, normalization.upperPercentile ?? 100],
-            };
-        return { type: ColorMapDomainStrategy.PERCENTILE };
-    }
-    return { type: ColorMapDomainStrategy.MIN_MAX };
 }
 
 function valueAtPath(obj: unknown, path: string): unknown {

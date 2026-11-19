@@ -303,6 +303,54 @@ expect('link without a target', { map: layers, links: [{ source: 'p' }] }, false
 expect('link with an empty layer', { map: layers, links: [{ source: 'p', target: 'm', layer: '' }] }, false);
 expect('links as an object', { map: layers, links: { source: 'p', target: 'm' } }, false);
 
+// Plot keys, valid and refused. Keys the schema does not name are allowed, so each refused form is valid until its
+// key is typed.
+const plotWith = (fields: Record<string, unknown>, mark = 'bar') => ({ plot: { ...plot, mark, color: 'b', ...fields } });
+expect('plot color schemes', plotWith({ colorMapInterpolator: 'interpolateViridis', categoricalColorMapInterpolator: 'schemeTableau10' }), true);
+expect('plot diverging scheme', plotWith({ colorMapInterpolator: 'interpolateRdBu' }, 'scatter'), true);
+expect('plot colorMapInterpolator of categories', plotWith({ colorMapInterpolator: 'schemeSet1' }), false);
+expect('plot categoricalColorMapInterpolator of numbers', plotWith({ categoricalColorMapInterpolator: 'interpolateBlues' }, 'scatter'), false);
+expect('plot with an unknown color scheme', plotWith({ colorMapInterpolator: 'rainbow' }), false);
+expect('plot color range', plotWith({ colorMapRange: [0, 60] }), true);
+expect('plot color domain', plotWith({ colorMapDomain: ['oak', 'elm'] }, 'parallel-coordinates'), true);
+expect('plot percentile normalization', plotWith({ normalization: { mode: 'percentile', lowerPercentile: 5, upperPercentile: 95 } }), true);
+expect('plot min-max normalization with a range', plotWith({ normalization: { mode: 'minMax' }, colorMapRange: [-1, 1] }, 'scatter'), true);
+expect('plot colorMapRange with one number', plotWith({ colorMapRange: [0] }), false);
+expect('plot colorMapRange with three numbers', plotWith({ colorMapRange: [0, 5, 10] }), false);
+expect('plot colorMapRange with a string', plotWith({ colorMapRange: [0, '10'] }), false);
+expect('plot colorMapRange as a number', plotWith({ colorMapRange: 10 }), false);
+expect('plot colorMapRange with low equal to high', plotWith({ colorMapRange: [5, 5] }), false);
+expect('plot colorMapRange with colorMapDomain', plotWith({ colorMapRange: [0, 10], colorMapDomain: ['a', 'b'] }), false);
+expect('plot colorMapRange with an empty colorMapDomain', plotWith({ colorMapRange: [0, 10], colorMapDomain: [] }, 'scatter'), false);
+expect('plot colorMapDomain as a string', plotWith({ colorMapDomain: 'oak' }), false);
+expect('plot colorMapDomain with a number', plotWith({ colorMapDomain: ['oak', 3] }), false);
+expect('plot normalization of an unknown mode', plotWith({ normalization: { mode: 'log' } }), false);
+expect('plot normalization without a mode', plotWith({ normalization: { lowerPercentile: 5 } }), false);
+expect('plot normalization as a string', plotWith({ normalization: 'percentile' }), false);
+expect('plot tick formats', plotWith({ tickFormats: ['.2f', '.0%'] }, 'scatter'), true);
+expect('plot tick formats with fill, sign, symbol, width, comma, precision and trim', plotWith({ tickFormats: ['x^10', '+$,.2~f'] }), true);
+expect('plot tick formats empty, as d3-format reads them', plotWith({ tickFormats: ['', ''] }, 'parallel-coordinates'), true);
+expect('plot tick formats with one specifier', plotWith({ tickFormats: ['~s'] }, 'scatter'), false);
+expect('plot tick formats with three specifiers', plotWith({ tickFormats: ['~s', '~s', '~s'] }), false);
+expect('plot tick formats as a string', plotWith({ tickFormats: '~s' }), false);
+expect('plot tick format d3-format cannot read', plotWith({ tickFormats: ['~s', '%%'] }), false);
+expect('plot tick format as a number', plotWith({ tickFormats: [2, '~s'] }), false);
+expect('plot axis titles', plotWith({ axisLabels: ['Area', 'Neighborhoods'] }), true);
+expect('plot axis title for the first axis only', plotWith({ axisLabels: ['Area'] }, 'table'), true);
+expect('plot axis titles as a string', plotWith({ axisLabels: 'Area' }), false);
+expect('plot axis title as a number', plotWith({ axisLabels: ['Area', 3] }), false);
+expect('plot axis titles alike', plotWith({ axisLabels: ['Area', 'Area'] }, 'scatter'), false);
+expect('plot selection', plotWith({ selection: [0, 3] }, 'scatter'), true);
+expect('plot empty selection', plotWith({ selection: [] }), true);
+expect('plot selection of a negative row', plotWith({ selection: [-1] }), false);
+expect('plot selection of a row between two', plotWith({ selection: [1.5] }), false);
+expect('plot selection as strings', plotWith({ selection: ['1'] }, 'table'), false);
+expect('plot selection as a number', plotWith({ selection: 1 }), false);
+expect('plot mark and highlight colors', plotWith({ markColor: '#2ca02c', highlightColor: '#D62728' }), true);
+expect('plot mark color by name', plotWith({ markColor: 'red' }), false);
+expect('plot highlight color as short hex', plotWith({ highlightColor: '#f00' }, 'table'), false);
+expect('plot mark color as a number', plotWith({ markColor: 3 }, 'scatter'), false);
+
 // Each layer styling option is documented in the schema.
 const layerProperties = schema.definitions?.MapLayerSpec?.properties ?? {};
 for (const key of ['title', 'color', 'width', 'pointSize', 'stroke', 'colorMapCenter', 'colorMapReverse', 'colorMapRange', 'transferFunction']) {
@@ -370,6 +418,12 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['plot.osmElements']],
     ['UpdateSourceSpec', ['', 'workspace', 'dataRef', 'strategy', 'idColumn', 'geojsonObject', 'jsonObject']],
     ['DropSourceSpec', ['', 'workspace', 'dataRef']],
+    ['UrbanSpec', ['plot.color', 'plot.colorMapInterpolator', 'plot.categoricalColorMapInterpolator']],
+    ['UrbanSpec', ['plot.normalization', 'plot.colorMapRange', 'plot.colorMapDomain']],
+    ['UrbanSpec', ['plot.tickFormats']],
+    ['UrbanSpec', ['plot.axisLabels']],
+    ['UrbanSpec', ['plot.selection']],
+    ['UrbanSpec', ['plot.markColor', 'plot.highlightColor']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

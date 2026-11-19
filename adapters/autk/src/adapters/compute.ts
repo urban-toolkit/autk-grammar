@@ -3,9 +3,9 @@ import type { LayerType, RenderLayerSpec } from '@urban-toolkit/the-urban-gramma
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkComputeEngine } from '@urban-toolkit/autk-compute';
 import { FeatureCollection } from 'geojson';
-import { ComputeCache, ComputeLayerTypes } from '../types';
+import { ComputeCache, ComputeLayerTypes, GeoJsonCache } from '../types';
 import { computeLayerNames, runCompute } from '../compute-params';
-import { enterWorkspace, tableKey } from '../workspace';
+import { enterWorkspace, inWorkspaceCrs, tableKey } from '../workspace';
 
 /**
  * The layer types a render pass draws. autk-compute skips a layer of any other type, points among them, with only a
@@ -26,9 +26,11 @@ function layerTypeOf(db: AutkDb, name: string, workspace: string | undefined, ty
  * A host calls it to run compute passes exactly as the grammar does. The passes need WebGPU, and their results are
  * kept only in the caches: `cache` receives each pass's result under {@link tableKey} of its `outputTableName`, or of
  * the table it computed over, and a later pass reads a table from it first. `types` receives the layer type of each
- * table a pass wrote under its own `outputTableName`, which a map needs to draw it.
+ * table a pass wrote under its own `outputTableName`, which a map needs to draw it. `sources` is the cache the data
+ * adapter fills: a pass reads a `fromFeature` table from it next, as its plots read theirs, when a GeoJSON source put
+ * the table there with its coordinates in the workspace's CRS.
  */
-export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerTypes): ComputeAdapter {
+export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerTypes, sources?: GeoJsonCache): ComputeAdapter {
 
     /** Reads a table, from the cache when an earlier pass wrote it there. */
     async function read(db: AutkDb, name: string, workspace?: string): Promise<FeatureCollection> {
@@ -81,8 +83,14 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
         // Only the pass's own table must load; a `fromFeature` table that cannot
         // falls back to the directive's `default`.
         const layers: Record<string, FeatureCollection | undefined> = {};
+        const workspaceCrs = db.getWorkspaceConfiguration().coordinateFormat;
         for (const name of computeLayerNames(spec)) {
-            const cached = cache?.get(tableKey(spec.workspace, name));
+            const key = tableKey(spec.workspace, name);
+            // A `fromFeature` table a GeoJSON source loaded is read as the source gave it, as the plots read theirs:
+            // autk-db keeps each feature of a buildings table in its building model, the geometry inside a
+            // GeometryCollection, where `geometry.coordinates.0` finds no outline. The pass's own table is read as autk-db
+            // keeps it, as a map draws it, so its result holds the rows the map draws.
+            const cached = cache?.get(key) ?? (name === spec.dataRef ? undefined : inWorkspaceCrs(sources?.get(key), workspaceCrs));
             if (cached) layers[name] = cached;
             else if (name === spec.dataRef) layers[name] = await db.getLayer(name);
             else {

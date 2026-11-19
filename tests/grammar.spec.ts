@@ -4,7 +4,7 @@ import type {
     CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec, MapSpec, PlotSpec,
     RenderComputeSpec, UrbanSpec,
 } from '@urban-toolkit/the-urban-grammar';
-import type { LayerState, PaneBox, RunSummary } from './app/main';
+import type { DrawnMark, LayerState, PaneBox, RunSummary } from './app/main';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
 import { spec as heatmapGeojson } from '../gallery/src/examples/heatmap-vis-geojson';
 
@@ -1991,4 +1991,346 @@ test('maps the ten neighborhoods of sql-source with the most noise complaints, w
     // The map colors them by that count, over the neighborhoods drawn in gray.
     expect((await layerById(page))['Noise complaints, the ten noisiest']).toMatchObject({ type: 'polygons', isColorMap: true, interpolator: 'interpolateReds' });
     await expectDrawn(page, 'map0');
+});
+
+// Plot keys: `zones` (above) holds four values, 0 to 30, and `trees` a kind of tree in each of four rows, oak, elm, ash
+// and oak again, so its kinds are categories in that order.
+const trees: DataSourceSpec = {
+    type: 'csv',
+    outputTableName: 'trees',
+    csvObject: [['id', 'kind', 'n'], ['a', 'oak', 4], ['b', 'elm', 2], ['c', 'ash', 3], ['d', 'oak', 1]],
+};
+
+/** A plot spec with the fields given, typed as the grammar's (a scheme is written by its name). */
+const plotOf = (fields: Record<string, unknown>) => fields as unknown as PlotSpec;
+
+/** The marks the plots in #target draw, with the row each stands for and its colors (see window.plotMarks). */
+function plotMarks(page: Page, target = 'plot'): Promise<DrawnMark[]> {
+    return page.evaluate((id) => window.plotMarks(id), target);
+}
+
+/** autk-core's color for a value on a scheme over a domain, as autk-plot paints a mark: `rgb(r, g, b)`. */
+async function schemeFill(page: Page, value: number, interpolator: string, domain: number[]): Promise<string> {
+    const { r, g, b } = await page.evaluate(([v, i, d]) => window.schemeColor(v, i, d), [value, interpolator, domain] as [number, string, number[]]);
+    return `rgb(${r}, ${g}, ${b})`;
+}
+
+test("colors a plot's marks by the scheme of numbers and the scheme of categories it names, and refuses one of the other kind", async ({ page }) => {
+    // Numbers: each bar in the color of its value on viridis, rather than autk-plot's reds, from the lowest value, 0, to
+    // the highest, 30.
+    await runSpec(page, {
+        data: [area, zones],
+        plot: plotOf({ id: 'z', dataRef: 'zones', mark: 'bar', axis: ['id', 'v'], color: 'v', colorMapInterpolator: 'interpolateViridis' }),
+    });
+    const bars = await plotMarks(page);
+    expect(bars).toHaveLength(4);
+    for (const { datum, fill } of bars)
+        expect(fill, `bar ${datum?.id}`).toBe(await schemeFill(page, Number(datum?.v), 'interpolateViridis', [0, 30]));
+
+    // Categories: oak, elm and ash, in the order they first appear, take Set1's first three colors, rather than
+    // autk-plot's Observable10.
+    await runSpec(page, {
+        data: [trees],
+        plot: plotOf({ id: 't', dataRef: 'trees', mark: 'bar', axis: ['id', 'n'], color: 'kind', categoricalColorMapInterpolator: 'schemeSet1' }),
+    });
+    const set1: Record<string, string> = { oak: 'rgb(228, 26, 28)', elm: 'rgb(55, 126, 184)', ash: 'rgb(77, 175, 74)' };
+    const kinds = await plotMarks(page);
+    expect(kinds.map(({ datum }) => datum?.kind).sort()).toEqual(['ash', 'elm', 'oak', 'oak']);
+    for (const { datum, fill } of kinds) expect(fill, `bar ${datum?.id}`).toBe(set1[String(datum?.kind)]);
+
+    // A scheme of the other kind is refused before anything is drawn.
+    await expect(runSpec(page, {
+        data: [trees],
+        plot: plotOf({ id: 't', dataRef: 'trees', mark: 'bar', axis: ['id', 'n'], color: 'kind', colorMapInterpolator: 'schemeSet1' }),
+    })).rejects.toThrow('Plot "t": colorMapInterpolator "schemeSet1" is a categorical scheme');
+});
+
+test("colors a scatter plot's points by their color column from its first draw", async ({ page }) => {
+    // autk-plot's scatter plot drew every point in its mark color, and colored the points by value only once a
+    // selection restyled them.
+    await runSpec(page, { data: [area, zones], plot: plotOf({ id: 's', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], color: 'v' }) });
+    const points = await plotMarks(page);
+    expect(points).toHaveLength(4);
+    for (const { datum, fill } of points)
+        expect(fill, `point ${datum?.id}`).toBe(await schemeFill(page, Number(datum?.v), 'interpolateReds', [0, 30]));
+});
+
+/** autk-plot's mark color: the fill of a mark that is neither colored by value nor selected. */
+const markGray = 'rgb(191, 191, 191)';
+
+test("colors a plot over its colorMapRange, colorMapDomain's categories or normalization's percentiles", async ({ page }) => {
+    const bar = (fields: Record<string, unknown>) => plotOf({ id: 'z', dataRef: 'zones', mark: 'bar', axis: ['id', 'v'], color: 'v', ...fields });
+
+    // One range on two plots: zones (0 to 30) and lots (0 to 60) color each value over [0, 60], so 20 has one color in
+    // both, where each plot's own values would put it two thirds up the zones' scale and a third up the lots'.
+    await runSpec(page, {
+        data: [area, zones, lots],
+        plot: [bar({ colorMapRange: [0, 60] }), bar({ id: 'l', dataRef: 'lots', colorMapRange: [0, 60] })],
+    }, 'each');
+    const ranged = [...(await plotMarks(page, 'plot0')), ...(await plotMarks(page, 'plot1'))].map(({ datum, fill }) => ({ v: Number(datum?.v), fill }));
+    expect(ranged).toHaveLength(8);
+    for (const { v, fill } of ranged) expect(fill, `bar of ${v}`).toBe(await schemeFill(page, v, 'interpolateReds', [0, 60]));
+    expect(new Set(ranged.filter(({ v }) => v === 20).map(({ fill }) => fill)).size).toBe(1);
+
+    // The 25th and 75th percentiles of the zones' values, 7.5 and 22.5, end the scale.
+    await runSpec(page, { data: [area, zones], plot: bar({ normalization: { mode: 'percentile', lowerPercentile: 25, upperPercentile: 75 } }) });
+    for (const { datum, fill } of await plotMarks(page))
+        expect(fill, `bar ${datum?.id}`).toBe(await schemeFill(page, Number(datum?.v), 'interpolateReds', [7.5, 22.5]));
+
+    // colorMapDomain reads the values as categories, in its order: 10 takes Observable10's first color and 20 its
+    // second, and 0 and 30, which it does not name, take the mark color.
+    await runSpec(page, { data: [area, zones], plot: bar({ colorMapDomain: ['10', '20'] }) });
+    const byValue = Object.fromEntries((await plotMarks(page)).map(({ datum, fill }) => [String(datum?.v), fill]));
+    expect(byValue).toEqual({
+        '0': markGray,
+        '10': await schemeFill(page, 0, 'schemeObservable10', [10, 20]),
+        '20': await schemeFill(page, 1, 'schemeObservable10', [10, 20]),
+        '30': markGray,
+    });
+
+    // A plot colored by categories ignores the range, as a layer with a categorical scheme does: each kind keeps its
+    // color, where autk-core would read the range as two categories, 0 and 60, and draw every bar in the mark color.
+    await runSpec(page, {
+        data: [trees],
+        plot: plotOf({ id: 't', dataRef: 'trees', mark: 'bar', axis: ['id', 'n'], color: 'kind', colorMapRange: [0, 60] }),
+    });
+    const kinds = ['oak', 'elm', 'ash'];
+    for (const { datum, fill } of await plotMarks(page))
+        expect(fill, `bar ${datum?.id}`).toBe(await schemeFill(page, kinds.indexOf(String(datum?.kind)) / 2, 'schemeObservable10', [0, 1, 2]));
+
+    // A low above its high is refused when the spec runs, as on a layer, since JSON Schema cannot compare two values.
+    await expect(runSpec(page, { data: [area, zones], plot: bar({ colorMapRange: [30, 0] }) }))
+        .rejects.toThrow('Plot "z": colorMapRange low (30) must be less than high (0).');
+});
+
+test("formats the tick labels of a plot's axes with its tickFormats", async ({ page }) => {
+    const ticks = (selector: string) => page.evaluate(([target, axes]) => window.plotTicks(target, axes), ['plot', selector] as [string, string]);
+    const percent = (value: unknown) => `${(Number(value) * 100).toFixed(0)}%`;
+    const zonesBy = (mark: string, tickFormats: unknown) =>
+        runSpec(page, { data: [area, zones], plot: plotOf({ id: 'p', dataRef: 'zones', mark, axis: ['id', 'v'], tickFormats }) });
+
+    // A scatter plot: the first formats the x axis, the zones' ids from 0 to 3, and the second the y axis, their values
+    // from 0 to 30. autk-plot's '~s' would show 0.5 as "500m".
+    await zonesBy('scatter', ['.2f', '.0%']);
+    const [[x], [y]] = [await ticks('#axisX'), await ticks('#axisY')];
+    expect(x.length).toBeGreaterThan(2);
+    expect(y.length).toBeGreaterThan(2);
+    for (const [value, text] of x) expect(text).toBe(Number(value).toFixed(2));
+    for (const [value, text] of y) expect(text).toBe(percent(value));
+
+    // A bar chart: the first formats the x labels that read as numbers, the ids, and the second the y axis.
+    await zonesBy('bar', ['.1f', '.0%']);
+    expect((await ticks('#axisX'))[0].map(([, text]) => text)).toEqual(['0.0', '1.0', '2.0', '3.0']);
+    for (const [value, text] of (await ticks('#axisY'))[0]) expect(text).toBe(percent(value));
+
+    // Parallel coordinates: the first formats every axis of numbers, and the second none.
+    await zonesBy('parallel-coordinates', ['.1f', '.0%']);
+    const axes = await ticks('.autkBrush');
+    expect(axes).toHaveLength(2);
+    for (const axis of axes) {
+        expect(axis.length).toBeGreaterThan(2);
+        for (const [value, text] of axis) expect(text).toBe(Number(value).toFixed(1));
+    }
+
+    // A list d3-format cannot read is refused before anything is drawn.
+    await expect(zonesBy('scatter', ['.2f'])).rejects.toThrow('Plot "p": tickFormats must hold two d3-format specifiers, [x, y].');
+});
+
+test("titles a plot's axes with its axisLabels, and the output of a transform value", async ({ page }) => {
+    const titles = () => page.evaluate(() => window.plotAxisTitles());
+    const zonesBy = (fields: Record<string, unknown>) =>
+        runSpec(page, { data: [area, zones], plot: plotOf({ id: 'p', dataRef: 'zones', axis: ['id', 'v'], ...fields }) });
+
+    // A scatter plot's x and y titles, and the axis titles of parallel coordinates, in the order of axis.
+    await zonesBy({ mark: 'scatter', axisLabels: ['Zone', 'Value'] });
+    expect(await titles()).toEqual(['Zone', 'Value']);
+    await zonesBy({ mark: 'parallel-coordinates', axisLabels: ['Zone', 'Value'] });
+    expect(await titles()).toEqual(['Zone', 'Value']);
+
+    // A table's headers: a column without a title keeps its name, and each row has a cell under each header.
+    await runSpec(page, {
+        data: [trees],
+        plot: plotOf({ id: 't', dataRef: 'trees', mark: 'table', axis: ['id', 'kind', 'n'], axisLabels: ['Tree', 'Kind'] }),
+    });
+    const table = await page.evaluate(() => ({
+        headers: Array.from(document.querySelectorAll('#plot th'), (header) => header.textContent),
+        cells: Array.from(document.querySelectorAll('#plot tr.autkMark'), (row) => row.querySelectorAll('td').length),
+    }));
+    expect(table).toEqual({ headers: ['Tree', 'Kind', 'n'], cells: [3, 3, 3, 3] });
+
+    // A binned bar chart's count axis is titled value, autk-plot's own title for a transform's output, not "@transform".
+    const binned = { mark: 'bar', axis: ['v', '@transform'], transform: { preset: 'binning-1d', options: { bins: 2 } } };
+    await zonesBy(binned);
+    expect(await titles()).toEqual(['v', 'value']);
+    await zonesBy({ ...binned, axisLabels: ['Value', 'Zones'] });
+    expect(await titles()).toEqual(['Value', 'Zones']);
+
+    // More titles than columns are refused before anything is drawn.
+    await expect(zonesBy({ mark: 'scatter', axisLabels: ['Zone', 'Value', 'Extra'] }))
+        .rejects.toThrow('Plot "p": axisLabels has 3 titles for the 2 columns of axis.');
+});
+
+/** autk-plot's highlight color: the fill of a selected mark. */
+const highlightBlue = 'rgb(93, 173, 226)';
+
+test('selects the rows a plot names in selection as it is drawn, and highlights them on the layers it is linked to', async ({ page }) => {
+    const plotSelection = () => page.evaluate(() => [...(window.grammar as any)._plotRegistry.get('p').selection]);
+    /** The ids of the zones a layer of map0 highlights, read from the rows it draws at its highlighted positions. */
+    const litZones = async (layerId: string) => {
+        const drawn = await page.evaluate((id) => window.drawnRows('map0', id), layerId);
+        const lit = (await layerById(page))[layerId]?.highlightedIds ?? [];
+        return lit.map((position) => drawn[position]?.id).sort();
+    };
+
+    // A scatter plot of the zones, linked by mapRef: rows 1 and 3 are selected as it is drawn, in the highlight color,
+    // and the layer highlights the same zones.
+    await runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones', title: 'Zones' }] },
+        plot: plotOf({ id: 'p', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], events: ['click'], mapRef: 'zones', selection: [1, 3] }),
+    });
+    expect(await plotSelection()).toEqual([1, 3]);
+    for (const { datum, fill } of await plotMarks(page))
+        expect(fill, `point ${datum?.id}`).toBe([1, 3].includes(Number(datum?.id)) ? highlightBlue : markGray);
+    expect(await litZones('Zones')).toEqual([1, 3]);
+
+    // A bar chart without events, linked by links: its selected bar is lit, and so is the layer the link names.
+    await runSpec(page, {
+        data: [area, zones],
+        map: { id: 'm', layerRefs: [{ dataRef: 'zones', title: 'Zones' }] },
+        plot: plotOf({ id: 'p', dataRef: 'zones', mark: 'bar', axis: ['id', 'v'], selection: [2] }),
+        links: [{ source: 'p', target: 'm', layer: 'Zones' }],
+    });
+    expect((await plotMarks(page)).map(({ datum, fill }) => [datum?.id, fill]).sort())
+        .toEqual([[0, markGray], [1, markGray], [2, highlightBlue], [3, markGray]]);
+    expect(await litZones('Zones')).toEqual([2]);
+
+    // A binned bar chart lights the bin that holds a selected row.
+    await runSpec(page, {
+        data: [area, zones],
+        plot: plotOf({ id: 'p', dataRef: 'zones', mark: 'bar', axis: ['v', '@transform'], transform: { preset: 'binning-1d', options: { bins: 2 } }, selection: [3] }),
+    });
+    const bins = await plotMarks(page);
+    expect(bins.filter(({ fill }) => fill === highlightBlue).map(({ datum }) => datum?.autkIds)).toEqual([expect.arrayContaining([3])]);
+    expect(bins.filter(({ fill }) => fill !== highlightBlue).every(({ datum }) => !(datum?.autkIds as number[]).includes(3))).toBe(true);
+
+    // A row past the last is refused before the plot is drawn.
+    await expect(runSpec(page, { data: [area, zones], plot: plotOf({ id: 'p', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], selection: [4] }) }))
+        .rejects.toThrow('Plot "p": selection names row 4, but the plot draws 4 rows.');
+});
+
+test('draws the marks of every plot of the page in one markColor, and the selected ones in one highlightColor', async ({ page }) => {
+    const green = 'rgb(44, 160, 44)'; // #2ca02c
+    const red = 'rgb(214, 39, 40)'; // #d62728
+    const fills = async (target: string) => (await plotMarks(page, target)).map(({ datum, fill }) => [datum?.id, fill]).sort();
+    const zonesPlot = (fields: Record<string, unknown>) => plotOf({ dataRef: 'zones', axis: ['id', 'v'], ...fields });
+    const plotStyle = () => page.evaluate(() => window.plotStyle());
+
+    // A bar chart that sets both colors, and a scatter plot of the spec that sets neither and takes them too: each draws
+    // its marks in the mark color, and its selected one in the highlight color.
+    await runSpec(page, {
+        data: [area, zones],
+        plot: [
+            zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c', highlightColor: '#d62728', selection: [1] }),
+            zonesPlot({ id: 'b', mark: 'scatter', selection: [2] }),
+        ],
+    }, 'each');
+    expect(await fills('plot0')).toEqual([[0, green], [1, red], [2, green], [3, green]]);
+    expect(await fills('plot1')).toEqual([[0, green], [1, green], [2, red], [3, green]]);
+
+    // A table draws its selected rows on the highlight color.
+    await runSpec(page, { data: [trees], plot: plotOf({ id: 't', dataRef: 'trees', mark: 'table', axis: ['id', 'kind'], highlightColor: '#d62728', selection: [0] }) });
+    const rows = await page.evaluate(() => Array.from(document.querySelectorAll('#plot tr.autkMark'),
+        (row) => [row.querySelector('td')?.textContent, getComputedStyle(row).backgroundColor]));
+    expect(rows).toEqual([['a', red], ['b', 'rgba(0, 0, 0, 0)'], ['c', 'rgba(0, 0, 0, 0)'], ['d', 'rgba(0, 0, 0, 0)']]);
+
+    // Two plots of one spec that set different mark colors are refused before anything is drawn.
+    await expect(runSpec(page, {
+        data: [area, zones],
+        plot: [zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c' }), zonesPlot({ id: 'b', mark: 'bar', markColor: '#1f77b4' })],
+    }, 'each')).rejects.toThrow('Plots "a" and "b" set different markColor values, "#2ca02c" and "#1f77b4": autk-plot draws every plot of a page in one mark color.');
+
+    // The colors are the page's, and each run draws in its own spec's: a second grammar's run whose spec sets neither
+    // draws in autk-plot's own colors, though the first grammar's still sets a mark color...
+    await runSpec(page, { data: [area, zones], plot: zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c' }) });
+    expect(await fills('plot')).toEqual([[0, green], [1, green], [2, green], [3, green]]);
+    await page.evaluate((spec) => window.runBeside(spec), { data: [area, zones], plot: zonesPlot({ id: 'c', mark: 'bar', selection: [3] }) });
+    expect(await fills('beside')).toEqual([[0, markGray], [1, markGray], [2, markGray], [3, highlightBlue]]);
+    expect(await plotStyle()).toEqual({ markColor: '#bfbfbf', highlightColor: '#5dade2' });
+    // ...which the first grammar's plot takes as it shows its next selection, since autk-plot keeps one of each for the
+    // page. A later run that sets a mark color sets it for the page again.
+    await page.evaluate(() => window.grammar.setPlotSelection('a', [1]));
+    expect(await fills('plot')).toEqual([[0, markGray], [1, highlightBlue], [2, markGray], [3, markGray]]);
+    await page.evaluate((spec) => window.runBeside(spec), { data: [area, zones], plot: zonesPlot({ id: 'c', mark: 'bar', markColor: '#1f77b4' }) });
+    expect(await plotStyle()).toEqual({ markColor: '#1f77b4', highlightColor: '#5dade2' });
+    expect(await fills('beside')).toEqual([[0, 'rgb(31, 119, 180)'], [1, 'rgb(31, 119, 180)'], [2, 'rgb(31, 119, 180)'], [3, 'rgb(31, 119, 180)']]);
+    // A run that draws no plot, such as a page's data-only spec, leaves the page's colors as they are.
+    await page.evaluate((spec) => window.runBeside(spec), { data: [area, zones] });
+    expect(await plotStyle()).toEqual({ markColor: '#1f77b4', highlightColor: '#5dade2' });
+});
+
+test('colors the ten noisiest neighborhoods of plot-colors alike on its map and its chart, and selects the noisiest', async ({ page }) => {
+    const spec = await exampleSpec(page, 'plot-colors');
+    expect(spec.plot).toMatchObject({ colorMapInterpolator: 'interpolateReds', colorMapRange: [0, 80], selection: [0], highlightColor: '#1f77b4' });
+    const { tables, plotSvgs } = await run(page, 'plot-colors');
+    expect(tables.noisiest.features).toBe(10);
+    expect(plotSvgs).toBe(1);
+    await expectDrawn(page, 'map0');
+
+    // The layer colors the counts over the range the chart colors them over.
+    expect((await layerById(page))['Noise complaints']).toMatchObject({ isColorMap: true, interpolator: 'interpolateReds', domain: [0, 80] });
+    const bars = await plotMarks(page);
+    expect(bars).toHaveLength(10);
+    const counts = bars.map(({ datum }) => Number(datum?.complaints));
+    expect(counts.every((count) => count > 0)).toBe(true);
+    // The first row, the noisiest neighborhood, is selected, in the chart's highlight color; each other bar is in the
+    // color of its count over [0, 80].
+    const [first, ...others] = bars;
+    expect(Number(first.datum?.complaints)).toBe(Math.max(...counts));
+    expect(first.fill).toBe('rgb(31, 119, 180)');
+    for (const { datum, fill } of others)
+        expect(fill, String(datum?.name)).toBe(await schemeFill(page, Number(datum?.complaints), 'interpolateReds', [0, 80]));
+    // The link lights the same neighborhood on the map, and the chart titles its axes.
+    const drawn = await page.evaluate(() => window.drawnRows('map0', 'Noise complaints'));
+    const lit = (await layerById(page))['Noise complaints'].highlightedIds ?? [];
+    expect(lit.map((position) => drawn[position]?.name)).toEqual([first.datum?.name]);
+    expect(await page.evaluate(() => window.plotAxisTitles())).toEqual(['Neighborhood', 'Noise complaints']);
+});
+
+test("reads each building part's outline in a pass's fromFeature table, as a GeoJSON source in its workspace's CRS gave it", async ({ page }) => {
+    // Three building parts, each 20 m wide, and four spots south of them, written in World Mercator meters, the
+    // workspace's CRS, as a host that hands its own tables writes them. autk-db keeps each feature of a buildings table
+    // in its building model, the geometry inside a GeometryCollection, where geometry.coordinates.0 finds no outline:
+    // the pass packed three empty boxes, and every spot read a width of 0.
+    const [x0, y0] = [-8235000, 4946000];
+    const square = (x: number, y: number, size: number) =>
+        ({ type: 'Polygon', coordinates: [[[x, y], [x + size, y], [x + size, y + size], [x, y + size], [x, y]]] });
+    const inMeters = (outputTableName: string, features: Array<{ properties: Record<string, unknown>; geometry: unknown }>, layerType?: string) => ({
+        type: 'geojson', outputTableName, coordinateFormat: 'EPSG:3395', ...(layerType && { layerType }),
+        geojsonObject: { type: 'FeatureCollection', features: features.map((feature) => ({ type: 'Feature', ...feature })) },
+    });
+    await runSpec(page, {
+        data: [
+            // autk-db cuts each table to the first polygon table it loads: a square kilometer around the others.
+            inMeters('ground', [{ properties: {}, geometry: square(x0 - 500, y0 - 500, 1000) }]),
+            inMeters('parts', [0, 1, 2].map((i) => ({ properties: { height: 10 + i }, geometry: square(x0 + i * 50, y0, 20) })), 'buildings'),
+            inMeters('spots', [0, 1, 2, 3].map((i) => ({ properties: { w: 1 }, geometry: { type: 'Point', coordinates: [x0 + i * 40, y0 - 100] } }))),
+        ],
+        compute: [{
+            dataRef: 'spots',
+            attributes: { w: 'w' },
+            uniformMatrices: { o: { fromFeature: { layer: 'parts', path: 'geometry.coordinates.0', iterate: 'batched' }, cols: 2 } },
+            outputColumnName: 'width',
+            // o packs [xmin,ymin, xmax,ymin, xmax,ymax, xmin,ymax] per part: sum the parts' widths.
+            wgslFunction: [
+                'var total = 0.0;',
+                'for (var i = 0u; i < u32(num_features); i++) { total += o[i * 8u + 2u] - o[i * 8u]; }',
+                'return total * w;',
+            ],
+        }],
+    } as unknown as UrbanSpec);
+    // Every spot reads the three parts' outlines in meters: 3 x 20 m.
+    const widths = await page.evaluate(() => Promise.all([0, 1, 2, 3].map((i) => window.valueAt('spots', i, 'compute.width'))));
+    expect(widths).toHaveLength(4);
+    for (const width of widths) expect(width as number).toBeCloseTo(60, 3);
 });

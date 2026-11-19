@@ -8,7 +8,8 @@ import type { PlotEventData } from "@urban-toolkit/autk-plot";
 import { FeatureCollection } from "geojson";
 import { createDataAdapter } from "./adapters/data";
 import { createMapAdapter } from "./adapters/map";
-import { createPlotAdapter, linkPlotToLayer, plotKey } from "./adapters/plot";
+import { createPlotAdapter, linkPlotToLayer, setPlotColors } from "./adapters/plot";
+import { checkPlotKeys, plotColorsOf, plotKey } from "./plot-options";
 import { layerIdOf } from "./adapters/map";
 import { enterWorkspace } from "./workspace";
 import { createComputeAdapter } from "./adapters/compute";
@@ -71,7 +72,7 @@ export class AutkGrammar {
         this.dataAdapter = createDataAdapter(targets, this._geojsonCache);
         this.mapAdapter = createMapAdapter(targets, this._layers, this._computeCache, this._maps, this._computeTypes, this._exports);
         this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, this._geojsonCache, this._computeCache, this._plotRows, this._exports);
-        this.computeAdapter = createComputeAdapter(this._computeCache, this._computeTypes);
+        this.computeAdapter = createComputeAdapter(this._computeCache, this._computeTypes, this._geojsonCache);
     }
 
     /**
@@ -177,8 +178,13 @@ export class AutkGrammar {
             throw new Error('Compute adapter not initialized. Please call the constructor first.');
 
         checkViewIds(spec);
+        for (const plot of asList(spec.plot)) checkPlotKeys(plot);
+        const plotColors = plotColorsOf(asList(spec.plot));
 
         this.destroy();
+        // autk-plot keeps one mark color and one highlight color for the page, which a plot reads as it draws. A run that
+        // draws no plot leaves them as they are.
+        if (asList(spec.plot).length > 0) setPlotColors(plotColors);
 
         this.grammarEngine = createEngine({
             spec,
@@ -195,6 +201,7 @@ export class AutkGrammar {
         // Leave the database in the default workspace, whose tables `data` lists.
         if (db) await enterWorkspace(db);
         this._wireLinks(spec);
+        this._selectFromTheStart(spec);
         this._rewireInteractions(spec);
 
         if (!db) {
@@ -334,6 +341,17 @@ export class AutkGrammar {
             if (!layer) continue;
             linkPlotToLayer(plot, this._plotRows.get(link.source) ?? [], (plotSpec.events ?? []) as unknown as PlotEvent[], layer);
             addPlotLink(this._plotLinks, link.source, layer);
+        }
+    }
+
+    /**
+     * Applies each plot's `selection` once the plots and their links exist, as `setPlotSelection` does: the plot selects
+     * the rows, and the layers it is linked to, by `mapRef` or `links`, highlight them. autk-plot's `setSelection` emits
+     * no event, so no `plot:selection` reports it.
+     */
+    private _selectFromTheStart(spec: UrbanSpec): void {
+        for (const plot of asList(spec.plot)) {
+            if (plot.selection && plot.selection.length > 0) this.setPlotSelection(plotKey(plot), plot.selection);
         }
     }
 

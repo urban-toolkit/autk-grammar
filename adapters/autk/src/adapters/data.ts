@@ -3,7 +3,7 @@ import { AutkDb, DEFAULT_WORKSPACE_NAME, isRenderableTable, isVectorTable } from
 import type { LoadGeojsonParams, Table } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Geometry } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
-import { enterWorkspace, tableKey } from '../workspace';
+import { enterWorkspace, noteSourceCrs, tableKey } from '../workspace';
 import { featureIds } from '../rows';
 
 /** An empty geometry: a GeometryCollection with none in it, which a map draws as nothing. */
@@ -260,7 +260,11 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Requ
                         geojsonData = geojsonSpec.geojsonObject as FeatureCollection | undefined;
                     }
 
-                    if (cache && geojsonData) cache.set(tableKey(workspace, geojsonSpec.outputTableName), geojsonData);
+                    if (cache && geojsonData) {
+                        cache.set(tableKey(workspace, geojsonSpec.outputTableName), geojsonData);
+                        // autk-db reads a GeoJSON source in EPSG:4326 unless it names another CRS.
+                        noteSourceCrs(geojsonData, geojsonSpec.coordinateFormat ?? 'EPSG:4326');
+                    }
 
                     // Pass the fetched object directly so autk-db doesn't need to re-fetch, as autk-db loads it (see
                     // loadableCollection). The cache keeps the source's own rows, in their order, for its plots.

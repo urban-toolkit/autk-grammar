@@ -1,6 +1,6 @@
 import { DataAdapter, PlotAdapter, MapAdapter, ComputeAdapter } from "./adapters";
 import { BBox, GeoJsonProperties, Geometry } from 'geojson';
-import { DataSourceType, LayerType, ColorMapInterpolator, PlotEvent, PlotTransformPreset, AggregateFunction, HeatmapAggregateFunction, NormalizationMode } from "./constants";
+import { DataSourceType, LayerType, ColorMapInterpolator, PlotEvent, PlotTransformPreset, AggregateFunction, HeatmapAggregateFunction, NormalizationMode, CategoricalColorMapInterpolator, ContinuousColorMapInterpolator } from "./constants";
 
 /**
  * Name of a workspace: an isolated set of tables with its own extent. The first source loaded into a workspace sets its
@@ -643,6 +643,20 @@ export type MapSpec = {
     layerRefs: MapLayerSpec[]
 }
 
+/**
+ * A d3-format specifier, such as `~s`, `,d`, `.2f` or `.0%`: d3-format's
+ * `[[fill]align][sign][symbol][0][width][,][.precision][~][type]`.
+ * @pattern ^(?:.?[<>=^])?[-+( ]?[$#]?0?\d*,?(?:\.\d+)?~?[a-zA-Z%]?$
+ */
+type TickFormat = string;
+
+/**
+ * A row of a table as a view draws it: its position among the rows the view draws, from 0.
+ * @minimum 0
+ * @multipleOf 1
+ */
+type RowPosition = number;
+
 export interface PlotBase {
     /**
      * Name of the plot, which a link in `links` uses as its `source`. Unique among the ids of the maps and plots.
@@ -660,7 +674,79 @@ export interface PlotBase {
      * @minItems 1
      */
     axis: string[],
+    /**
+     * Column whose values color the marks: a scatter plot's points, a bar chart's bars, and the lines of parallel
+     * coordinates, which a click on an axis's title colors by that axis instead. When every value is a number, or a
+     * string that reads as one, the marks take `colorMapInterpolator`'s scheme; otherwise the values are categories,
+     * and take `categoricalColorMapInterpolator`'s. A heat matrix colors its cells by their values, which `@transform`
+     * names. Line charts and tables color no mark by value.
+     */
     color?: string,
+    /**
+     * Color scheme of marks colored by numbers: a sequential or diverging `interpolate*` scheme, `interpolateReds` by
+     * default. The scale's low end takes the scheme's first color and its high end its last: the lowest and highest
+     * values, unless `colorMapRange` or `normalization` sets them. A categorical `scheme*` name is refused, since
+     * categories take `categoricalColorMapInterpolator`. Read by the Autark adapter; the deck.gl adapter ignores it.
+     */
+    colorMapInterpolator?: ContinuousColorMapInterpolator,
+    /**
+     * Color scheme of marks colored by categories: a categorical `scheme*` scheme, `schemeObservable10` by default.
+     * The categories take the scheme's colors in the order they first appear, or in `colorMapDomain`'s order, and those
+     * past the scheme's last color take that one. A sequential or diverging `interpolate*` name is refused. Read by the
+     * Autark adapter; the deck.gl adapter ignores it.
+     */
+    categoricalColorMapInterpolator?: CategoricalColorMapInterpolator,
+    /**
+     * How the ends of the color scale of numbers are found: `minMax`, the default, takes the lowest and highest
+     * values; `percentile` takes the values at the `lowerPercentile` and `upperPercentile` percentiles, 2 and 98 when
+     * it gives neither, else 0 and 100 for the one it leaves out. Categories ignore it. A map layer's `normalization`
+     * reads the same way. Read by the Autark adapter; the deck.gl adapter ignores it.
+     */
+    normalization?: MapLayerSpec['normalization'],
+    /**
+     * Ends of the color scale of numbers, as `[low, high]` with low less than high. The plot is colored over this range
+     * instead of its lowest and highest values, so plots and map layers that set the same range color the same value
+     * alike. Values that are categories ignore it, as a layer with a categorical scheme does, and it cannot be set with
+     * `colorMapDomain`. Read by the Autark adapter; the deck.gl adapter ignores it.
+     * @uniqueItems true
+     */
+    colorMapRange?: [low: number, high: number],
+    /**
+     * Categories the plot is colored over, in order: the first takes the categorical scheme's first color, and so on.
+     * The values are read as categories, numbers too, and a mark whose value is not among them is drawn in the mark
+     * color. It cannot be set with `colorMapRange`. Read by the Autark adapter; the deck.gl adapter ignores it.
+     */
+    colorMapDomain?: string[],
+    /**
+     * Color of the marks that are neither colored by value nor selected, as `#rrggbb`: `#bfbfbf` by default. autk-plot
+     * keeps one mark color for the page, so every plot it draws there takes it: a run refuses two plots that set
+     * different ones, and a run whose plots set none gives back autk-plot's. Read by the Autark adapter; the deck.gl
+     * adapter ignores it.
+     */
+    markColor?: HexColor,
+    /**
+     * Color of the selected marks, and of a table's selected rows, as `#rrggbb`: `#5dade2` by default. autk-plot keeps
+     * one highlight color for the page, so every plot it draws there takes it: a run refuses two plots that set
+     * different ones, and a run whose plots set none gives back autk-plot's. Read by the Autark adapter; the deck.gl
+     * adapter ignores it.
+     */
+    highlightColor?: HexColor,
+    /**
+     * d3-format specifiers of the tick labels of the plot's axes, `[x, y]`: a scatter plot's x and y axes; a bar or line
+     * chart's x axis, for labels that read as numbers, and its y axis; and every axis of numbers of parallel coordinates,
+     * which read only the first. Heat matrices and tables ignore it. Without it, `['~s', '~s']`. Read by the Autark
+     * adapter; the deck.gl adapter ignores it.
+     */
+    tickFormats?: [x: TickFormat, y: TickFormat],
+    /**
+     * Titles of the plot's axes, in the order of `axis`, in place of the column names: the x and y axes' titles of a
+     * scatter plot, a bar chart, a line chart and a heat matrix, each axis's title of parallel coordinates, and a table's
+     * column headers. An axis without a title keeps its column's name, and an axis that holds a transform's output,
+     * `@transform`, is titled `value`. A run refuses more titles than `axis` has columns, and two titles alike, since a
+     * table finds the column to sort by its header. Read by the Autark adapter; the deck.gl adapter ignores it.
+     * @uniqueItems true
+     */
+    axisLabels?: string[],
     title?: string,
     /** Interactions the plot emits. */
     events?: PlotEvent[],
@@ -676,6 +762,14 @@ export interface PlotBase {
     margins?: { left: number; right: number; top: number; bottom: number },
     /** `dataRef` of the map layer this plot links its selection to. A shorthand for a link in `links`. */
     mapRef?: string,
+    /**
+     * Rows selected when the plot is drawn, by their positions among the rows it draws, as `plot:selection` events and
+     * `setPlotSelection` name them. The plot draws them in its highlight color (a binned plot, the bins that hold them),
+     * and the map layers it is linked to, by `mapRef` or `links`, highlight the same rows, as after `setPlotSelection`.
+     * No `plot:selection` event reports it. A run refuses a position past the plot's last row. Read by the Autark
+     * adapter; the deck.gl adapter ignores it.
+     */
+    selection?: RowPosition[],
     /**
      * Plot an OpenStreetMap layer table as one row per OSM element it was built from, each with the element's tags,
      * `osm_type` and `osm_id` (and `building_id` in a buildings table), rather than one row per table row. A table that
@@ -737,6 +831,8 @@ export interface HeatmatrixPlotSpec extends PlotBase {
 /**
  * A plot view. The `mark` field selects which transforms apply.
  * @discriminator mark
+ * @if { "required": ["colorMapRange"] }
+ * @then { "not": { "required": ["colorMapDomain"] } }
  */
 export type PlotSpec = ScatterPlotSpec | BarPlotSpec | LinePlotSpec | ParallelCoordinatesPlotSpec | TablePlotSpec | HeatmatrixPlotSpec;
 
@@ -745,7 +841,11 @@ export type PlotSpec = ScatterPlotSpec | BarPlotSpec | LinePlotSpec | ParallelCo
  */
 export type FromFeatureDirective = {
     fromFeature: {
-        /** Table to read from. */
+        /**
+         * Table to read from. The Autark adapter reads it as an earlier compute pass wrote it; else, when a GeoJSON source
+         * loaded it with its coordinates in its workspace's CRS, as the source gave its features, each building part with
+         * its own outline; else as autk-db keeps it, a buildings table's geometry inside a GeometryCollection.
+         */
         layer: string;
         /** Dot path from the feature root, for example `properties.height` or `geometry.coordinates.0`. */
         path: string;

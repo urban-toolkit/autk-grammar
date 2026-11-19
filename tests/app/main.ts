@@ -3,6 +3,7 @@ import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import { ColorMap } from '@urban-toolkit/autk-core';
 import type { ColorMapInterpolator, ColorRGB } from '@urban-toolkit/autk-core';
 import { AutkMap } from '@urban-toolkit/autk-map';
+import { PlotStyle } from '@urban-toolkit/autk-plot';
 import type { FeatureCollection, Geometry } from 'geojson';
 
 export type TableSummary = { features: number; properties: string[] };
@@ -31,6 +32,9 @@ export type LayerState = {
 /** A map's legend as the page shows it: its heading, its labels left to right, and whether it shows. */
 export type LegendState = { title: string | null; labels: string[]; visible: boolean };
 
+/** A mark a plot draws: the row autk-plot binds to it, and its fill and stroke as the page computes them, `rgb(r, g, b)`. */
+export type DrawnMark = { datum: Record<string, unknown> | null; fill: string; stroke: string };
+
 const examples = import.meta.glob<{ spec: UrbanSpec }>('../../gallery/src/examples/*.ts');
 
 function element(tag: 'canvas' | 'div', id: string): HTMLElement {
@@ -43,7 +47,10 @@ function element(tag: 'canvas' | 'div', id: string): HTMLElement {
 declare global {
     interface Window {
         grammar: AutkGrammar;
+        besideGrammar?: AutkGrammar;
         runSpec: (spec: UrbanSpec, plotTargets?: 'one' | 'each') => Promise<RunSummary>;
+        runBeside: (spec: UrbanSpec) => Promise<void>;
+        plotStyle: () => { markColor: string; highlightColor: string };
         runInPanes: (spec: UrbanSpec, width: number, height: number) => Promise<{ targets: Record<string, unknown>; panes: PaneBox[] }>;
         runAgain: (spec: UrbanSpec) => Promise<void>;
         runExample: (name: string) => Promise<RunSummary>;
@@ -56,6 +63,9 @@ declare global {
         cameraState: (canvasId: string) => { eye: number[]; lookAt: number[] };
         rasterCells: (canvasId: string, layerId: string) => { values: number[]; rgba: number[] };
         legend: () => LegendState | null;
+        plotMarks: (target?: string) => DrawnMark[];
+        plotTicks: (target: string, selector: string) => Array<Array<[unknown, string]>>;
+        plotAxisTitles: (target?: string) => string[];
         schemeColor: (value: number, interpolator: string, domain: number[]) => ColorRGB;
         domainLabels: (domain: number[]) => string[];
     }
@@ -157,6 +167,22 @@ window.runInPanes = async (spec: UrbanSpec, width: number, height: number) => {
     });
     return { targets, panes };
 };
+
+/**
+ * Runs a spec on a second grammar of the page, whose plots draw in a div of their own, #beside, as a page that shows
+ * two specs does. The grammar of runSpec stays; the last second grammar is destroyed first.
+ */
+window.runBeside = async (spec: UrbanSpec) => {
+    window.besideGrammar?.destroy();
+    document.getElementById('beside')?.remove();
+    element('div', 'beside');
+    const grammar = new AutkGrammar({ plot: 'beside' });
+    window.besideGrammar = grammar;
+    await grammar.run(spec);
+};
+
+/** The mark and highlight colors autk-plot holds for the whole page (`PlotStyle`). */
+window.plotStyle = () => ({ markColor: PlotStyle.default, highlightColor: PlotStyle.highlight });
 
 /**
  * Runs a spec on the grammar of the last run, in the elements that run made, as a host that keeps one `AutkGrammar`
@@ -273,6 +299,40 @@ window.legend = () => {
         visible: el.style.visibility !== 'hidden',
     };
 };
+
+/**
+ * The elements `selector` finds inside the element whose id is `target`, the first of that id in the page. autk-plot
+ * gives the svg of every plot the id `plot` too, so a selector `#plot ...` would also reach into another element's plot.
+ */
+function within(target: string, selector: string): Element[] {
+    return Array.from(document.getElementById(target)?.querySelectorAll(selector) ?? []);
+}
+
+/**
+ * The marks the plots in the element #target draw (every `.autkMark`: a point, a bar, a cell, a line or a table row),
+ * in the page's order, each with the row autk-plot binds to it and its colors as the page computes them. A value autk-db
+ * read as a BIGINT, such as a CSV table's whole numbers, comes back as a number.
+ */
+window.plotMarks = (target = 'plot') => within(target, '.autkMark').map((mark) => {
+    const style = getComputedStyle(mark);
+    const datum = (mark as Element & { __data__?: Record<string, unknown> }).__data__;
+    return {
+        datum: datum ? Object.fromEntries(Object.entries(datum).map(([key, value]) => [key, typeof value === 'bigint' ? Number(value) : value])) : null,
+        fill: style.fill,
+        stroke: style.stroke,
+    };
+});
+
+/**
+ * The tick labels of the axes the selector finds in the element #target (`#axisX`, `#axisY`, or parallel coordinates'
+ * `.autkBrush[autkBrushId]`), axis by axis, each tick as the value d3 binds to it and the text it shows.
+ */
+window.plotTicks = (target: string, selector: string) => within(target, selector).map((axis) =>
+    Array.from(axis.querySelectorAll('.tick'), (tick): [unknown, string] =>
+        [(tick as Element & { __data__?: unknown }).__data__, tick.querySelector('text')?.textContent ?? '']));
+
+/** The text of each axis title (`.axis-label`) of the plots in the element #target, in the page's order. */
+window.plotAxisTitles = (target = 'plot') => within(target, '.axis-label').map((title) => title.textContent ?? '');
 
 /** autk-core's color for a value on a scheme over a domain, as autk-map colors a raster cell. */
 window.schemeColor = (value: number, interpolator: string, domain: number[]) =>

@@ -55,6 +55,59 @@ export enum ColorMapInterpolator {
   DIV_SPECTRAL = 'interpolateSpectral',
 }
 
+/** A categorical color scheme: a `scheme*` name, one color for each category. */
+export type CategoricalColorMapInterpolator =
+  | ColorMapInterpolator.CAT_ACCENT
+  | ColorMapInterpolator.CAT_DARK2
+  | ColorMapInterpolator.CAT_CATEGORY10
+  | ColorMapInterpolator.CAT_OBSERVABLE10
+  | ColorMapInterpolator.CAT_PAIRED
+  | ColorMapInterpolator.CAT_PASTEL1
+  | ColorMapInterpolator.CAT_PASTEL2
+  | ColorMapInterpolator.CAT_SET1
+  | ColorMapInterpolator.CAT_SET2
+  | ColorMapInterpolator.CAT_SET3
+  | ColorMapInterpolator.CAT_TABLEAU10;
+
+/** A sequential or diverging color scheme: an `interpolate*` name, a color for each number of a scale. */
+export type ContinuousColorMapInterpolator =
+  | ColorMapInterpolator.SEQ_REDS
+  | ColorMapInterpolator.SEQ_BLUES
+  | ColorMapInterpolator.SEQ_GREENS
+  | ColorMapInterpolator.SEQ_GREYS
+  | ColorMapInterpolator.SEQ_ORANGES
+  | ColorMapInterpolator.SEQ_PURPLES
+  | ColorMapInterpolator.SEQ_TURBO
+  | ColorMapInterpolator.SEQ_VIRIDIS
+  | ColorMapInterpolator.SEQ_INFERNO
+  | ColorMapInterpolator.SEQ_MAGMA
+  | ColorMapInterpolator.SEQ_PLASMA
+  | ColorMapInterpolator.SEQ_CIVIDIS
+  | ColorMapInterpolator.SEQ_WARM
+  | ColorMapInterpolator.SEQ_COOL
+  | ColorMapInterpolator.SEQ_CUBEHELIX_DEFAULT
+  | ColorMapInterpolator.SEQ_BU_GN
+  | ColorMapInterpolator.SEQ_BU_PU
+  | ColorMapInterpolator.SEQ_GN_BU
+  | ColorMapInterpolator.SEQ_OR_RD
+  | ColorMapInterpolator.SEQ_PU_BU_GN
+  | ColorMapInterpolator.SEQ_PU_BU
+  | ColorMapInterpolator.SEQ_PU_RD
+  | ColorMapInterpolator.SEQ_RD_PU
+  | ColorMapInterpolator.SEQ_YL_GN_BU
+  | ColorMapInterpolator.SEQ_YL_GN
+  | ColorMapInterpolator.SEQ_YL_OR_BR
+  | ColorMapInterpolator.SEQ_YL_OR_RD
+  | ColorMapInterpolator.DIV_BR_BG
+  | ColorMapInterpolator.DIV_PR_GN
+  | ColorMapInterpolator.DIV_PI_YG
+  | ColorMapInterpolator.DIV_PU_OR
+  | ColorMapInterpolator.DIV_RED_BLUE
+  | ColorMapInterpolator.DIV_RED_GREY
+  | ColorMapInterpolator.DIV_RED_YELLOW_BLUE
+  | ColorMapInterpolator.DIV_RED_YELLOW_GREEN
+  | ColorMapInterpolator.DIV_SPECTRAL;
+
 /** Plot type. */
 export type PlotMark = 'scatter' | 'bar' | 'line' | 'linechart' | 'parallel-coordinates' | 'table' | 'heatmatrix';
 

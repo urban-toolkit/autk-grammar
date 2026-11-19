@@ -4,9 +4,12 @@ import { Targets, PlotRegistry, GeoJsonCache, ComputeCache } from '../types';
 import { addPlotLink, exportKey, exportOf, exportOptions } from '../drawn';
 import type { DrawnLayer, DrawnLayers, LayerExports, PlotLinks, PlotRows } from '../drawn';
 import { rowKeys, translateIds } from '../rows';
+import { checkPlotSelection, plotKey, plotOptions } from '../plot-options';
+import type { PlotColors } from '../plot-options';
 import { AutkDb, isRenderableTable } from '@urban-toolkit/autk-db';
-import { AutkPlot, PlotEvent as AutkPlotEvent } from '@urban-toolkit/autk-plot';
+import { AutkPlot, PlotEvent as AutkPlotEvent, PlotStyle } from '@urban-toolkit/autk-plot';
 import type { PlotEventData, PlotType, PlotTransformConfig } from '@urban-toolkit/autk-plot';
+import type { ColorHEX } from '@urban-toolkit/autk-core';
 import { MapEvent } from '@urban-toolkit/autk-map';
 import type { MapEventData } from '@urban-toolkit/autk-map';
 import { FeatureCollection } from 'geojson';
@@ -24,9 +27,22 @@ function grammarMarkToPlotType(mark: PlotMark): PlotType {
     return mapping[mark];
 }
 
-/** How a plot is known to links and to `AutkGrammar`: its `id`, else its `dataRef`. */
-export function plotKey(spec: PlotSpec): string {
-    return spec.id ?? spec.dataRef;
+/** autk-plot's colors before a run set its own, which a run whose spec sets neither gives back. */
+let colorsBefore: { markColor: ColorHEX; highlightColor: ColorHEX } | undefined;
+
+/**
+ * Sets the page's plot colors for a run that draws plots. autk-plot keeps one mark color and one highlight color for the
+ * whole page (`PlotStyle`), which every plot reads as it draws and as it shows a selection. So a run that sets them
+ * colors every plot on the page, and a run whose plots set neither gives back the colors autk-plot had before a run set
+ * any: a run draws in the colors its own spec gives, though a host makes a new grammar for each run and never destroys
+ * the old one. A page whose specs set neither never has its colors touched. `AutkGrammar.run` calls it before it draws
+ * its first plot.
+ */
+export function setPlotColors(colors: PlotColors): void {
+    if (colors.markColor === undefined && colors.highlightColor === undefined && !colorsBefore) return;
+    colorsBefore ??= { markColor: PlotStyle.default, highlightColor: PlotStyle.highlight };
+    PlotStyle.setDefaultColor((colors.markColor ?? colorsBefore.markColor) as ColorHEX);
+    PlotStyle.setHighlightColor((colors.highlightColor ?? colorsBefore.highlightColor) as ColorHEX);
 }
 
 /**
@@ -92,6 +108,8 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
             // The rows of a GeoJSON source or a join are a row per feature, so a plot of OSM elements reads autk-db's.
             const cached = spec.osmElements === true ? undefined : cache?.get(key);
             const geojson: FeatureCollection = computeCache?.get(key) ?? cached ?? await tableRows(db, spec.dataRef, key, exports, spec.osmElements);
+            // Refused before the plot is made, so a refused selection leaves no plot on the page.
+            checkPlotSelection(spec, geojson.features?.length ?? 0);
 
             const events = (spec.events ?? []) as unknown as AutkPlotEvent[];
 
@@ -99,13 +117,17 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
                 type: grammarMarkToPlotType(spec.mark),
                 collection: geojson,
                 attributes: { axis: spec.axis, ...(spec.color && { color: spec.color }) },
-                labels: { axis: spec.axis, title: spec.title },
                 events,
+                ...plotOptions(spec, geojson.features ?? []),
                 ...(spec.width     && { width: spec.width }),
                 ...(spec.height    && { height: spec.height }),
                 ...(spec.margins   && { margins: spec.margins }),
                 ...(spec.transform && { transform: spec.transform as PlotTransformConfig }),
             });
+            // autk-plot's scatter plot draws every point in its mark color, and colors the points by `color` only when it
+            // styles them for a selection: style them once, with nothing selected.
+            if(spec.mark === 'scatter' && spec.color !== undefined)
+                plot.setSelection([]);
 
             plotRegistry?.set(plotKey(spec), plot);
             // autk-plot names a row by its position in the collection it draws.

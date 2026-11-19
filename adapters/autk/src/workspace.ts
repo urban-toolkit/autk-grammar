@@ -1,4 +1,5 @@
 import { AutkDb, DEFAULT_WORKSPACE_NAME } from '@urban-toolkit/autk-db';
+import type { FeatureCollection } from 'geojson';
 
 /**
  * Makes `workspace` (the default one without a name) the workspace `db` works in; autk-db creates it on first use.
@@ -20,4 +21,25 @@ export async function enterWorkspace(db: AutkDb, workspace?: string): Promise<vo
  */
 export function tableKey(workspace: string | undefined, name: string): string {
     return workspace === undefined || workspace === DEFAULT_WORKSPACE_NAME ? name : `${workspace}/${name}`;
+}
+
+/** The CRS of the coordinates of each collection a GeoJSON source put in a cache: the source's own. */
+const sourceCrs = new WeakMap<FeatureCollection, string>();
+
+/**
+ * Notes that a GeoJSON source put `collection` in a cache as it gave it, with its coordinates in `crs`, its
+ * `coordinateFormat`, which autk-db transforms to its workspace's CRS as it loads the source.
+ */
+export function noteSourceCrs(collection: FeatureCollection, crs: string): void {
+    sourceCrs.set(collection, crs);
+}
+
+/**
+ * `collection` when a GeoJSON source put it in a cache with its coordinates in `workspaceCrs`, the CRS autk-db keeps its
+ * workspace in, else `undefined`: a compute pass compares a `fromFeature` table's coordinates with its own table's,
+ * which autk-db keeps in the workspace's CRS.
+ */
+export function inWorkspaceCrs(collection: FeatureCollection | undefined, workspaceCrs: string): FeatureCollection | undefined {
+    const crs = collection && sourceCrs.get(collection);
+    return crs !== undefined && crs.toUpperCase() === workspaceCrs.toUpperCase() ? collection : undefined;
 }
