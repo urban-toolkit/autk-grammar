@@ -445,6 +445,16 @@ A layer's `skippedComps` lists the features it hides, by their positions among t
 map: { layerRefs: [{ dataRef: 'parcels', skippedComps: [2, 5] }] }
 ```
 
+### `widthBy`
+
+A roads layer draws each line as wide as autk-map draws its kind of road, and `width` gives every line one width. A roads layer's `widthBy` is the dot path to each line's own width, relative to `feature.properties`, in the map's planar units: autk-map's widths by feature. A line without a positive number there keeps the width of its kind of road.
+
+autk-map draws every line of a polylines layer at one width, which wins over widths by feature, so a run refuses `widthBy` on a polylines layer: draw the table as roads, with `layerType: 'roads'`. A run also refuses `widthBy` with `width`, and a path that gives no line of the layer a width.
+
+```ts
+map: { layerRefs: [{ dataRef: 'segments', layerType: 'roads', widthBy: 'compute.width', getFnv: 'traffic' }] }
+```
+
 ### `layerType`
 
 A layer draws its table as the table's own type, which its source or compute pass gave it. A layer's `layerType` draws the table as another type of its kind of geometry, in that type's color of the map's style and the way autk-map draws that type:

@@ -174,6 +174,45 @@ function applyMapColors(map: AutkMap, spec: MapSpec): void {
         map.style.setInvalidValueColor(spec.invalidValueColor as ColorHEX);
 }
 
+/** Refuses a `widthBy` that is not a path, and one set with `width`, which gives every line one width. */
+function checkWidthBy(layerRef: MapLayerSpec, layerId: string): void {
+    const path: unknown = layerRef.widthBy;
+    if (path === undefined) return;
+    if (typeof path !== 'string' || path === '')
+        throw new Error(`Layer "${layerId}": widthBy must be the dot path to each line's width, not ${JSON.stringify(path)}.`);
+    if (layerRef.width !== undefined)
+        throw new Error(`Layer "${layerId}": set width or widthBy, not both: width gives every line one width.`);
+}
+
+/**
+ * Sets the width of each line of a roads layer from the property `widthBy` names, as autk-map's widths by feature
+ * (`polylinesWidthByComponent`): a line without a positive number there keeps the width autk-map gave its kind of road.
+ * autk-map gives every polylines layer one width, which wins over widths by feature and which a layer cannot clear, so
+ * only a roads layer takes it.
+ */
+function applyWidthBy(map: AutkMap, layerId: string, path: string, type: LayerType, data: FeatureCollection): void {
+    if (type !== 'roads')
+        throw new Error(`Layer "${layerId}": widthBy sets the width of each line of a roads layer, and the layer is drawn as ${type}: draw a table of lines as roads with layerType: 'roads'.`);
+    const layer = map.layerManager.searchByLayerId(layerId) as unknown as
+        { components?: Array<{ featureIndex?: number }>; layerRenderInfo: LayerRenderInfo } | null;
+    const components = layer?.components ?? [];
+    const widths = new Float32Array(components.length);
+    widths.set(layer?.layerRenderInfo.polylinesWidthByComponent?.subarray(0, components.length) ?? []);
+    const relative = path.startsWith('properties.') ? path.slice('properties.'.length) : path;
+    let given = 0;
+    components.forEach((component, position) => {
+        const feature = data.features[component.featureIndex ?? position];
+        const width = Number(valueAtPath(feature?.properties, relative));
+        if (Number.isFinite(width) && width > 0) {
+            widths[position] = width;
+            given++;
+        }
+    });
+    if (given === 0)
+        throw new Error(`Layer "${layerId}": widthBy "${path}" gives no line of the layer a width: none has a positive number there.`);
+    map.updateRenderInfo(layerId, { polylinesWidthByComponent: widths });
+}
+
 /** The layer types that draw each kind of geometry, and how a refusal says so. */
 const LAYER_KINDS: ReadonlyArray<{ types: readonly LayerType[]; drawn: string }> = [
     { types: ['points'], drawn: 'a table of points is drawn as points' },
@@ -393,6 +432,9 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
             if(Object.keys(style).length > 0)
                 map.updateRenderInfo(layerId, style);
 
+            if(layerRef.widthBy !== undefined)
+                applyWidthBy(map, layerId, layerRef.widthBy, type, data);
+
             // pointSize is in meters on the ground, and autk-map's in planar units, which Mercator stretches away
             // from the equator: the layer's points are sized at the middle of its extent.
             const crs = context.getWorkspaceConfiguration().coordinateFormat;
@@ -501,6 +543,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                     checkPointSize(layerRef.pointSize, layerIdOf(layerRef));
                     if(layerRef.skippedComps !== undefined)
                         checkPositions(layerRef.skippedComps, 'skippedComps', layerIdOf(layerRef));
+                    checkWidthBy(layerRef, layerIdOf(layerRef));
                 }
                 checkPickedComps(spec);
                 checkMapColors(spec, index);

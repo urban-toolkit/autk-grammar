@@ -1111,6 +1111,56 @@ test('hides the features skippedComps names, on a layer of polygons, of lines or
         .rejects.toThrow('Layer "heatmap": skippedComps names features, and a raster layer has none.');
 });
 
+test('draws each line of a roads layer as wide as widthBy says, and a line without a width as wide as its kind of road', async ({ page }) => {
+    // Four east-west lines of one length: three with a width w, the fourth without one.
+    const lanes = (widths: number[]): DataSourceSpec => ({
+        type: 'geojson', outputTableName: 'lanes',
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [0, 1, 2, 3].map((i) => ({
+                type: 'Feature' as const,
+                properties: i < 3 ? { id: i, w: widths[i] } : { id: i },
+                geometry: { type: 'LineString' as const, coordinates: [[-73.99, 40.748 - i * 0.003], [-73.975, 40.748 - i * 0.003]] },
+            })),
+        },
+    });
+    const red = '#d62728';
+    const lanesWith = (widths: number[], options: Partial<MapLayerSpec>): UrbanSpec => ({
+        data: [area, lanes(widths)],
+        map: { layerRefs: [{ dataRef: 'lanes', title: 'Lanes', layerType: 'roads', color: red, ...options }] },
+    });
+    /** The width autk-map holds for each line, by its id. */
+    const widthsById = async () => {
+        const drawn = await page.evaluate(() => window.drawnRows('map0', 'Lanes'));
+        const widths = (await layerById(page)).Lanes.polylinesWidthByComponent ?? [];
+        return Object.fromEntries(drawn.map((row, position) => [String(row?.id), widths[position]]));
+    };
+
+    // Without widthBy, each line as wide as autk-map draws its kind of road.
+    await runSpec(page, lanesWith([40, 120, 240], {}));
+    const byKind = await widthsById();
+    expect(Object.keys(byKind).sort()).toEqual(['0', '1', '2', '3']);
+
+    // With it, the three widths, and the fourth line keeps its kind's.
+    await runSpec(page, lanesWith([40, 120, 240], { widthBy: 'w' }));
+    expect(await widthsById()).toEqual({ 0: 40, 1: 120, 2: 240, 3: byKind[3] });
+    const varied = await pixelsIn(page, red, 'lines 40, 120 and 240 wide');
+    // The same lines, 40 each: the varied ones cover over twice as many pixels, (40 + 120 + 240) / 120 being 3.3.
+    await runSpec(page, lanesWith([40, 40, 40], { widthBy: 'properties.w' }));
+    expect(await widthsById()).toEqual({ 0: 40, 1: 40, 2: 40, 3: byKind[3] });
+    const even = await pixelsIn(page, red, 'lines 40 wide');
+    expect(even).toBeGreaterThan(0);
+    expect(varied).toBeGreaterThan(even * 2);
+
+    // Refused: a polylines layer, whose lines autk-map draws at one width, widthBy with width, and a path to no width.
+    await expect(runSpec(page, lanesWith([40, 120, 240], { layerType: undefined, widthBy: 'w' })))
+        .rejects.toThrow(`Layer "Lanes": widthBy sets the width of each line of a roads layer, and the layer is drawn as polylines: draw a table of lines as roads with layerType: 'roads'.`);
+    await expect(runSpec(page, lanesWith([40, 120, 240], { widthBy: 'w', width: 30 })))
+        .rejects.toThrow('Layer "Lanes": set width or widthBy, not both: width gives every line one width.');
+    await expect(runSpec(page, lanesWith([40, 120, 240], { widthBy: 'lanes' })))
+        .rejects.toThrow('Layer "Lanes": widthBy "lanes" gives no line of the layer a width: none has a positive number there.');
+});
+
 test('colors two vector layers with different value ranges over one colorMapRange', async ({ page }) => {
     const twoLayers = (options: Partial<MapLayerSpec>): UrbanSpec => ({
         data: [area, zones, lots],

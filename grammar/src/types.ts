@@ -491,7 +491,7 @@ export type RasterTransferFunction = {
 /**
  * One layer drawn by a map.
  * @if { "type": "object" }
- * @then { "allOf": [{ "if": { "required": ["colorMapRange"] }, "then": { "not": { "required": ["colorMapDomain"] } } }, { "if": { "required": ["pickedComps"] }, "then": { "required": ["isPick"], "not": { "properties": { "isPick": { "const": false } } } } }] }
+ * @then { "allOf": [{ "if": { "required": ["colorMapRange"] }, "then": { "not": { "required": ["colorMapDomain"] } } }, { "if": { "required": ["pickedComps"] }, "then": { "required": ["isPick"], "not": { "properties": { "isPick": { "const": false } } } } }, { "if": { "required": ["widthBy"] }, "then": { "not": { "required": ["width"] } } }] }
  */
 export type MapLayerSpec = {
     /** Name of the table to draw, as produced by a data source or a compute pass. */
@@ -518,10 +518,20 @@ export type MapLayerSpec = {
     stroke?: HexColor | false,
     /**
      * Width of the lines of a polylines or roads layer, in the map's planar units (about meters). It replaces
-     * the widths a roads layer gives each kind of road. Read by the Autark adapter; the deck.gl adapter ignores it.
+     * the widths a roads layer gives each kind of road. Not with `widthBy`. Read by the Autark adapter; the deck.gl
+     * adapter ignores it.
      * @exclusiveMinimum 0
      */
     width?: number,
+    /**
+     * Dot path to the width of each line of a roads layer, relative to `feature.properties`, in the map's planar units
+     * (about meters), as `width` gives every line one: autk-map's widths by feature. A line without a positive number there
+     * keeps the width of its kind of road. autk-map draws every line of a polylines layer at one width, so a table of lines
+     * takes it drawn as roads, with `layerType: 'roads'`. Not with `width`. Read by the Autark adapter; the deck.gl adapter
+     * ignores it.
+     * @minLength 1
+     */
+    widthBy?: string,
     /**
      * Radius of each point of a points layer, in meters on the ground. The Autark adapter converts it to the
      * workspace's planar units at the middle of the layer's extent, where World Mercator, the default, stretches a
