@@ -93,6 +93,26 @@ const box = [-87.66415, 41.858, -87.61232, 41.89966];
 const osmIn = (queryArea: unknown) => ({ data: [{ ...osm, queryArea }] });
 expect('osm with a bbox', osmIn({ bbox: box }), true);
 expect('osm with a bbox and a pbf', { data: [{ ...osm, pbfFileUrl: 'downtown.osm.pbf', queryArea: { bbox: box } }] }, true);
+// OSM tag sets, as autk-db's checkTagSets takes them: at most 8 sets, each a name, a geometry type and 1 to 64 tags.
+// A field given as undefined is left out.
+const tagSet = (fields: Record<string, unknown>) => Object.fromEntries(Object.entries({
+    name: 'cafes', type: 'points', tags: [{ key: 'amenity', value: 'cafe' }], ...fields,
+}).filter(([, value]) => value !== undefined));
+const withTagSets = (tagSets: unknown, fields: Record<string, unknown> = {}) => ({ data: [{ ...osm, tagSets, ...fields }] });
+expect('osm tag sets of each geometry type, without autoLoadLayers', withTagSets([
+    tagSet({}),
+    tagSet({ name: 'paths_2', type: 'polylines', tags: [{ key: 'highway' }] }),
+    tagSet({ name: 'parks', type: 'polygons', tags: [{ key: 'leisure', value: 'park' }, { key: 'addr:street' }] }),
+]), true);
+expect('osm tag sets with layers', withTagSets([tagSet({})], { autoLoadLayers: { layers: ['roads'] } }), true);
+expect('osm with a pbf and no tag sets', withTagSets([], { pbfFileUrl: 'downtown.osm.pbf' }), true);
+expect('osm with forceRefresh', { data: [{ ...osm, forceRefresh: true }] }, true);
+expect('osm with forceRefresh as a string', { data: [{ ...osm, forceRefresh: 'yes' }] }, false);
+expect('osm layers with the CRS of their coordinates', { data: [{ ...osm, autoLoadLayers: { layers: ['roads'], coordinateFormat: 'EPSG:4269' } }] }, true);
+expect('osm layers with a CRS as a number', { data: [{ ...osm, autoLoadLayers: { layers: ['roads'], coordinateFormat: 4269 } }] }, false);
+expect('a layer and a plot of osm elements', { map: { layerRefs: [{ dataRef: 't', osmElements: true }] }, plot: { ...plot, mark: 'table', osmElements: true } }, true);
+expect('a layer with osmElements as a string', { map: { layerRefs: [{ dataRef: 't', osmElements: 'yes' }] } }, false);
+expect('a plot with osmElements as a string', { plot: { ...plot, mark: 'scatter', osmElements: 'yes' } }, false);
 
 // Documents the runtime cannot draw.
 expect('unknown data type', { data: [{ ...osm, type: 'shapefile' }] }, false);
@@ -135,6 +155,8 @@ expect('heatmap with a non-boolean useCentroid', { data: [{ ...heat, near: { dis
 expect('heatmap groupBy with count', { data: [{ ...heat, groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }] }] }, true);
 expect('heatmap groupBy with collect, which lists rows while a cell holds one value', { data: [{ ...heat, groupBy: [{ column: 'date', aggregateFn: 'collect' }] }] }, false);
 expect('join groupBy with collect', { data: [{ type: 'join', dataRef: 't', joinDataRef: 'n', groupBy: [{ column: 'date', aggregateFn: 'collect' }] }] }, true);
+expect('heatmap groupBy with normalize', { data: [{ ...heat, groupBy: [{ column: 'Unique Key', aggregateFn: 'count', normalize: true }] }] }, true);
+expect('heatmap groupBy with normalize as a string', { data: [{ ...heat, groupBy: [{ column: 'Unique Key', aggregateFn: 'count', normalize: 'yes' }] }] }, false);
 expect('workspaces on sources, a map, a plot and a compute pass', {
     data: [{ type: 'geojson', outputTableName: 'g', geojsonFileUrl: 'g.json', workspace: 'west' }, { type: 'join', dataRef: 'g', joinDataRef: 'g', workspace: 'west' }],
     compute: [{ dataRef: 'g', attributes: { x: 'a' }, outputColumnName: 'r', wgslFunction: 'return x;', workspace: 'west' }],
@@ -142,6 +164,44 @@ expect('workspaces on sources, a map, a plot and a compute pass', {
     plot: { workspace: 'west', dataRef: 'g', mark: 'scatter', axis: ['a', 'b'] },
 }, true);
 expect('an empty workspace name', { data: [{ type: 'geojson', outputTableName: 'g', geojsonFileUrl: 'g.json', workspace: '' }] }, false);
+const crs = { coordinateFormat: 'EPSG:3857', precisionGrid: 1 };
+expect('workspaces, the default one and a named one', { workspaces: [crs, { name: 'west', coordinateFormat: 'EPSG:32618', precisionGrid: 0.1 }], data: [csv] }, true);
+expect('a workspace without a precision grid', { workspaces: [{ coordinateFormat: 'EPSG:3857' }] }, false);
+expect('a workspace without a CRS', { workspaces: [{ precisionGrid: 1 }] }, false);
+expect('a workspace with an empty CRS', { workspaces: [{ ...crs, coordinateFormat: '' }] }, false);
+expect('a workspace with a precision grid of 0', { workspaces: [{ ...crs, precisionGrid: 0 }] }, false);
+expect('a workspace with a negative precision grid', { workspaces: [{ ...crs, precisionGrid: -1 }] }, false);
+expect('a workspace with a precision grid as a string', { workspaces: [{ ...crs, precisionGrid: '1' }] }, false);
+expect('a workspaces entry with an empty name', { workspaces: [{ ...crs, name: '' }] }, false);
+expect('workspaces as an object', { workspaces: crs }, false);
+const sql = { type: 'sql', outputTableName: 's', query: "SELECT * FROM t WHERE properties->>'kind' = 'park'" };
+expect('sql source', { data: [osm, sql] }, true);
+expect('sql source drawn as polygons, in a workspace', { data: [osm, { ...sql, layerType: 'polygons', workspace: 'west' }] }, true);
+expect('sql source without a query', { data: [{ type: 'sql', outputTableName: 's' }] }, false);
+expect('sql source with an empty query', { data: [{ ...sql, query: '' }] }, false);
+expect('sql source with a query as lines', { data: [{ ...sql, query: ['SELECT *', 'FROM t'] }] }, false);
+expect('sql source without outputTableName', { data: [{ type: 'sql', query: sql.query }] }, false);
+expect('sql source with an unknown layer type', { data: [{ ...sql, layerType: 'rivers' }] }, false);
+const rows = { type: 'update', dataRef: 'sales', strategy: 'replace', jsonObject: [{ month: 'May', total: 7 }] };
+const features = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: point, properties: { id: 2 } }] };
+expect('update with rows replacing a table', { data: [csv, rows] }, true);
+expect('update of rows by an id column, in a workspace', { data: [csv, { ...rows, strategy: 'update', idColumn: 'month', workspace: 'west' }] }, true);
+expect('update of features by a property', { data: [{ type: 'update', dataRef: 'g', strategy: 'update', idColumn: 'properties.id', geojsonObject: features }] }, true);
+expect('update with features replacing a table', { data: [{ type: 'update', dataRef: 'g', strategy: 'replace', geojsonObject: features }] }, true);
+expect('update without rows', { data: [{ type: 'update', dataRef: 'sales', strategy: 'replace' }] }, false);
+expect('update with rows and features', { data: [{ ...rows, geojsonObject: features }] }, false);
+expect('update of rows without an id column', { data: [{ ...rows, strategy: 'update' }] }, false);
+expect('update of features without an id column', { data: [{ type: 'update', dataRef: 'g', strategy: 'update', geojsonObject: features }] }, false);
+expect('update without a strategy', { data: [{ type: 'update', dataRef: 'sales', jsonObject: rows.jsonObject }] }, false);
+expect('update with an unknown strategy', { data: [{ ...rows, strategy: 'upsert' }] }, false);
+expect('update without dataRef', { data: [{ type: 'update', strategy: 'replace', jsonObject: rows.jsonObject }] }, false);
+expect('update with no rows in jsonObject', { data: [{ ...rows, jsonObject: [] }] }, false);
+expect('update with an empty id column', { data: [{ ...rows, strategy: 'update', idColumn: '' }] }, false);
+expect('update with a FeatureCollection of no features', { data: [{ type: 'update', dataRef: 'g', strategy: 'replace', geojsonObject: { type: 'FeatureCollection', features: [] } }] }, false);
+expect('drop', { data: [csv, { type: 'drop', dataRef: 'c' }] }, true);
+expect('drop in a workspace', { data: [{ type: 'drop', dataRef: 'c', workspace: 'west' }] }, true);
+expect('drop without dataRef', { data: [{ type: 'drop' }] }, false);
+expect('drop with dataRef as a number', { data: [{ type: 'drop', dataRef: 3 }] }, false);
 expect('geojson without a source', { data: [{ type: 'geojson', outputTableName: 'g' }] }, false);
 expect('geojson with no features', { data: [{ type: 'geojson', outputTableName: 'g', geojsonObject: { type: 'FeatureCollection', features: [] } }] }, false);
 expect('linechart without transform', { plot: { ...plot, mark: 'linechart' } }, false);
@@ -209,7 +269,25 @@ expect('osm bbox with geocodeArea and areas', osmIn({ bbox: box, geocodeArea: 'C
 expect('osm bbox with geocodeArea', osmIn({ bbox: box, geocodeArea: 'Chicago' }), false);
 expect('osm bbox with areas', osmIn({ bbox: box, areas: ['Loop'] }), false);
 expect('osm queryArea without bbox or geocodeArea', osmIn({}), false);
+expect('osm tag sets with a pbf, which autk-db refuses', withTagSets([tagSet({})], { pbfFileUrl: 'downtown.osm.pbf' }), false);
+expect('osm tag sets as an object', withTagSets(tagSet({})), false);
+expect('osm nine tag sets', withTagSets(Array.from({ length: 9 }, (_, i) => tagSet({ name: `set_${i}` }))), false);
+expect('osm tag set of an unknown type', withTagSets([tagSet({ type: 'lines' })]), false);
+expect('osm tag set without a type', withTagSets([tagSet({ type: undefined })]), false);
+expect('osm tag set without a name', withTagSets([tagSet({ name: undefined })]), false);
+expect('osm tag set name with a capital', withTagSets([tagSet({ name: 'Cafes' })]), false);
+expect('osm tag set name starting with a digit', withTagSets([tagSet({ name: '1cafes' })]), false);
+expect('osm tag set name of 33 characters', withTagSets([tagSet({ name: `c${'a'.repeat(32)}` })]), false);
+expect('osm tag set without tags', withTagSets([tagSet({ tags: [] })]), false);
+expect('osm tag set of 65 tags', withTagSets([tagSet({ tags: Array.from({ length: 65 }, (_, i) => ({ key: `k${i}` })) })]), false);
+expect('osm tag without a key', withTagSets([tagSet({ tags: [{ value: 'cafe' }] })]), false);
+expect('osm tag key with a space', withTagSets([tagSet({ tags: [{ key: 'amenity type' }] })]), false);
+expect('osm tag key starting with a colon', withTagSets([tagSet({ tags: [{ key: ':amenity' }] })]), false);
+expect('osm tag with an empty value', withTagSets([tagSet({ tags: [{ key: 'amenity', value: '' }] })]), false);
+expect('osm tag value of 256 characters', withTagSets([tagSet({ tags: [{ key: 'name', value: 'x'.repeat(256) }] })]), false);
 expect('camera pitch above 90', { map: { ...layers, camera: { pitch: 91 } } }, false);
+expect('camera pitch of 90, which puts the eye on the ground', { map: { ...layers, camera: { pitch: 90 } } }, false);
+expect('camera pitch just below 90', { map: { ...layers, camera: { pitch: 89.9 } } }, true);
 expect('camera pitch below 0', { map: { ...layers, camera: { pitch: -1 } } }, false);
 expect('camera bearing above 360', { map: { ...layers, camera: { bearing: 361 } } }, false);
 expect('camera zoom below 0', { map: { ...layers, camera: { zoom: -1 } } }, false);
@@ -240,7 +318,7 @@ if (typeof bboxDescription !== 'string' || bboxDescription.trim() === '') {
     failures++;
     console.error('FAIL OsmBoundingBoxArea.bbox has no description in the schema');
 }
-// So is every key 5.0.0 adds or renames. A path of keys from a definition is followed through `$ref`, each branch of
+// So is every key 5.0.0 adds or renames, and every key added since. A path of keys from a definition is followed through `$ref`, each branch of
 // `anyOf` and `allOf` (a discriminated union's `then`) and an array's `items`. The key must be reached at least once,
 // and carry a description everywhere it is reached; an empty path checks the definition itself.
 type SchemaNode = Record<string, any>;
@@ -280,6 +358,18 @@ const newKeys: Array<[string, string[]]> = [
         'aggregation', 'aggregation.includeBackground', 'aggregation.backgroundLayerType',
         'camera', 'camera.fov', 'camera.clip', 'camera.clip.near', 'camera.clip.far',
     ]],
+    ['OsmDataSourceSpec', ['tagSets', 'tagSets.name', 'tagSets.type', 'tagSets.tags', 'tagSets.tags.key', 'tagSets.tags.value']],
+    ['OsmTagSet', ['']],
+    ['OsmTagFilter', ['']],
+    ['UrbanSpec', ['workspaces', 'workspaces.name', 'workspaces.coordinateFormat', 'workspaces.precisionGrid']],
+    ['WorkspaceSpec', ['']],
+    ['SqlSourceSpec', ['', 'query', 'layerType']],
+    ['HeatmapSourceSpec', ['groupBy.normalize']],
+    ['OsmDataSourceSpec', ['forceRefresh', 'autoLoadLayers.coordinateFormat']],
+    ['MapLayerSpec', ['osmElements']],
+    ['UrbanSpec', ['plot.osmElements']],
+    ['UpdateSourceSpec', ['', 'workspace', 'dataRef', 'strategy', 'idColumn', 'geojsonObject', 'jsonObject']],
+    ['DropSourceSpec', ['', 'workspace', 'dataRef']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

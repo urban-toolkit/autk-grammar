@@ -284,8 +284,13 @@ export function createDataAdapter(targets?: Targets, cache?: Map<string, Feature
                         `Pre-join your data before passing it to the grammar.`,
                     );
 
+                case 'sql':
+                case 'update':
+                case 'drop':
+                    throw new Error(`${type} data source is read by the Autark adapter only; the deck.gl adapter does not support it.`);
+
                 default:
-                    throw new Error(`Unknown data source type: ${(rest as DataSourceSpec).type}`);
+                    throw new Error(`Unknown data source type: ${String(type)}`);
             }
         },
     };

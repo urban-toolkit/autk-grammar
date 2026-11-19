@@ -2,7 +2,7 @@ import type { FeatureCollection } from 'geojson';
 import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec, NormalizationMode } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, ComputeCache, ComputeLayerTypes } from '../types';
-import { DrawnLayers, LayerExports, exportOf, mapIdOf } from '../drawn';
+import { DrawnLayers, LayerExports, exportKey, exportOf, exportOptions, mapIdOf } from '../drawn';
 import { rowKeys } from '../rows';
 import { AutkMap } from '@urban-toolkit/autk-map';
 import type { LayerRenderInfo } from '@urban-toolkit/autk-map';
@@ -187,13 +187,27 @@ function rasterBand(collection: { features?: { properties?: unknown }[] }, getFn
 }
 
 /**
+ * Why a run refuses `camera`, or `undefined` when it takes it: a pitch that is not at least 0 and less than 90 degrees.
+ * At 90 the eye would sit on the ground, edge-on to the map's flat layers, and autk-map's pan, which moves the eye by
+ * its height, would stand still. The schema refuses the same pitches.
+ */
+function cameraRefusal(camera: CameraSpec): string | undefined {
+    const { pitch } = camera as { pitch?: unknown };
+    if (pitch === undefined || (typeof pitch === 'number' && pitch >= 0 && pitch < 90)) return undefined;
+    const shown = typeof pitch === 'number' ? String(pitch) : JSON.stringify(pitch);
+    return `camera.pitch must be at least 0 and less than 90 degrees, not ${shown}: at 90 the eye would sit on the ground, edge-on to the map's flat layers, and the map could not pan.`;
+}
+
+/**
  * Moves a map's camera as `camera` says, from the view that fits the map's layers. The camera reports each change,
- * so the map redraws without a request.
+ * so the map redraws without a request. It refuses a pitch that is not at least 0 and less than 90 degrees.
  *
  * The map adapter calls it once the map's layers are loaded and before the map's first `draw()`. A host that builds
  * its own map from a spec's `map` entry calls it at the same point, so the map looks from where the grammar's would.
  */
 export function applyCamera(map: AutkMap, camera: CameraSpec): void {
+    const refused = cameraRefusal(camera);
+    if(refused) throw new Error(refused);
     if(camera.zoom === undefined && !camera.pitch && !camera.bearing) return;
 
     // Turn the view around the point it looks at: the eye moves on a sphere around that point, so the data stays
@@ -209,7 +223,11 @@ export function applyCamera(map: AutkMap, camera: CameraSpec): void {
         y - distance * Math.sin(pitch) * Math.cos(bearing),
         distance * Math.cos(pitch),
     ];
-    view.resetCamera([Math.sin(bearing), Math.cos(bearing), 0], [x, y, 0], eye);
+    // The view's up direction: across the line of sight at any pitch, toward the far side of the view, as autk-map's own
+    // tilt leaves it. autk-map's pan, tilt and zoom at the cursor move along it and take it to be across the line of
+    // sight; a horizontal one is not, beyond a pitch of 0. The view itself is the same either way.
+    const up = [Math.cos(pitch) * Math.sin(bearing), Math.cos(pitch) * Math.cos(bearing), Math.sin(pitch)];
+    view.resetCamera(up, [x, y, 0], eye);
 }
 
 /**
@@ -249,7 +267,9 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
             const type     = (computeTypes?.get(key) ?? tableToTypeMap[name]) as LayerType;
             const getFnv   = layerRef.getFnv;
 
-            const rawData = computeCache?.get(key) ?? (type === 'raster' ? await context.getRaster(name) as unknown as FeatureCollection : await exportOf(exports, key, () => context.getLayer(name)));
+            const rawData = computeCache?.get(key) ?? (type === 'raster'
+                ? await context.getRaster(name) as unknown as FeatureCollection
+                : await exportOf(exports, exportKey(key, layerRef.osmElements), () => context.getLayer(name, exportOptions(layerRef.osmElements))));
             // Raster tables (e.g. heatmaps) are a single feature with no geometry, so keep them as-is. A vector layer
             // is handed the rows with a geometry: `kept` holds the table row of each.
             const rows = rawData.features ?? [];
@@ -367,6 +387,10 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                     checkColorMapRange(layerRef);
                     checkPointSize(layerRef.pointSize, layerIdOf(layerRef));
                 }
+                // Refused before the map is made, so a refused camera leaves nothing on the page.
+                const refusedCamera = spec.camera && cameraRefusal(spec.camera);
+                if(refusedCamera)
+                    throw new Error(`Map ${index}: ${refusedCamera}`);
 
                 let canvas;
 

@@ -1,6 +1,6 @@
-import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec } from '@urban-toolkit/the-urban-grammar';
-import { AutkDb, DEFAULT_WORKSPACE_COORDINATE_FORMAT } from '@urban-toolkit/autk-db';
-import type { LoadGeojsonParams } from '@urban-toolkit/autk-db';
+import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, DropSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, JoinSourceSpec, JsonDataSourceSpec, OsmDataSourceSpec, SqlSourceSpec, UpdateSourceSpec, WorkspaceSpec } from '@urban-toolkit/the-urban-grammar';
+import { AutkDb, DEFAULT_WORKSPACE_NAME, isRenderableTable, isVectorTable } from '@urban-toolkit/autk-db';
+import type { LoadGeojsonParams, Table } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Geometry } from 'geojson';
 import { Targets, GeoJsonCache } from '../types';
 import { enterWorkspace, tableKey } from '../workspace';
@@ -64,12 +64,22 @@ function queryAreaOf(spec: OsmDataSourceSpec): OsmDataSourceSpec['queryArea'] {
 }
 
 /**
- * Maps an OSM source onto autk-db's parameters, which always expect
- * `autoLoadLayers` and no longer take `dropOsmTable`.
+ * Maps an OSM source onto autk-db's parameters, which always expect `autoLoadLayers`, with the CRS of the source's
+ * coordinates when it gives one, and no longer take `dropOsmTable`. autk-db reads `tagSets` from the Overpass API only,
+ * so a source that also names a PBF extract is refused here, by its name.
  */
 function toLoadOsmParams(spec: OsmDataSourceSpec) {
     const { autoLoadLayers, ...rest } = spec;
-    return { ...rest, queryArea: queryAreaOf(spec), autoLoadLayers: { layers: autoLoadLayers?.layers ?? [] } };
+    if (spec.pbfFileUrl !== undefined && (spec.tagSets?.length ?? 0) > 0)
+        throw new Error(`OSM source "${spec.outputTableName}": tagSets are read from the Overpass API only, so a source with pbfFileUrl cannot take them.`);
+    return {
+        ...rest,
+        queryArea: queryAreaOf(spec),
+        autoLoadLayers: {
+            layers: autoLoadLayers?.layers ?? [],
+            ...(autoLoadLayers?.coordinateFormat !== undefined && { coordinateFormat: autoLoadLayers.coordinateFormat }),
+        },
+    };
 }
 
 /**
@@ -81,6 +91,49 @@ function crsAdvice(coordinateFormat: string | undefined): string {
         ? `coordinateFormat is set to "${coordinateFormat}"`
         : 'no coordinateFormat was specified, so it defaults to EPSG:4326 (WGS84 per RFC 7946)';
     return `${assumed}. Verify that coordinateFormat matches the actual CRS of the input data.`;
+}
+
+/** How a message names a workspace: the default one, or another by its name. */
+function workspaceLabel(name: string | undefined): string {
+    return name === undefined || name === DEFAULT_WORKSPACE_NAME ? 'the default workspace' : `the workspace "${name}"`;
+}
+
+/** A feature property's value as SQL's `->>` reads it: a string as it is, any other value as its JSON. */
+function propertyText(value: unknown): string | undefined {
+    if (value === undefined || value === null) return undefined;
+    return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+/**
+ * The rows of an update of a layer keyed by a feature property, `properties.<name>`, keyed instead by the feature ids of
+ * the table's rows they match. autk-db 4.1.1 matches such a key with `table.properties->>'name' =
+ * staging.properties->>'name'`, which DuckDB reads so that the comparison is NULL: no row matches, and nothing is
+ * updated. It matches a plain column as written. So each given feature goes to every row whose property has its value,
+ * compared as text, as `->>` reads it, under that row's id in autk-db's export: its `geojson_id`, else its `id`.
+ */
+async function updateByFeatureId(db: AutkDb, table: Table, rows: FeatureCollection, property: string): Promise<{ data: FeatureCollection, idColumn: string }> {
+    const ids = new Map<string, Array<string | number>>();
+    for (const row of (await db.getLayer(table.name)).features) {
+        const key = propertyText((row.properties as Record<string, unknown> | null)?.[property]);
+        if (key === undefined) continue;
+        if (row.id === undefined || row.id === null)
+            throw new Error('its rows have no feature id to update them by.');
+        ids.set(key, [...(ids.get(key) ?? []), row.id]);
+    }
+    const features = rows.features.flatMap((feature) => {
+        const key = propertyText((feature.properties as Record<string, unknown> | null)?.[property]);
+        return key === undefined ? [] : (ids.get(key) ?? []).map((id) => ({ ...feature, id }));
+    });
+    const idColumn = table.columns.some((column) => column.name === 'geojson_id') ? 'geojson_id' : 'id';
+    return { data: { ...rows, features }, idColumn };
+}
+
+/** The database a source loads into: `context`, else a new one. */
+async function database(context: AutkDb | undefined): Promise<AutkDb> {
+    if (context) return context;
+    const db = new AutkDb();
+    await db.init();
+    return db;
 }
 
 /** The [minX, minY, maxX, maxY] of every position in a collection, or undefined when it has none. */
@@ -110,14 +163,15 @@ export function extentOf(collection: FeatureCollection): [number, number, number
 /**
  * The data adapter `AutkGrammar` runs. Its `resolveSource(db, source)` loads one entry of a spec's `data` into the
  * autk-db database `db` (a new one when `db` is undefined), in the entry's workspace, which it leaves current, and
- * returns the database.
+ * returns the database. Its `resolveWorkspaces(db, workspaces)` sets each workspace a spec's `workspaces` lists to its
+ * CRS and precision grid, before the first source loads, leaves the default workspace current and returns the database.
  *
  * A host calls it to load a spec's tables exactly as the grammar does, for example on a server without a map: the
  * `./data` entry exports it with autk-db as its only import. `targets.db` names an element that lists the tables
- * after each load. `cache`, when given, receives each GeoJSON table and each table a join wrote, under
- * {@link tableKey}.
+ * after each load. `cache`, when given, receives each GeoJSON table and each table a join or an update wrote, under
+ * {@link tableKey}, and loses each table a `sql` source replaces or a `drop` source drops.
  */
-export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): DataAdapter {
+export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Required<DataAdapter> {
 
     function print(db: AutkDb, targets?: Targets): void {
         if(!targets || !targets.db)
@@ -137,15 +191,43 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
         }
     }
 
+    /**
+     * Puts a table a source changed in `cache` as autk-db now exports it, as a join's, or takes it out when autk-db does
+     * not export it as a layer: the plots read a table from the cache before autk-db.
+     */
+    async function recache(db: AutkDb, workspace: string | undefined, name: string): Promise<void> {
+        if (!cache) return;
+        const key = tableKey(workspace, name);
+        const table = db.getTablesMetadata().find((candidate) => candidate.name === name);
+        if (table && isRenderableTable(table)) cache.set(key, await db.getLayer(name));
+        else cache.delete(key);
+    }
+
     return {
-        async resolveSource(context: AutkDb | undefined, spec: DataSourceSpec): Promise<AutkDb | undefined> {
-
-            let db = context;
-
-            if(!db){
-                db = new AutkDb();
-                await db.init();
+        async resolveWorkspaces(context: AutkDb | undefined, workspaces: WorkspaceSpec[]): Promise<AutkDb> {
+            const db = await database(context);
+            const named = new Set<string>();
+            for (const { name, coordinateFormat, precisionGrid } of workspaces) {
+                const workspace = name ?? DEFAULT_WORKSPACE_NAME;
+                if (named.has(workspace))
+                    throw new Error(`workspaces sets ${workspaceLabel(name)} twice; give each workspace one entry.`);
+                named.add(workspace);
+                // autk-db creates the workspace with this configuration, or sets it on the one that exists while it
+                // holds no table, the default workspace among them.
+                try {
+                    await db.setWorkspace(workspace, { coordinateFormat, precisionGrid });
+                } catch (err) {
+                    throw new Error(`workspaces, ${workspaceLabel(name)}: ${err instanceof Error ? err.message : String(err)}`);
+                }
             }
+            // Each source, compute pass, map and plot enters its own workspace.
+            await enterWorkspace(db);
+            return db;
+        },
+
+        async resolveSource(context: AutkDb | undefined, spec: DataSourceSpec): Promise<AutkDb> {
+
+            const db = await database(context);
 
             const { workspace } = spec as { workspace?: string };
             await enterWorkspace(db, workspace);
@@ -208,7 +290,7 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                     // A bounding box outside the valid world extent indicates a CRS mismatch.
                     try {
                         const bbox = await db.getBoundingBoxFromLayer(loadSpec.outputTableName);
-                        const WORLD_EXTENT = 25_000_000; // generous bound for DEFAULT_WORKSPACE_COORDINATE_FORMAT (EPSG:3395)
+                        const WORLD_EXTENT = 25_000_000; // generous bound for World Mercator (EPSG:3395), autk-db's default CRS
                         if (
                             !isFinite(bbox.minLon) || !isFinite(bbox.minLat) ||
                             !isFinite(bbox.maxLon) || !isFinite(bbox.maxLat) ||
@@ -219,7 +301,7 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                                 `Geometry bounding box after transform is invalid for layer "${loadSpec.outputTableName}" ` +
                                 `(bbox: [${bbox.minLon}, ${bbox.minLat}, ${bbox.maxLon}, ${bbox.maxLat}]). ` +
                                 `${crsAdvice(loadSpec.coordinateFormat)} ` +
-                                `The workspace uses ${DEFAULT_WORKSPACE_COORDINATE_FORMAT}; input is expected in EPSG:4326 by default.`
+                                `The workspace uses ${db.getWorkspaceConfiguration().coordinateFormat}; input is expected in EPSG:4326 by default.`
                             );
                         }
                     } catch (bboxErr) {
@@ -263,8 +345,74 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Data
                     print(db, targets);
                     return db;
                 }
+                case 'sql': {
+                    const sql = rest_spec as SqlSourceSpec;
+                    try {
+                        await db.rawQuery({
+                            query: sql.query,
+                            output: {
+                                type: 'CREATE_TABLE',
+                                tableName: sql.outputTableName,
+                                source: 'user',
+                                ...(sql.layerType !== undefined && { tableType: sql.layerType }),
+                            },
+                        });
+                    } catch (err) {
+                        throw new Error(`SQL source "${sql.outputTableName}": ${err instanceof Error ? err.message : String(err)}`);
+                    }
+                    // A query saved under the name of a GeoJSON table replaces it, so the plots no longer read its rows.
+                    cache?.delete(tableKey(workspace, sql.outputTableName));
+                    print(db, targets);
+                    return db;
+                }
+                case 'update': {
+                    const update = rest_spec as UpdateSourceSpec;
+                    const refuse = (message: string) => new Error(`Update of "${update.dataRef}": ${message}`);
+                    // The schema refuses these shapes too, but a spec that was not checked against it reaches here.
+                    if ((update.geojsonObject === undefined) === (update.jsonObject === undefined))
+                        throw refuse('give its rows in geojsonObject or in jsonObject, one of the two.');
+                    if (update.strategy === 'update' && !update.idColumn)
+                        throw refuse("the update strategy needs an idColumn, the column that matches a given row to the table's rows.");
+                    let data = (update.geojsonObject ?? update.jsonObject) as FeatureCollection | Record<string, unknown>[];
+                    let idColumn = update.idColumn;
+                    try {
+                        // A layer keyed by a feature property is matched here, then updated by its rows' feature ids.
+                        const table = db.getTablesMetadata().find((candidate) => candidate.name === update.dataRef);
+                        if (update.strategy === 'update' && update.geojsonObject && idColumn?.startsWith('properties.') && table && isVectorTable(table)) {
+                            ({ data, idColumn } = await updateByFeatureId(db, table, update.geojsonObject as FeatureCollection, idColumn.slice('properties.'.length)));
+                            // No row has a given key, so the table stays as it is, as autk-db leaves it.
+                            if ((data as FeatureCollection).features.length === 0) {
+                                print(db, targets);
+                                return db;
+                            }
+                        }
+                        await db.updateTable({
+                            tableName: update.dataRef,
+                            data,
+                            strategy: update.strategy,
+                            ...(idColumn !== undefined && { idColumn }),
+                        });
+                    } catch (err) {
+                        throw refuse(err instanceof Error ? err.message : String(err));
+                    }
+                    await recache(db, workspace, update.dataRef);
+                    print(db, targets);
+                    return db;
+                }
+                case 'drop': {
+                    const drop = rest_spec as DropSourceSpec;
+                    // autk-db drops a table it does not hold without a word, so a name that names none is refused here.
+                    if (!db.getTablesMetadata().some((table) => table.name === drop.dataRef))
+                        throw new Error(`Drop of "${drop.dataRef}": ${workspaceLabel(workspace)} holds no table of that name.`);
+                    await db.removeLayer(drop.dataRef);
+                    cache?.delete(tableKey(workspace, drop.dataRef));
+                    print(db, targets);
+                    return db;
+                }
                 default:
-                    return
+                    // The schema refuses any other type, but a spec that was not checked against it reaches here. Handing
+                    // the engine no database would make the next source start a new one, without the tables before it.
+                    throw new Error(`Unknown data source type "${String(type)}".`);
             }
         }
     }

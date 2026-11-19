@@ -145,6 +145,148 @@ test('refuses a bbox that is not [west, south, east, north] in degrees, and a bb
     await refused({ bbox: BOX, areas: ['Financial District'] }, both);
 });
 
+// OSM tag sets, read from an Overpass API the test answers itself, so a run needs no network. Inside BOX: two cafes and
+// a bench, a footway, and a park.
+const TAGGED = {
+    version: 0.6,
+    elements: [
+        { type: 'node', id: 1, lat: 40.706, lon: -74.011, tags: { amenity: 'cafe', name: 'Cafe One' } },
+        { type: 'node', id: 2, lat: 40.707, lon: -74.01, tags: { amenity: 'cafe', name: 'Cafe Two' } },
+        { type: 'node', id: 3, lat: 40.7075, lon: -74.0095, tags: { amenity: 'bench' } },
+        {
+            type: 'way', id: 10, nodes: [11, 12, 13], tags: { highway: 'footway' },
+            geometry: [{ lat: 40.7055, lon: -74.012 }, { lat: 40.7065, lon: -74.0105 }, { lat: 40.708, lon: -74.009 }],
+        },
+        {
+            type: 'way', id: 20, nodes: [21, 22, 23, 24, 21], tags: { leisure: 'park', name: 'Pocket Park' },
+            geometry: [
+                { lat: 40.7062, lon: -74.0115 }, { lat: 40.7062, lon: -74.0105 }, { lat: 40.7072, lon: -74.0105 },
+                { lat: 40.7072, lon: -74.0115 }, { lat: 40.7062, lon: -74.0115 },
+            ],
+        },
+    ],
+};
+
+/** An OSM source for BOX with three tag sets, and no layers: the cafes as points, the highways as lines, the parks as polygons. */
+function taggedSource(fields: object = {}): DataSourceSpec {
+    return {
+        type: 'osm',
+        outputTableName: 'osm',
+        queryArea: { bbox: BOX },
+        tagSets: [
+            { name: 'cafes', type: 'points', tags: [{ key: 'amenity', value: 'cafe' }] },
+            { name: 'paths', type: 'polylines', tags: [{ key: 'highway' }] },
+            { name: 'parks', type: 'polygons', tags: [{ key: 'leisure', value: 'park' }] },
+        ],
+        ...fields,
+    } as DataSourceSpec;
+}
+
+/**
+ * Answers the page's Overpass API requests: the query of a source's tag sets with `answer`, any other (the coastline
+ * query) with no elements. Returns the queries the page sends, in the order it sends them, as they come. autk-db asks the
+ * API's status for a free slot before each query; an answer that is not ok lets it go on at once.
+ */
+async function answerOverpass(page: Page, answer: object): Promise<string[]> {
+    const queries: string[] = [];
+    const headers = { 'access-control-allow-origin': '*' };
+    await page.route('https://overpass-api.de/api/status', (route) => route.fulfill({ status: 404, headers, body: '' }));
+    await page.route('https://overpass-api.de/api/interpreter', (route) => {
+        const query = decodeURIComponent((route.request().postData() ?? '').replace(/^data=/, ''));
+        queries.push(query);
+        const body = query.includes('->.tagHits') ? answer : { elements: [] };
+        return route.fulfill({ status: 200, headers, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+    return queries;
+}
+
+/** The value at `path` of each of the first `count` features of `table`. */
+function valuesOf(page: Page, table: string, count: number, path: string): Promise<unknown[]> {
+    return page.evaluate(async ({ table, count, path }) => {
+        const values: unknown[] = [];
+        for (let i = 0; i < count; i++) values.push(await window.valueAt(table, i, path));
+        return values;
+    }, { table, count, path });
+}
+
+test('loads the features each tag set chooses from Overpass, one table of one geometry type a set', async ({ page }) => {
+    const queries = await answerOverpass(page, TAGGED);
+    const { tables } = await runSpec(page, {
+        data: [taggedSource()],
+        map: { layerRefs: [{ dataRef: 'osm_parks_polygons' }, { dataRef: 'osm_paths_polylines' }, { dataRef: 'osm_cafes_points' }] },
+    });
+    expect(queries.filter((query) => query.includes('->.tagHits')), 'one query for the tag sets').toHaveLength(1);
+    // A source with tag sets and no layers makes the tables of its sets alone.
+    expect(Object.keys(tables).sort()).toEqual(['osm_cafes_points', 'osm_parks_polygons', 'osm_paths_polylines']);
+    // The two cafes, not the bench, whose amenity is another. Each feature's properties are its tags.
+    expect(tables.osm_cafes_points.features).toBe(2);
+    expect((await valuesOf(page, 'osm_cafes_points', 2, 'name')).sort()).toEqual(['Cafe One', 'Cafe Two']);
+    expect(tables.osm_paths_polylines.features).toBe(1);
+    expect(await valuesOf(page, 'osm_paths_polylines', 1, 'highway')).toEqual(['footway']);
+    expect(tables.osm_parks_polygons.features).toBe(1);
+    expect(await valuesOf(page, 'osm_parks_polygons', 1, 'name')).toEqual(['Pocket Park']);
+    // A map draws each table as its geometry type.
+    expect((await mapLayers(page)).map((layer) => [layer.id, layer.type])).toEqual([
+        ['osm_parks_polygons', 'polygons'], ['osm_paths_polylines', 'polylines'], ['osm_cafes_points', 'points'],
+    ]);
+});
+
+test('queries Overpass again with forceRefresh, and reads the answer the browser cached without it', async ({ page }) => {
+    const queries = await answerOverpass(page, TAGGED);
+    // The queries sent by the end of each run: a first run, the same spec again, then with forceRefresh.
+    const sent: number[] = [];
+    for (const fields of [{}, {}, { forceRefresh: true }]) {
+        const { tables } = await runSpec(page, { data: [taggedSource(fields)] });
+        expect(tables.osm_cafes_points?.features, 'the same tables each run').toBe(2);
+        sent.push(queries.length);
+    }
+    expect(sent[0]).toBeGreaterThan(0);
+    expect(sent[1], 'the second run reads the cached answer').toBe(sent[0]);
+    expect(sent[2], 'forceRefresh queries the API again').toBe(2 * sent[0]);
+});
+
+test('draws and plots an OSM table as one feature per OSM element with osmElements, and row by row without it', async ({ page }) => {
+    await runSpec(page, {
+        data: [{
+            type: 'osm', outputTableName: 'box', pbfFileUrl: '/data/lower_mnt.osm.pbf', queryArea: { bbox: BOX },
+            autoLoadLayers: { layers: ['roads', 'buildings'] },
+        } as DataSourceSpec],
+        map: {
+            layerRefs: [
+                { dataRef: 'box_buildings', title: 'Building parts', osmElements: true },
+                { dataRef: 'box_roads', title: 'Road elements', osmElements: true },
+                { dataRef: 'box_roads', title: 'Road rows' },
+            ],
+        },
+        plot: { dataRef: 'box_roads', mark: 'table', axis: ['osm_type', 'osm_id', 'highway'], osmElements: true },
+    });
+    const drawn = (layerId: string) => page.evaluate((id) => window.drawnRows('map0', id), layerId);
+    // Each road element is a way, with its id and its tags.
+    const elements = await drawn('Road elements');
+    expect(elements.length).toBeGreaterThan(0);
+    expect(elements.filter((row) => row?.osm_type !== 'way' || !Number.isInteger(row?.osm_id) || typeof row?.highway !== 'string')).toEqual([]);
+    // The same table drawn row by row, from an export of its own: each row holds its tags, and no OSM id.
+    const rows = await drawn('Road rows');
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.filter((row) => row == null || 'osm_id' in row || typeof row.highway !== 'string')).toEqual([]);
+    // A building's parts are drawn as elements of their own, each naming its building.
+    const parts = await drawn('Building parts');
+    expect(parts.length).toBeGreaterThan(0);
+    expect(parts.filter((row) => !['way', 'relation'].includes(String(row?.osm_type)) || row?.building_id == null)).toEqual([]);
+    // The plot draws a row per road element.
+    const plotted = await page.evaluate(() => [...document.querySelectorAll('#plot tr.autkMark')]
+        .map((row) => (row as Element & { __data__?: { osm_id?: number } }).__data__?.osm_id));
+    const ascending = (ids: unknown[]) => ids.map(Number).sort((a, b) => a - b);
+    expect(ascending(plotted)).toEqual(ascending(elements.map((row) => row?.osm_id)));
+    await expectDrawn(page, 'map0');
+});
+
+test('refuses tag sets with a PBF extract, naming the source', async ({ page }) => {
+    // autk-db reads tag sets from the Overpass API only, and refused them with a PBF extract without naming the source.
+    await expect(runSpec(page, { data: [taggedSource({ pbfFileUrl: '/data/lower_mnt.osm.pbf' })] }))
+        .rejects.toThrow('OSM source "osm": tagSets are read from the Overpass API only, so a source with pbfFileUrl cannot take them.');
+});
+
 /** A GeoJSON source of one polygon whose coordinates are declared as EPSG:4326 degrees. */
 function onePolygon(name: string, ring: number[][]): DataSourceSpec {
     return {
@@ -1222,6 +1364,97 @@ test('accepts useCentroid on a heatmap', async ({ page }) => {
     expect((await heatmapLayer(page)).finite).toEqual(byDefault.finite);
 });
 
+test('builds a heatmap band with normalize, which autk-db 4.1.1 draws from the raw counts', async ({ page }) => {
+    // This test encodes autk-db 4.1.1. urban-toolkit/autark#132 rescales a normalized band from 0 to 1 and adds _norm to
+    // its label; once an autk-db with it is released, the `latest` leg fails here, and the test moves to those values.
+    const [neighborhoods, noise, source] = heatmapGeojson.data!;
+    const heatmap = source as HeatmapSourceSpec;
+    await runSpec(page, heatmapGeojson);
+    const raw = (await heatmapLayer(page)).finite;
+    await runSpec(page, {
+        ...heatmapGeojson,
+        data: [neighborhoods, noise, { ...heatmap, groupBy: heatmap.groupBy!.map((group) => ({ ...group, normalize: true })) }],
+    });
+    const normalized = (await heatmapLayer(page)).finite;
+    expect(Math.max(...raw), 'the busiest cell counts many complaints').toBeGreaterThan(1);
+    expect(normalized).toEqual(raw);
+});
+
+test('saves the rows of a sql source as a table, drawn as its layerType says, or plotted without one', async ({ page }) => {
+    const { tables } = await runSpec(page, {
+        data: [
+            area,
+            zones,
+            { type: 'sql', outputTableName: 'high', query: "SELECT * FROM zones WHERE CAST(properties->>'v' AS INTEGER) >= 20", layerType: 'polygons' },
+            { type: 'sql', outputTableName: 'zone_values', query: "SELECT CAST(properties->>'id' AS INTEGER) AS id, CAST(properties->>'v' AS INTEGER) AS v FROM zones" },
+        ],
+        map: { layerRefs: [{ dataRef: 'zones' }, { dataRef: 'high', title: 'High', color: '#d62728' }] },
+        plot: { dataRef: 'zone_values', mark: 'bar', axis: ['id', 'v'] },
+    });
+    // The two zones the query keeps, drawn as polygons on the map.
+    expect(tables.high.features).toBe(2);
+    expect((await page.evaluate(() => window.drawnRows('map0', 'High'))).map((row) => Number(row?.v)).sort((a, b) => a - b)).toEqual([20, 30]);
+    expect((await layerById(page)).High.type).toBe('polygons');
+    // A table without a layer type is not listed in data, and a plot draws its rows.
+    expect(tables.zone_values).toBeUndefined();
+    const bars = await page.evaluate(() => [...document.querySelectorAll('#plot rect.autkMark')]
+        .map((bar) => (bar as Element & { __data__?: { id?: number; v?: number } }).__data__)
+        .map((datum) => `${datum?.id} ${datum?.v}`));
+    expect(bars.sort()).toEqual(['0 0', '1 10', '2 20', '3 30']);
+
+    // autk-db runs a SELECT only, and the run names the source it refused.
+    await expect(runSpec(page, { data: [area, zones, { type: 'sql', outputTableName: 'gone', query: 'DROP TABLE zones' }] }))
+        .rejects.toThrow('SQL source "gone": Only SELECT queries are allowed for raw queries.');
+});
+
+test('replaces and updates the rows of a table with an update source, and the map and the plot draw them as they are now', async ({ page }) => {
+    /** Each bar of the plot, as its two axes' values. */
+    const bars = (axes: [string, string]) => page.evaluate((axes) => [...document.querySelectorAll('#plot rect.autkMark')]
+        .map((bar) => (bar as Element & { __data__?: Record<string, unknown> }).__data__ ?? {})
+        .map((datum) => `${datum[axes[0]]} ${datum[axes[1]]}`)
+        .sort(), axes);
+
+    // A table without a geometry, updated by month: February changes, and April, which matches no row, is added.
+    const sales: DataSourceSpec = { type: 'csv', outputTableName: 'sales', csvObject: [['month', 'total'], ['Jan', 3], ['Feb', 5], ['Mar', 2]] };
+    const salesPlot: PlotSpec = { dataRef: 'sales', mark: 'bar', axis: ['month', 'total'] };
+    await runSpec(page, {
+        data: [sales, { type: 'update', dataRef: 'sales', strategy: 'update', idColumn: 'month', jsonObject: [{ month: 'Feb', total: 9 }, { month: 'Apr', total: 4 }] }],
+        plot: salesPlot,
+    });
+    expect(await bars(['month', 'total'])).toEqual(['Apr 4', 'Feb 9', 'Jan 3', 'Mar 2']);
+    await runSpec(page, { data: [sales, { type: 'update', dataRef: 'sales', strategy: 'replace', jsonObject: [{ month: 'May', total: 7 }] }], plot: salesPlot });
+    expect(await bars(['month', 'total'])).toEqual(['May 7']);
+
+    // A table with a geometry, updated by a property with a feature of its own export, whose coordinates are the
+    // workspace's: zone 2 takes the value 99.
+    await runSpec(page, { data: [area, zones] });
+    const exported = await page.evaluate(async () => (await window.grammar.data.zones).features);
+    const changed = exported.filter((feature) => feature.properties?.id === 2).map((feature) => ({ ...feature, properties: { ...feature.properties, v: 99 } }));
+    expect(changed).toHaveLength(1);
+    await runSpec(page, {
+        data: [area, zones, { type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'properties.id', geojsonObject: { type: 'FeatureCollection', features: changed } } as DataSourceSpec],
+        map: { layerRefs: [{ dataRef: 'zones' }] },
+        plot: { dataRef: 'zones', mark: 'bar', axis: ['id', 'v'] },
+    });
+    // The map draws the new value, and so does the plot, which no longer reads the rows the GeoJSON source loaded.
+    expect((await page.evaluate(() => window.drawnRows('map0', 'zones'))).map((row) => `${row?.id} ${row?.v}`).sort()).toEqual(['0 0', '1 10', '2 99', '3 30']);
+    expect(await bars(['id', 'v'])).toEqual(['0 0', '1 10', '2 99', '3 30']);
+
+    // autk-db's refusal names the table.
+    await expect(runSpec(page, { data: [area, zones, { type: 'update', dataRef: 'nowhere', strategy: 'replace', jsonObject: [{ v: 1 }] }] }))
+        .rejects.toThrow('Update of "nowhere": Table nowhere not found.');
+});
+
+test('drops a table with a drop source, so data no longer lists it and a map no longer finds it', async ({ page }) => {
+    const dropped: UrbanSpec = { data: [area, zones, blocks, { type: 'drop', dataRef: 'blocks' }] };
+    const { tables } = await runSpec(page, { ...dropped, map: { layerRefs: [{ dataRef: 'zones' }] } });
+    expect(Object.keys(tables).sort()).toEqual(['area', 'zones']);
+    await expect(runSpec(page, { ...dropped, map: { layerRefs: [{ dataRef: 'blocks' }] } })).rejects.toThrow('Table blocks not found.');
+    // A drop of a table the workspace does not hold is refused, rather than passed over.
+    await expect(runSpec(page, { data: [area, zones, { type: 'drop', dataRef: 'block' }] }))
+        .rejects.toThrow('Drop of "block": the default workspace holds no table of that name.');
+});
+
 test('sets the radius of a points layer with pointSize', async ({ page }) => {
     const points = { type: 'MultiPoint' as const, coordinates: [[-74.0, 40.7], [-73.99, 40.71]] };
     await runSpec(page, {
@@ -1252,6 +1485,33 @@ test('turns the camera around the point it looks at', async ({ page }) => {
     // Bearing 90 looks east, so the eye is west of the point.
     expect(after.eye[0] - after.lookAt[0]).toBeCloseTo(-distance * Math.sin(Math.PI / 3), 3);
     expect(after.eye[1]).toBeCloseTo(after.lookAt[1], 3);
+});
+
+test("keeps the camera's up direction across its line of sight at any pitch below 90, and refuses a pitch of 90", async ({ page }) => {
+    const spec = (camera: CameraSpec): UrbanSpec => ({ data: [area, zones], map: { camera, layerRefs: [{ dataRef: 'zones' }] } });
+    const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const unit = (a: number[]) => a.map((value) => value / Math.sqrt(dot(a, a)));
+    for (const pitch of [0, 55, 89.9]) {
+        await runSpec(page, spec({ zoom: 12, pitch, bearing: 30 }));
+        const view = await page.evaluate(() => {
+            const camera = window.grammar.maps[0].camera;
+            return {
+                eye: camera.getEye(), lookAt: camera.getLookAt(), up: camera.getUp(), fovy: camera.getFovyRadians(),
+                center: camera.getWorldRayDirection(0.5, 0.5), top: camera.getWorldRayDirection(0.5, 1),
+            };
+        });
+        // autk-map's tilt, pan and zoom at the cursor move along the up direction, and take it to be across the line of
+        // sight. Up to 5.0.0 it lay flat, along the bearing, so at a pitch of 55 it leaned 55 degrees into the line of sight.
+        const sight = unit(view.lookAt.map((value, i) => value - view.eye[i]));
+        expect(Math.abs(dot(unit(view.up), sight)), `pitch ${pitch}: up across the line of sight`).toBeLessThan(1e-5);
+        expect(view.up[2], `pitch ${pitch}: up toward the sky`).toBeGreaterThanOrEqual(0);
+        // So the ray through the top of the view, which a zoom there follows, leaves half the field of view above the
+        // ray through its center (about 10 degrees rather than 22.5 at a pitch of 55 with the up lying flat).
+        expect(Math.acos(Math.min(1, dot(unit(view.top), unit(view.center)))), `pitch ${pitch}: the top ray`).toBeCloseTo(view.fovy / 2, 4);
+    }
+    // At 90 the eye would sit on the ground, edge-on to the flat layers, and the map could not pan.
+    await expect(runSpec(page, spec({ zoom: 12, pitch: 90 })))
+        .rejects.toThrow('Map 0: camera.pitch must be at least 0 and less than 90 degrees, not 90');
 });
 
 test('draws the second run of a reused grammar from its own table, though the first run loaded a GeoJSON table of that name', async ({ page }) => {
@@ -1342,6 +1602,56 @@ test('keeps two areas in two workspaces, each with its own extent and its own ma
 
     // `data` lists the default workspace's tables, which are none here.
     expect(await page.evaluate(() => Object.keys(window.grammar.data))).toEqual([]);
+});
+
+/** A point given in degrees, in Web Mercator (EPSG:3857) meters, on its sphere. */
+function webMercator(lon: number, lat: number): [number, number] {
+    const a = 6378137;
+    return [(a * lon * Math.PI) / 180, a * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360))];
+}
+
+test('stores the tables of each workspace in the CRS and on the grid its workspaces entry sets', async ({ page }) => {
+    // The default workspace in Web Mercator on a 10 m grid, "web" in Web Mercator on autk-db's 1 cm grid, and "plain",
+    // which has no entry, as autk-db keeps a workspace: in World Mercator.
+    const into = (workspace: string, source: DataSourceSpec) => ({ ...source, workspace }) as DataSourceSpec;
+    await runSpec(page, {
+        workspaces: [
+            { coordinateFormat: 'EPSG:3857', precisionGrid: 10 },
+            { name: 'web', coordinateFormat: 'EPSG:3857', precisionGrid: 0.01 },
+        ],
+        data: [area, zones, into('web', area), into('plain', area)],
+        map: [
+            { layerRefs: [{ dataRef: 'zones' }] },
+            { workspace: 'web', layerRefs: [{ dataRef: 'area' }] },
+            { workspace: 'plain', layerRefs: [{ dataRef: 'area' }] },
+        ],
+    });
+
+    // The default workspace's zones, in Web Mercator meters, each coordinate on the 10 m grid (autk-db's default grid,
+    // 1 cm, would leave them up to 5 m off it).
+    const extents = await page.evaluate(() => window.featureExtents('zones'));
+    expect(extents).toHaveLength(4);
+    expect(extents.flat().filter((value) => Math.abs(value - 10 * Math.round(value / 10)) > 1e-6), 'coordinates off the 10 m grid').toEqual([]);
+    const side = (i: number, pick: (...values: number[]) => number) => pick(...extents.map((extent) => extent[i]));
+    const [west, south] = webMercator(-73.99, 40.75);
+    const [east, north] = webMercator(-73.975, 40.753);
+    [[side(0, Math.min), west], [side(1, Math.min), south], [side(2, Math.max), east], [side(3, Math.max), north]]
+        .forEach(([actual, expected], i) => expect(Math.abs(actual - expected), `zones extent ${i}, in meters`).toBeLessThan(6));
+
+    // A map's origin is the middle of its first layer's extent: area's, in Web Mercator in "web" and in World Mercator,
+    // autk-db's default, in "plain". The two lie about 33 km apart at this latitude.
+    const middle = (project: (lon: number, lat: number) => [number, number]) => {
+        const [x0, y0] = project(-74.0, 40.735);
+        const [x1, y1] = project(-73.96, 40.775);
+        return [(x0 + x1) / 2, (y0 + y1) / 2];
+    };
+    const origins = await page.evaluate(() => window.grammar.maps.map((map) => [...map.layerManager.origin]));
+    expect(origins).toHaveLength(3);
+    const expected: Array<[string, number[], number[]]> = [['web', origins[1], middle(webMercator)], ['plain', origins[2], middle(worldMercator)]];
+    for (const [name, origin, [x, y]] of expected) {
+        expect(Math.abs(origin[0] - x), `${name} origin x`).toBeLessThan(2);
+        expect(Math.abs(origin[1] - y), `${name} origin y`).toBeLessThan(2);
+    }
 });
 
 // The gallery examples of the keys 5.0.0 adds, each run as the gallery runs it, and checked for what it draws or computes.
@@ -1665,4 +1975,20 @@ test('counts the parks near each cell of heatmap-centroids from their edges, as 
     const sum = (counts: number[]) => counts.reduce((total, count) => total + count, 0);
     expect(sum(fromEdges)).toBeGreaterThan(sum(fromCentroids));
     expect(fromEdges).not.toEqual(fromCentroids);
+});
+
+test('maps the ten neighborhoods of sql-source with the most noise complaints, which its query selects', async ({ page }) => {
+    const { tables } = await run(page, 'sql-source');
+    expect(tables.noisiest.features).toBe(10);
+    const { all, top } = await page.evaluate(async () => ({
+        all: (await window.grammar.data.neighborhoods).features.map((feature) => Number(feature.properties?.sjoin?.count?.noise ?? 0)),
+        top: (await window.grammar.data.noisiest).features.map((feature) => Number(feature.properties?.complaints)),
+    }));
+    // The query's ten rows hold the ten greatest counts the join wrote, each under the name its SELECT gives it.
+    const descending = (counts: number[]) => [...counts].sort((a, b) => b - a);
+    expect(descending(top)).toEqual(descending(all).slice(0, 10));
+    expect(top.every((count) => count > 0)).toBe(true);
+    // The map colors them by that count, over the neighborhoods drawn in gray.
+    expect((await layerById(page))['Noise complaints, the ten noisiest']).toMatchObject({ type: 'polygons', isColorMap: true, interpolator: 'interpolateReds' });
+    await expectDrawn(page, 'map0');
 });

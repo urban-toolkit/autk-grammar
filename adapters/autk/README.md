@@ -35,15 +35,18 @@ Each entry of `data` loads or builds one table, in order. Its `type` selects its
 
 | `type` | Fields | Table |
 |---|---|---|
-| `osm` | `queryArea`, `pbfFileUrl`, `autoLoadLayers` | OpenStreetMap data for an area, from Overpass or a `.osm.pbf` extract (see [OpenStreetMap areas](#openstreetmap-areas)). `autoLoadLayers.layers` splits it into one table per layer, named `<outputTableName>_<layer>`. |
+| `osm` | `queryArea`, `pbfFileUrl`, `autoLoadLayers`, `tagSets` | OpenStreetMap data for an area, from Overpass or a `.osm.pbf` extract (see [OpenStreetMap areas](#openstreetmap-areas)). `autoLoadLayers.layers` splits it into one table per layer, named `<outputTableName>_<layer>`, and [`tagSets`](#tagsets) adds a table for each set of features chosen by their tags. |
 | `csv` | `csvFileUrl` or `csvObject`, `delimiter`, `geometryColumns` | The rows of a CSV file, or of arrays whose first row names the columns. |
 | `json` | `jsonFileUrl` or `jsonObject`, `geometryColumns` | The rows of a JSON array. |
 | `geojson` | `geojsonFileUrl` or `geojsonObject`, `coordinateFormat`, `layerType` | A FeatureCollection. `layerType` sets how a map draws it, for example `polylines`, or `buildings` for polygons; without it, autk-db reads it from the first feature with a geometry. A feature whose geometry is null is a row without one: a map draws nothing for it, and a plot counts it. |
 | `geotiff` | `geotiffFileUrl`, `coordinateFormat`, `maxRasterCells`, `resampleMethod` | A raster read from a GeoTIFF file. |
 | `heatmap` | `joinDataRef`, `near`, `grid`, `groupBy` | A raster grid over the workspace's extent, whose cells aggregate the rows of another table. |
 | `join` | `dataRef`, `joinDataRef`, `near`, `groupBy` | No new table: it joins the rows of `joinDataRef` onto the features of `dataRef`, in place. |
+| `sql` | `query`, `layerType` | The rows of a SQL query over the workspace's tables (see [`sql` sources](#sql-sources)). |
+| `update` | `dataRef`, `strategy`, `idColumn`, `geojsonObject` or `jsonObject` | No new table: it replaces or changes the rows of `dataRef` (see [`update` sources](#update-sources)). |
+| `drop` | `dataRef` | No new table: it drops `dataRef` (see [`drop` sources](#drop-sources)). |
 
-Every source but `join` names its table with `outputTableName`, and every source takes a `workspace` (see [Workspaces](#workspaces)).
+Every source but `join`, `update` and `drop` names its table with `outputTableName`, and every source takes a `workspace` (see [Workspaces](#workspaces)).
 
 A `geotiff` source:
 
@@ -78,11 +81,104 @@ await grammar.run({
 });
 ```
 
+### Heatmap `normalize`
+
+An entry of a heatmap's `groupBy` with `normalize: true` asks for its band's values rescaled from 0 to 1 across the grid's cells, as a join's `normalize` rescales a value across the features. It needs an autk-db with urban-toolkit/autark#132, which also adds `_norm` to the band's label, so a layer names it as `<aggregateFn>.<joinDataRef>_norm`. autk-db 4.1.1 builds the band from the values as they are, under the label it would have without `normalize`. A layer can also name a band by its id, `band_1`, `band_2` and so on, one per entry of `groupBy`, in order.
+
+```ts
+{ type: 'heatmap', outputTableName: 'heat', joinDataRef: 'noise', near: { distance: 1000 }, grid: { rows: 20, columns: 20 },
+  groupBy: [{ column: 'Unique Key', aggregateFn: 'count', normalize: true }] }
+```
+
+### `sql` sources
+
+A `sql` source saves the rows of a query over the tables of its workspace as a new table, `outputTableName`:
+
+| Field | Effect |
+|---|---|
+| `query` | A `SELECT`, or a `WITH` query that ends in one, in DuckDB's SQL, naming the workspace's tables by their names. autk-db refuses any other statement, and any query in which `insert`, `update`, `delete`, `create`, `alter`, `drop`, `truncate` or `replace` appears as a word, even inside a string; the run's message names the source. |
+| `layerType` | How a map draws the new table. The query then returns its geometry in a column named `geometry`, as the workspace's tables hold it, in the workspace's CRS. Without it, the table has no layer type: a plot draws its rows, but a map does not draw it and `grammar.data` does not list it. |
+
+A GeoJSON table keeps each feature's properties in a JSON column, `properties`, which `properties->>'name'` reads as text; a CSV or JSON table keeps a column per field. A query that returns `properties` gives each feature those properties; otherwise each column but `geometry` becomes a property. Saving under a table's own name replaces it.
+
+```ts
+await grammar.run({
+  data: [
+    { type: 'geojson', outputTableName: 'neighborhoods', geojsonFileUrl: 'neighborhoods.geojson' },
+    { type: 'csv', outputTableName: 'noise', csvFileUrl: 'noise.csv', geometryColumns: { latColumnName: 'Latitude', longColumnName: 'Longitude' } },
+    { type: 'join', dataRef: 'neighborhoods', joinDataRef: 'noise', groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }] },
+    {
+      type: 'sql',
+      outputTableName: 'noisiest',
+      query: "SELECT properties->>'ntaname' AS name, CAST(properties->'sjoin'->'count'->>'noise' AS INTEGER) AS complaints, geometry FROM neighborhoods ORDER BY complaints DESC NULLS LAST LIMIT 10",
+      layerType: 'polygons',
+    },
+  ],
+  map: { layerRefs: [{ dataRef: 'neighborhoods', color: '#d9d9d9' }, { dataRef: 'noisiest', getFnv: 'complaints' }] },
+});
+```
+
+### `update` sources
+
+An `update` source replaces or changes the rows of a table already loaded, `dataRef`, with rows given in the spec:
+
+| Field | Effect |
+|---|---|
+| `strategy` | `replace` swaps every row of the table for the given rows. `update` changes the rows whose `idColumn` value a given row has: in a table with a geometry, each takes the given row's geometry and properties, and no row is added; in a table without one, the given rows replace them, and those that match no row are added. |
+| `idColumn` | With `update`, the column that matches a given row to the table's rows: a column such as `month`, or a feature property as `properties.<name>`. |
+| `geojsonObject` | The rows of a table with a geometry, as a FeatureCollection. autk-db stores their coordinates as they come, so they are in the workspace's CRS, as `grammar.data` gives a table's features. |
+| `jsonObject` | The rows of a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`, as an array of objects. |
+
+A source gives its rows in `geojsonObject` or in `jsonObject`, not both. The maps and plots after it draw the table's rows as they are now. The run's message names the table when autk-db refuses an update.
+
+```ts
+await grammar.run({
+  data: [
+    { type: 'csv', outputTableName: 'sales', csvObject: [['month', 'total'], ['Jan', 3], ['Feb', 5]] },
+    { type: 'update', dataRef: 'sales', strategy: 'update', idColumn: 'month', jsonObject: [{ month: 'Feb', total: 9 }, { month: 'Mar', total: 4 }] },
+  ],
+  plot: { dataRef: 'sales', mark: 'bar', axis: ['month', 'total'] },  // Jan 3, Feb 9, Mar 4
+});
+```
+
+### `drop` sources
+
+A `drop` source drops a table, `dataRef`, from its workspace: the sources, compute passes, maps and plots after it no longer find it, and `grammar.data` no longer lists it. It suits a table a spec needs only on the way, such as the rows a join aggregates. The run refuses a drop of a table the workspace does not hold, with a message that names the table.
+
+```ts
+data: [
+  { type: 'geojson', outputTableName: 'neighborhoods', geojsonFileUrl: 'neighborhoods.geojson' },
+  { type: 'csv', outputTableName: 'noise', csvFileUrl: 'noise.csv', geometryColumns: true },
+  { type: 'join', dataRef: 'neighborhoods', joinDataRef: 'noise', groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }] },
+  { type: 'drop', dataRef: 'noise' },
+],
+```
+
 ### Workspaces
 
 A workspace is an isolated set of tables with its own extent. The first source loaded into a workspace sets its extent, and later sources are cut to it, so two areas that must not clip each other go in two workspaces. A table is found by its name inside its workspace, so two workspaces may hold tables of the same name.
 
 `workspace` names one, on a source (where its table goes), a compute pass (where it reads and writes), a map or a plot (where it reads its tables). An entry without one uses the default workspace.
+
+### `workspaces`
+
+A spec's `workspaces` sets how a workspace stores its tables, one entry per workspace, before the first source loads:
+
+| Field | Effect |
+|---|---|
+| `name` | The workspace, by the name its entries give as their `workspace`. Without it, the default workspace. |
+| `coordinateFormat` | The CRS the workspace stores its tables in, as an EPSG string such as `EPSG:3857`. Each source is transformed to it as it loads, and its maps draw in its units. autk-db's default is `EPSG:3395`, World Mercator, in meters. |
+| `precisionGrid` | The grid every stored coordinate is rounded to, in the CRS's units, greater than 0. autk-db's default is 0.01, a centimeter in World Mercator. A geometry the grid collapses is refused as it loads. |
+
+Both fields are required, and a run refuses two entries for one workspace. A workspace without an entry keeps autk-db's defaults. The lengths given in workspace units are in the CRS's units: a `near.distance`, a layer's `width`, a camera's `zoom`. A layer's `pointSize`, in meters, is converted for World Mercator and Web Mercator, and read as planar units in any other CRS.
+
+```ts
+await grammar.run({
+  workspaces: [{ coordinateFormat: 'EPSG:3857', precisionGrid: 1 }],  // the default workspace, in Web Mercator to the meter
+  data: [{ type: 'geojson', outputTableName: 'parcels', geojsonFileUrl: 'parcels.geojson' }],
+  map: { layerRefs: [{ dataRef: 'parcels' }] },
+});
+```
 
 ## OpenStreetMap areas
 
@@ -106,6 +202,58 @@ await grammar.run({
   }],
   map: { layerRefs: [{ dataRef: 'downtown_roads' }, { dataRef: 'downtown_buildings' }] },
 });
+```
+
+### `tagSets`
+
+An `osm` source's `tagSets` choose features by their tags. Each set becomes a table of one geometry type, named `<outputTableName>_<name>_<type>` and cut to the source's area. Tag sets are read from the Overpass API only: a source with `pbfFileUrl` cannot take them, and the run refuses one that does, with a message that names the source.
+
+| Field | Effect |
+|---|---|
+| `name` | Names the set's table: a lowercase letter, then up to 31 lowercase letters, digits or `_`. No two sets of a source share a name. |
+| `type` | The table's geometry: `points`, the tagged nodes; `polylines`, the open ways and the ways tagged as lines (`highway`, `barrier`, `railway`, `waterway`, or `area=no`); `polygons`, the other closed ways and the multipolygon relations. |
+| `tags` | 1 to 64 tags, each `{ key, value }`: a feature is in the set when it has any one of them. Without `value`, the key with any value matches. |
+
+A source takes up to 8 sets, and may leave out `autoLoadLayers` to load its sets alone. A set that matches no feature in the area makes no table. Each feature's properties are its tags.
+
+```ts
+await grammar.run({
+  data: [{
+    type: 'osm',
+    outputTableName: 'downtown',
+    queryArea: { bbox: [-74.0125, 40.705, -74.008, 40.7085] },
+    tagSets: [
+      { name: 'cafes', type: 'points', tags: [{ key: 'amenity', value: 'cafe' }] },
+      { name: 'paths', type: 'polylines', tags: [{ key: 'highway', value: 'footway' }, { key: 'highway', value: 'path' }] },
+    ],
+  }],
+  map: { layerRefs: [{ dataRef: 'downtown_paths_polylines' }, { dataRef: 'downtown_cafes_points', color: '#8c564b' }] },
+});
+```
+
+### `forceRefresh`
+
+autk-db keeps the Overpass API's answer for an `osm` source in the browser's cache for 24 hours, by its area, its layers and its tag sets, and a later run of the same source reads it from there. `forceRefresh: true` queries the API again, and caches the new answer. A source with `pbfFileUrl` reads its file each time, and ignores it.
+
+```ts
+{ type: 'osm', outputTableName: 'loop', queryArea: { geocodeArea: 'Chicago', areas: ['Loop'] }, autoLoadLayers: { layers: ['roads'] }, forceRefresh: true }
+```
+
+### `autoLoadLayers.coordinateFormat`
+
+The CRS of an `osm` source's coordinates, as an EPSG string. It defaults to `EPSG:4326`, the degrees the Overpass API and OpenStreetMap's extracts give, so a source sets it only for data in another CRS. The layers and the tag sets are read in it, and stored in the workspace's CRS.
+
+```ts
+{ type: 'osm', outputTableName: 'area', pbfFileUrl: 'area-nad83.osm.pbf', queryArea: { bbox: [-74.02, 40.70, -74.00, 40.72] }, autoLoadLayers: { layers: ['roads'], coordinateFormat: 'EPSG:4269' } }
+```
+
+### `osmElements`
+
+A map layer or a plot with `osmElements: true` reads an OpenStreetMap layer table as one feature per OSM element it was built from, rather than one per row. Each feature's properties are the element's tags, its `osm_type` (`node`, `way` or `relation`) and its `osm_id`; in a buildings table, whose parts are elements of their own, also the `building_id` of its building. A part takes only its own tags, so a buildings layer draws only the parts whose tags give their height. A table that is not an OSM layer, a surface, and an OSM table an `update` source changed are read row by row, as without it.
+
+```ts
+map: { layerRefs: [{ dataRef: 'downtown_roads', osmElements: true, getFnv: 'highway', colorMapInterpolator: ColorMapInterpolator.CAT_TABLEAU10 }] },
+plot: { dataRef: 'downtown_roads', mark: 'table', axis: ['osm_id', 'highway', 'name'], osmElements: true },
 ```
 
 ## Compute
@@ -172,10 +320,10 @@ A map's `camera` moves its view from the one that fits its layers:
 | Option | Effect |
 |---|---|
 | `zoom` | The eye's distance from the point the view looks at: `10000 / 2^(zoom - 10)` workspace units, so each step halves it. Without it, the distance of the view that fits the layers. |
-| `pitch` | The tilt from straight down, from 0 to 90 degrees. |
+| `pitch` | The tilt from straight down, in degrees, at least 0 and less than 90. At 90 the eye would sit on the ground, edge-on to the flat layers, and the map could not pan, so a run refuses it. |
 | `bearing` | The compass heading the view faces, clockwise from north, from 0 to 360 degrees. |
 
-The camera turns around the point the map looks at, which the view that fits the layers sets: the eye moves on a sphere around that point, so the layers stay in view at any pitch and bearing.
+The camera turns around the point the map looks at, which the view that fits the layers sets: the eye moves on a sphere around that point, so the layers stay in view at any pitch and bearing. The view's up direction stays across its line of sight, as autk-map's own tilt leaves it, so the map's pan, tilt and zoom at the cursor carry on from the spec's view as they do from a view the user tilted.
 
 ```ts
 map: { id: 'downtown', camera: { zoom: 15, pitch: 50, bearing: 30 }, layerRefs: [{ dataRef: 'buildings' }] }
@@ -329,11 +477,11 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 
 | Export | Effect |
 |---|---|
-| `createDataAdapter(targets?, cache?)` | The data adapter. Its `resolveSource(db, source)` loads one `data` entry into an autk-db database, a new one when `db` is undefined, and returns it. `cache` receives each GeoJSON table and each table a join wrote. |
+| `createDataAdapter(targets?, cache?)` | The data adapter. Its `resolveWorkspaces(db, workspaces)` sets up a spec's `workspaces` before the first source loads, and its `resolveSource(db, source)` loads one `data` entry. Each takes an autk-db database, a new one when `db` is undefined, and returns it. `cache` receives each GeoJSON table and each table a join or an update wrote. |
 | `createComputeAdapter(cache?, types?)` | The compute adapter. Its `resolveCompute(db, pass)` runs one `compute` entry on the GPU. The results are kept only in `cache`, and `types` receives the layer type of each table a pass wrote under its own `outputTableName`. |
 | `enterWorkspace(db, workspace?)` | Makes an entry's workspace (the default one without a name) the one autk-db works in, and switches only when another is current. Every adapter calls it before it reads or writes an entry's tables. |
 | `tableKey(workspace, name)` | The key of a table in those caches: its name in the default workspace, `<workspace>/<name>` in another. |
-| `applyCamera(map, camera)` | Moves an `AutkMap`'s camera as a map's `camera` says, from the view that fits its layers. The map adapter calls it once the layers are loaded, before the map's first `draw()`. |
+| `applyCamera(map, camera)` | Moves an `AutkMap`'s camera as a map's `camera` says, from the view that fits its layers, and refuses a `pitch` that is not at least 0 and less than 90. The map adapter calls it once the layers are loaded, before the map's first `draw()`. |
 | `arrangeViews(spec)` | Where each view of a spec goes on the page, as its `layout` says: a grid of panes, one per view (see [Arranging the views](#arranging-the-views)). It refuses a `layout` it cannot arrange, with a sentence that names the value. |
 
 `@urban-toolkit/autk-grammar/data` exports `createDataAdapter`, `enterWorkspace` and `tableKey` with their types, as an ES module and a CommonJS one. Its code imports `@urban-toolkit/autk-db` alone, never autk-map, autk-plot, autk-compute or autk-core, so it loads where they cannot, such as Node:
@@ -342,7 +490,8 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 import { createDataAdapter } from '@urban-toolkit/autk-grammar/data';
 
 const adapter = createDataAdapter();
-let db: unknown; // the AutkDb the first source creates
+let db: unknown; // the AutkDb the first call creates
+if (spec.workspaces) db = await adapter.resolveWorkspaces(db, spec.workspaces);
 for (const source of spec.data ?? []) db = await adapter.resolveSource(db, source);
 ```
 

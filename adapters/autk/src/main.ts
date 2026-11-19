@@ -75,7 +75,8 @@ export class AutkGrammar {
     }
 
     /**
-     * The coordinate reference system used internally by the autk workspace.
+     * The coordinate reference system autk-db stores a workspace's tables in, unless the spec's `workspaces` sets
+     * another for it.
      *
      * Input data is expected in EPSG:4326 (WGS84) by default and is transformed
      * to this CRS on load. Consumers that prepare data for injection (e.g. by

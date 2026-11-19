@@ -12,6 +12,28 @@ import { DataSourceType, LayerType, ColorMapInterpolator, PlotEvent, PlotTransfo
 export type WorkspaceName = string;
 
 /**
+ * How a workspace stores its tables: the coordinate system they are kept in, and the grid their coordinates are rounded
+ * to. Read by the Autark adapter only.
+ */
+export type WorkspaceSpec = {
+    /** The workspace, by the name sources, compute passes, maps and plots give as their `workspace`. Without it, the default workspace. */
+    name?: WorkspaceName,
+    /**
+     * CRS the workspace stores its tables in, as an EPSG string such as `'EPSG:3857'`. Each source is transformed to
+     * it as it loads, its maps draw in its units, and so are the lengths given in workspace units, such as a join's
+     * `near.distance`. autk-db's default is `'EPSG:3395'`, World Mercator, in meters.
+     * @minLength 1
+     */
+    coordinateFormat: string,
+    /**
+     * Grid every stored coordinate is rounded to, in the CRS's units. autk-db's default is `0.01`, a centimeter in World
+     * Mercator. A geometry the grid collapses is refused as it loads.
+     * @exclusiveMinimum 0
+     */
+    precisionGrid: number,
+}
+
+/**
  * Fields every table-producing data source shares.
  */
 export interface TableSourceBase {
@@ -81,6 +103,12 @@ export interface HeatmapSourceSpec extends TableSourceBase {
         column: string;
         /** How the rows combine into the cell's value: any aggregate but `collect`, which lists rows, while a cell holds one value. */
         aggregateFn?: HeatmapAggregateFunction;
+        /**
+         * Rescale the band's values from 0 to 1 across the grid's cells. It needs an autk-db with
+         * urban-toolkit/autark#132, which also adds `_norm` to the band's label; autk-db 4.1.1 builds the band from the
+         * values as they are.
+         */
+        normalize?: boolean;
     }>;
     /** Grid resolution. */
     grid: {
@@ -132,16 +160,80 @@ export interface OsmBoundingBoxArea {
 }
 
 /**
+ * An OpenStreetMap tag a tag set matches: the tag `key` with the value `value`, or with any value when `value` is
+ * omitted.
+ */
+export type OsmTagFilter = {
+    /**
+     * The tag's key, such as `amenity` or `addr:street`: letters, digits, `_`, `:`, `.` and `-`, starting with a letter
+     * or a digit.
+     * @pattern ^[A-Za-z0-9][A-Za-z0-9_:.-]{0,254}$
+     */
+    key: string;
+    /**
+     * The tag's value, such as `cafe`. Without it, the key with any value matches.
+     * @minLength 1
+     * @maxLength 255
+     */
+    value?: string;
+}
+
+/**
+ * OpenStreetMap features chosen by their tags, as one table of one geometry type.
+ */
+export type OsmTagSet = {
+    /**
+     * Names the set's table, `<outputTableName>_<name>_<type>`: a lowercase letter, then up to 31 lowercase letters,
+     * digits or `_`. No two sets of a source share a name.
+     * @pattern ^[a-z][a-z0-9_]{0,31}$
+     */
+    name: string;
+    /**
+     * The geometry the table holds: `points`, the tagged nodes; `polylines`, the open ways and the ways tagged as
+     * lines (`highway`, `barrier`, `railway`, `waterway`, or `area=no`); `polygons`, the other closed ways and the
+     * multipolygon relations.
+     */
+    type: 'points' | 'polylines' | 'polygons';
+    /**
+     * The tags a feature is chosen by: it is in the set when it has any one of them.
+     * @minItems 1
+     * @maxItems 64
+     */
+    tags: OsmTagFilter[];
+}
+
+/**
  * Loads OpenStreetMap data for a named area or a box, from Overpass or from a PBF extract.
+ * @if { "required": ["pbfFileUrl"] }
+ * @then { "not": { "required": ["tagSets"], "properties": { "tagSets": { "minItems": 1 } } } }
  */
 export interface OsmDataSourceSpec extends TableSourceBase {
     type: 'osm';
     /** URL of a local or remote `.osm.pbf` extract to read instead of querying Overpass. */
     pbfFileUrl?: string;
+    /**
+     * Features chosen by their tags, each set as a table of its own, `<outputTableName>_<name>_<type>`, cut to the
+     * area. A set that matches no feature in the area makes no table. Read from the Overpass API only: a source with
+     * `pbfFileUrl` cannot take them. Read by the Autark adapter only.
+     * @maxItems 8
+     */
+    tagSets?: OsmTagSet[];
+    /**
+     * Query the Overpass API again rather than read the answer the browser cached for this area, its layers and its tag
+     * sets, which autk-db keeps for 24 hours. A source with `pbfFileUrl` reads its file each time and ignores it. Read
+     * by the Autark adapter only.
+     */
+    forceRefresh?: boolean;
     /** Split the raw OSM table into one table per layer, named `<outputTableName>_<layer>`. */
     autoLoadLayers?: {
         /** Currently ignored by both adapters. */
         dropOsmTable?: boolean;
+        /**
+         * CRS of the OpenStreetMap data's coordinates, as an EPSG string. Defaults to `'EPSG:4326'`, the degrees the
+         * Overpass API and OpenStreetMap's extracts give. The layers and the tag sets are read in it. Read by the Autark
+         * adapter only.
+         */
+        coordinateFormat?: string;
         layers: Array<LayerType>;
     };
     /** Area to load: sub-areas inside a geocoded region (`geocodeArea` with `areas`), or a box (`bbox`), not both. */
@@ -286,10 +378,79 @@ export interface GeoTiffDataSourceSpec extends TableSourceBase {
 }
 
 /**
+ * Saves the rows of a SQL query over the workspace's tables as a new table. Read by the Autark adapter only.
+ */
+export interface SqlSourceSpec extends TableSourceBase {
+    type: 'sql';
+    /**
+     * A `SELECT`, or a `WITH` query that ends in one, in DuckDB's SQL, over the tables of the source's workspace by their
+     * names. autk-db refuses any other statement, and any query in which `insert`, `update`, `delete`, `create`,
+     * `alter`, `drop`, `truncate` or `replace` appears as a word, even inside a string.
+     * @minLength 1
+     */
+    query: string;
+    /**
+     * How a map draws the new table, whose geometry must then be in a column named `geometry`, in the workspace's CRS,
+     * as the workspace's tables hold it. Without it, the table has no layer type: a plot draws its rows, while a map
+     * does not draw it and `AutkGrammar.data` does not list it.
+     */
+    layerType?: LayerType;
+}
+
+/**
+ * Replaces or changes the rows of a table already loaded, with rows given inline: a FeatureCollection for a table with
+ * a geometry, an array of objects for a table without one. Read by the Autark adapter only.
+ * @if { "required": ["geojsonObject"] }
+ * @then { "not": { "required": ["jsonObject"] }, "if": { "required": ["strategy"], "properties": { "strategy": { "const": "update" } } }, "then": { "required": ["idColumn"] } }
+ * @else { "required": ["jsonObject"], "if": { "required": ["strategy"], "properties": { "strategy": { "const": "update" } } }, "then": { "required": ["idColumn"] } }
+ */
+export interface UpdateSourceSpec {
+    type: 'update';
+    /** Workspace of the table. */
+    workspace?: WorkspaceName;
+    /** The table to change. */
+    dataRef: string;
+    /**
+     * `replace` swaps every row of the table for the given rows. `update` changes the rows whose `idColumn` value a
+     * given row has: in a table with a geometry, each takes the given row's geometry and properties, and no row is
+     * added; in a table without one, the given rows replace them, and those that match no row are added.
+     */
+    strategy: 'replace' | 'update';
+    /**
+     * With `update`, the column that matches a given row to the table's rows: a column such as `month`, or a feature
+     * property as `properties.<name>`, such as `properties.parcel_id`.
+     * @minLength 1
+     */
+    idColumn?: string;
+    /**
+     * The rows of a table with a geometry. autk-db stores their coordinates as they come, so they are in the
+     * workspace's CRS, as `AutkGrammar.data` gives a table's features.
+     */
+    geojsonObject?: InlineFeatureCollection;
+    /**
+     * The rows of a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`.
+     * @minItems 1
+     */
+    jsonObject?: Array<Record<string, unknown>>;
+}
+
+/**
+ * Drops a table, so the sources, compute passes, maps and plots after it no longer find it, and `AutkGrammar.data` no
+ * longer lists it. Read by the Autark adapter only.
+ */
+export interface DropSourceSpec {
+    type: 'drop';
+    /** Workspace of the table. */
+    workspace?: WorkspaceName;
+    /** The table to drop. */
+    dataRef: string;
+}
+
+/**
  * One entry of `data`. The `type` field selects which fields apply.
  * @discriminator type
  */
-export type DataSourceSpec = OsmDataSourceSpec | CsvDataSourceSpec | JsonDataSourceSpec | CustomDataSourceSpec | GeoTiffDataSourceSpec | HeatmapSourceSpec | JoinSourceSpec;
+export type DataSourceSpec = OsmDataSourceSpec | CsvDataSourceSpec | JsonDataSourceSpec | CustomDataSourceSpec | GeoTiffDataSourceSpec | HeatmapSourceSpec | JoinSourceSpec | SqlSourceSpec | UpdateSourceSpec | DropSourceSpec;
 
 /**
  * A color as `#rrggbb`.
@@ -419,6 +580,13 @@ export type MapLayerSpec = {
      * @minItems 1
      */
     selectFields?: string[],
+    /**
+     * Draw an OpenStreetMap layer table as one feature per OSM element it was built from, each with the element's tags,
+     * `osm_type` and `osm_id` as its properties (and `building_id` in a buildings table, whose parts are elements of
+     * their own), rather than one feature per row. A table that is not an OSM layer, a surface, and an OSM table an
+     * update changed are drawn row by row, as without it. Read by the Autark adapter only.
+     */
+    osmElements?: boolean,
     /** Dot path to the thematic value, relative to `feature.properties` (for example `tags.highway` or `compute.result`). */
     getFnv?: string,
     /** `categorical` reads the value as a string for discrete palettes; `quantitative` reads it as a number for continuous scales. Read by the deck.gl adapter; the Autark adapter ignores it. */
@@ -442,9 +610,10 @@ export type CameraSpec = {
      */
     zoom?: number,
     /**
-     * Tilt from straight down, in degrees.
+     * Tilt from straight down, in degrees, less than 90: at 90 the eye would sit on the ground, edge-on to the map's flat
+     * layers, and the map could not pan.
      * @minimum 0
-     * @maximum 90
+     * @exclusiveMaximum 90
      */
     pitch?: number,
     /**
@@ -507,6 +676,13 @@ export interface PlotBase {
     margins?: { left: number; right: number; top: number; bottom: number },
     /** `dataRef` of the map layer this plot links its selection to. A shorthand for a link in `links`. */
     mapRef?: string,
+    /**
+     * Plot an OpenStreetMap layer table as one row per OSM element it was built from, each with the element's tags,
+     * `osm_type` and `osm_id` (and `building_id` in a buildings table), rather than one row per table row. A table that
+     * is not an OSM layer, a surface, and an OSM table an update changed are plotted row by row, as without it. Read by
+     * the Autark adapter only.
+     */
+    osmElements?: boolean,
 }
 
 /**
@@ -807,6 +983,11 @@ export type UrbanSpec = {
     $schema?: string,
     /** How the host arranges the maps and plots. */
     layout?: LayoutSpec,
+    /**
+     * How workspaces store their tables, one entry per workspace, set before the first source loads. A workspace
+     * without an entry keeps autk-db's CRS and grid. Read by the Autark adapter only.
+     */
+    workspaces?: WorkspaceSpec[],
     /** Tables to load, in order. */
     data?: DataSourceSpec[],
     /** Compute passes, run in order after the data is loaded. */

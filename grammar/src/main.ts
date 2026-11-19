@@ -11,6 +11,10 @@ export function createEngine(options: EngineOptions): IEngine{
     async function run() {
         let context: unknown;
 
+        // A workspace's CRS and grid are set before any table is loaded into it.
+        if(spec.workspaces?.length && adapters.db.resolveWorkspaces)
+            context = await adapters.db.resolveWorkspaces(context, spec.workspaces);
+
         if(spec.data)
             for(const source of spec.data) {
                 context = await adapters.db.resolveSource(context, source);
