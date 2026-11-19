@@ -1684,11 +1684,10 @@ test("looks at camera.center, put in the CRS of the map's workspace, and turns t
     expect(Math.abs(webX - wx), 'x of the point looked at, in Web Mercator meters').toBeLessThan(0.01);
     expect(Math.abs(webY - wy), 'y of the point looked at, in Web Mercator meters').toBeLessThan(0.01);
 
-    // A center that is not [longitude, latitude], and one Mercator has no point for, are refused before anything draws.
+    // A center that is not [longitude, latitude] is refused before anything draws, and leaves no map on the page.
     await expect(runSpec(page, spec({ center: [-73.98, 40.75, 0] as unknown as [number, number] })))
         .rejects.toThrow('Map 0: camera.center must be [longitude, latitude] in degrees');
-    await expect(runSpec(page, spec({ center: [-73.98, 90] })))
-        .rejects.toThrow('Map 0: camera.center [-73.98, 90] has no point in EPSG:3395');
+    expect(await page.evaluate(() => window.grammar.maps.length)).toBe(0);
 });
 
 /**
@@ -1812,6 +1811,34 @@ test('stops a camera tour when the grammar is destroyed, and refuses a tour that
     expect(await page.evaluate(() => window.grammar.maps.length)).toBe(0);
     await expect(run([{ type: 'zoom', amount: 1, seconds: 0 }]))
         .rejects.toThrow('Map 0: camera.motion[0]: seconds must be a number greater than 0, not 0.');
+});
+
+test('stops a camera tour when the user drags, scrolls or presses a key on the map', async ({ page }) => {
+    // Each frame of a tour sets the camera, so a tour that played on would undo every drag and zoom the user made.
+    await runSpec(page, { data: [area, zones], map: { camera: { zoom: 12, pitch: 30 }, layerRefs: [{ dataRef: 'zones' }] } });
+    for (const kind of ['drag', 'scroll', 'key']) {
+        expect(await page.evaluate(async (input) => {
+            window.playTour('map0', [{ type: 'bearing', amount: 360, seconds: 60 }]);
+            const tour = window.tour!;
+            const { camera, canvas } = window.grammar.maps[0];
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            if (input === 'drag') {
+                canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+                document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+            } else if (input === 'scroll') {
+                canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 1, clientX: 10, clientY: 10 }));
+            } else {
+                canvas.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'x' }));
+            }
+            const settled = await Promise.race([
+                tour.done.then(() => 'stopped'),
+                new Promise((resolve) => setTimeout(() => resolve('still playing'), 5000)),
+            ]);
+            const eye = [...camera.getEye()];
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            return { settled, still: camera.getEye().every((value, i) => value === eye[i]) };
+        }, kind), kind).toEqual({ settled: 'stopped', still: true });
+    }
 });
 
 test('draws the second run of a reused grammar from its own table, though the first run loaded a GeoJSON table of that name', async ({ page }) => {

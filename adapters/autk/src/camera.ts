@@ -25,7 +25,8 @@ export function centerRefusal(center: unknown): string | undefined {
  * transform, as autk-db puts a source's coordinates there, and keeps it with `map`, so that `applyCamera(map, camera)`
  * looks at it. The map adapter calls it once a map's layers are loaded, with the map's workspace current; a host that
  * builds its own map from a spec's `map` entry calls it at the same point, after `enterWorkspace(db, map.workspace)`.
- * It refuses a center the CRS has no point for, such as a pole in Mercator.
+ * It refuses a center autk-db's transform gives no point for: an error, or a coordinate that is not a finite number.
+ * PROJ gives Mercator a finite point even at a pole, about 242,000 km from the equator.
  */
 export async function resolveCameraCenter(db: AutkDb, map: AutkMap, center: [number, number]): Promise<void> {
     const refused = centerRefusal(center);
@@ -155,6 +156,26 @@ export function tourOf(map: AutkMap): CameraTour | undefined {
     return tours.get(map);
 }
 
+/**
+ * Calls `stop` when the user drags, scrolls or presses a key on `canvas`, and returns what stops listening. autk-map
+ * hears a drag on the page, before the canvas, and stops the pointer event there, so the drag is heard on the page too.
+ */
+function onUserInput(canvas: HTMLCanvasElement | undefined, stop: () => void): () => void {
+    if (!canvas || typeof document === 'undefined') return () => {};
+    const heard = (event: Event) => {
+        if (event.target === canvas) stop();
+    };
+    const onPage = { capture: true };
+    document.addEventListener('pointerdown', heard, onPage);
+    document.addEventListener('wheel', heard, onPage);
+    canvas.addEventListener('keyup', heard);
+    return () => {
+        document.removeEventListener('pointerdown', heard, onPage);
+        document.removeEventListener('wheel', heard, onPage);
+        canvas.removeEventListener('keyup', heard);
+    };
+}
+
 /** Queues `step` on autk-core's CameraMotion, whose amounts and pans have signs of their own. */
 function queueStep(motion: CameraMotion, step: CameraMotionStep): void {
     switch (step.type) {
@@ -182,9 +203,9 @@ function queueStep(motion: CameraMotion, step: CameraMotionStep): void {
 /**
  * Plays `motion`, a camera tour, on `map` through autk-core's `CameraMotion`, from the view its camera has now, and
  * returns the tour without waiting for it. Each step takes its own `seconds`, easing in and out, and sets the camera at
- * every animation frame, so the map draws each one; a drag or a zoom of the map moves the view for good only once the
- * tour ends or is stopped. A tour played on a map stops the one it was playing. It refuses a tour `motionRefusal`
- * refuses from the map's view.
+ * every animation frame, so the map draws each one. The tour stops when the user drags, scrolls or presses a key on the
+ * map, which hands the camera to the map's own pan, tilt and zoom, and when another tour is played on the map. It
+ * refuses a tour `motionRefusal` refuses from the map's view.
  *
  * The map adapter calls it once a map is drawn, when its `camera` has a `motion`. A host that frames a map itself and
  * then turns it with `applyCamera` calls it after that turn, so the tour starts from the host's view.
@@ -197,13 +218,17 @@ export function playCameraMotion(map: AutkMap, motion: CameraMotionStep[]): Came
 
     tours.get(map)?.stop();
     let stopped = false;
-    let stop = (): void => {};
+    let settle = (): void => {};
     const stopping = new Promise<void>((resolve) => {
-        stop = () => {
-            stopped = true;
-            resolve();
-        };
+        settle = resolve;
     });
+    let unlisten = (): void => {};
+    const stop = (): void => {
+        stopped = true;
+        unlisten();
+        settle();
+    };
+    unlisten = onUserInput((map as { canvas?: HTMLCanvasElement }).canvas, stop);
     // CameraMotion cannot be stopped, so it turns a stand-in of the map's camera, which stops passing its turns on once
     // the tour is stopped: the steps it has left run to their end turning nothing.
     const standIn = new Proxy(map.camera, {
@@ -215,7 +240,8 @@ export function playCameraMotion(map: AutkMap, motion: CameraMotionStep[]): Came
     });
     const steps = new CameraMotion();
     for (const step of motion) queueStep(steps, step);
-    const tour: CameraTour = { done: Promise.race([steps.play(standIn), stopping]), stop };
+    const done = Promise.race([steps.play(standIn), stopping]).finally(() => unlisten());
+    const tour: CameraTour = { done, stop };
     tours.set(map, tour);
     return tour;
 }
