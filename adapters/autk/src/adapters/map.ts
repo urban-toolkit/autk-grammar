@@ -174,6 +174,26 @@ function applyMapColors(map: AutkMap, spec: MapSpec): void {
         map.style.setInvalidValueColor(spec.invalidValueColor as ColorHEX);
 }
 
+/** The layer types that draw each kind of geometry, and how a refusal says so. */
+const LAYER_KINDS: ReadonlyArray<{ types: readonly LayerType[]; drawn: string }> = [
+    { types: ['points'], drawn: 'a table of points is drawn as points' },
+    { types: ['polylines', 'roads'], drawn: 'a table of lines is drawn as polylines or roads' },
+    { types: ['polygons', 'surface', 'parks', 'water', 'buildings'], drawn: 'a table of polygons is drawn as polygons, surface, parks, water or buildings' },
+    { types: ['raster'], drawn: 'a raster table is drawn as raster' },
+];
+
+/**
+ * The type the map draws a layer's table as: its `layerType`, which is refused when it is not of the table's kind of
+ * geometry, else the table's own type.
+ */
+function drawnType(layerRef: MapLayerSpec, tableType: LayerType | undefined, layerId: string): LayerType {
+    const wanted = layerRef.layerType;
+    if (wanted === undefined || tableType === undefined) return (wanted ?? tableType) as LayerType;
+    const kind = LAYER_KINDS.find((candidate) => candidate.types.includes(tableType));
+    if (!kind || kind.types.includes(wanted)) return wanted;
+    throw new Error(`Layer "${layerId}": layerType "${wanted}" cannot draw the table "${layerRef.dataRef}", a ${tableType} table: ${kind.drawn}.`);
+}
+
 /** Refuses a list of feature positions that is not whole numbers from 0, as `key` of a layer. */
 function checkPositions(positions: unknown, key: string, layerId: string): void {
     if (!Array.isArray(positions) || !positions.every((position) => Number.isInteger(position) && position >= 0))
@@ -343,7 +363,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
             const name     = layerRef.dataRef;
             const layerId  = layerIdOf(layerRef);
             const key      = tableKey(spec.workspace, name);
-            const type     = (computeTypes?.get(key) ?? tableToTypeMap[name]) as LayerType;
+            const type     = drawnType(layerRef, (computeTypes?.get(key) ?? tableToTypeMap[name]) as LayerType | undefined, layerId);
             const getFnv   = layerRef.getFnv;
 
             const rawData = computeCache?.get(key) ?? (type === 'raster'

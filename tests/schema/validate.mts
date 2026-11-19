@@ -310,6 +310,8 @@ expect('layer pickedComps as strings', layer({ isPick: true, pickedComps: ['1'] 
 expect('layer pickedComps as a number', layer({ isPick: true, pickedComps: 1 }), false);
 expect('layer buildingsZeroHeight', layer({ buildingsZeroHeight: true }), true);
 expect('layer buildingsZeroHeight as a string', layer({ buildingsZeroHeight: 'yes' }), false);
+expect('layer drawn as another type', layer({ layerType: 'parks' }), true);
+expect('layer drawn as a type autk-map does not know', layer({ layerType: 'rivers' }), false);
 expect('map without its controls', { map: { ...layers, showUi: false } }, true);
 expect('map showUi as a string', { map: { ...layers, showUi: 'no' } }, false);
 const styleColors = {
@@ -461,6 +463,7 @@ const newKeys: Array<[string, string[]]> = [
     ['TerrainSpec', ['']],
     ['MapLayerSpec', ['pickedComps', 'isPick']],
     ['MapLayerSpec', ['buildingsZeroHeight']],
+    ['MapLayerSpec', ['layerType']],
     ['UrbanSpec', ['map.showUi']],
     ['UrbanSpec', ['map.style', 'map.highlightColor', 'map.invalidValueColor']],
     ['MapStyleColors', ['', 'background', 'surface', 'parks', 'water', 'roads', 'buildings', 'points', 'polylines', 'polygons']],

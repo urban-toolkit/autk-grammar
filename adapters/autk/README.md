@@ -437,6 +437,28 @@ autk-map leaves out a building part that has no height: none of `height`, `build
 map: { layerRefs: [{ dataRef: 'downtown_buildings', buildingsZeroHeight: true }] }
 ```
 
+### `layerType`
+
+A layer draws its table as the table's own type, which its source or compute pass gave it. A layer's `layerType` draws the table as another type of its kind of geometry, in that type's color of the map's style and the way autk-map draws that type:
+
+| Table | `layerType` |
+|---|---|
+| Polygons, and the surface, parks, water and buildings tables | `polygons`, `surface`, `parks`, `water`, or `buildings`, raised by each feature's height |
+| Lines, and the roads tables | `polylines`, or `roads`, each line as wide as its kind of road |
+| Points | `points` |
+| A raster | `raster` |
+
+A run refuses a type of another kind of geometry, for which autk-map would draw nothing. autk-map draws surface, parks, water and roads layers below every other layer, in that order, whatever the order of `layerRefs`.
+
+```ts
+map: {
+  layerRefs: [
+    { dataRef: 'green_space', layerType: 'parks' },          // a polygons table, in the style's parks color
+    { dataRef: 'downtown_buildings', layerType: 'polygons' }, // the footprints, flat
+  ],
+}
+```
+
 ## Plots and links
 
 A plot reads only its table's properties, so it also draws a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`.

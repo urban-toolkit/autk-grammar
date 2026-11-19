@@ -1414,6 +1414,67 @@ test('draws a GeoJSON polygon layer as parks when layerType says so', async ({ p
     expect((await page.evaluate(() => window.mapLayers('map0'))).map((layer) => layer.type)).toEqual(['parks']);
 });
 
+test("draws a layer's table as another type of its kind of geometry with layerType, and refuses a type of another kind", async ({ page }) => {
+    // A style in which each type has a color of its own, so each layer shows in the color of the type it is drawn as.
+    const palette = {
+        background: '#ffffff', surface: '#ff0000', parks: '#00ff00', water: '#0000ff', roads: '#ff00ff',
+        buildings: '#00ffff', points: '#808000', polylines: '#800080', polygons: '#008080',
+    };
+    // A row of footprints loaded as a buildings table, and a row of squares 50 m tall loaded as polygons.
+    const row = (name: string, y: number, properties: Record<string, unknown>, layerType?: 'buildings'): DataSourceSpec => ({
+        type: 'geojson', outputTableName: name, ...(layerType && { layerType }),
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [0, 1, 2].map((i) => {
+                const x = -73.99 + i * 0.004;
+                return {
+                    type: 'Feature' as const, properties: { id: i, ...properties },
+                    geometry: { type: 'Polygon' as const, coordinates: [[[x, y], [x + 0.002, y], [x + 0.002, y + 0.002], [x, y + 0.002], [x, y]]] },
+                };
+            }),
+        },
+    });
+    const footprints = row('footprints', 40.768, { height: 20 }, 'buildings');
+    const towers = row('towers', 40.739, { height: 50 });
+    await runSpec(page, {
+        data: [area, zones, blocks, lots, paths, footprints, towers],
+        map: {
+            style: palette,
+            layerRefs: [
+                { dataRef: 'zones', layerType: 'parks' },
+                { dataRef: 'blocks', layerType: 'water' },
+                { dataRef: 'lots', layerType: 'surface' },
+                { dataRef: 'paths', layerType: 'roads', width: 60 },
+                { dataRef: 'footprints', layerType: 'polygons' },
+                { dataRef: 'towers', layerType: 'buildings' },
+            ],
+        },
+    });
+    const types = Object.fromEntries((await mapLayers(page)).map((layer) => [layer.id, layer.type]));
+    expect(types).toEqual({ zones: 'parks', blocks: 'water', lots: 'surface', paths: 'roads', footprints: 'polygons', towers: 'buildings' });
+    expect(await pixelsIn(page, palette.parks, 'polygons as parks')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, palette.water, 'polygons as water')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, palette.surface, 'polygons as surface')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, palette.roads, 'lines as roads')).toBeGreaterThan(100);
+    expect(await pixelsIn(page, palette.polygons, 'buildings flat as polygons')).toBeGreaterThan(100);
+    expect(await pixelsIn(page, palette.polylines, 'no line drawn as polylines')).toBe(0);
+    // The polygons drawn as buildings rise to their heights.
+    expect(await page.evaluate(() => window.buildingTops('map0', 'towers'))).toEqual([50, 50, 50]);
+
+    // A type of another kind of geometry is refused before autk-map draws nothing for it.
+    const refused = (layerRef: MapLayerSpec, message: string) => expect(runSpec(page, {
+        data: [area, zones, paths, spots], map: { layerRefs: [layerRef] },
+    })).rejects.toThrow(message);
+    await refused({ dataRef: 'zones', layerType: 'points' },
+        'Layer "zones": layerType "points" cannot draw the table "zones", a polygons table: a table of polygons is drawn as polygons, surface, parks, water or buildings.');
+    await refused({ dataRef: 'paths', layerType: 'parks' },
+        'Layer "paths": layerType "parks" cannot draw the table "paths", a polylines table: a table of lines is drawn as polylines or roads.');
+    await refused({ dataRef: 'spots', layerType: 'polygons' },
+        'Layer "spots": layerType "polygons" cannot draw the table "spots", a points table: a table of points is drawn as points.');
+    await expect(runSpec(page, heatmapWith({ layerType: 'polygons' })))
+        .rejects.toThrow('Layer "heatmap": layerType "polygons" cannot draw the table "heatmap", a raster table: a raster table is drawn as raster.');
+});
+
 test('writes a compute pass into a new table and leaves its source alone', async ({ page }) => {
     const { tables } = await runSpec(page, {
         data: [{ type: 'geojson', geojsonFileUrl: '/data/mnt_neighs.geojson', outputTableName: 'neighborhoods' }],

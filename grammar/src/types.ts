@@ -576,6 +576,14 @@ export type MapLayerSpec = {
     /** How values are rescaled before coloring. */
     normalization?: { mode: NormalizationMode; lowerPercentile?: number; upperPercentile?: number },
     /**
+     * How the map draws the layer's table, in place of the table's own type, among the types of its kind of geometry: a
+     * table of polygons as `polygons`, `surface`, `parks`, `water` or `buildings` (raised by its heights), a table of lines
+     * as `polylines` or `roads`, a table of points as `points`, and a raster as `raster`. autk-map draws surface, parks,
+     * water and roads layers below the others, in that order, whatever the order of `layerRefs`. Read by the Autark
+     * adapter; the deck.gl adapter ignores it.
+     */
+    layerType?: LayerType,
+    /**
      * Draw the parts of a buildings layer that have no height, each with a random height of 3 to 7 floors of 3.4 m (10.2
      * to 23.8 m), rather than leave them out: autk-map's `buildingsZeroHeight`. A part has no height when it has none of
      * `height`, `building:height`, `levels` and `building:levels`; a part with one of them whose height is not above its
