@@ -2785,6 +2785,17 @@ test("reads each building part's outline in a pass's fromFeature table, as a Geo
     for (const width of widths) expect(width as number).toBeCloseTo(60, 3);
 });
 
+test('draws the Financial District of map-style in the colors of its night style, without the floating menu and legend', async ({ page }) => {
+    const { tables } = await run(page, 'map-style');
+    expect(tables.fidi_buildings.features).toBeGreaterThan(50);
+    expect((await mapLayers(page)).map((layer) => layer.type)).toEqual(expect.arrayContaining(['surface', 'roads', 'buildings']));
+    expect(await page.evaluate(() => window.mapUi('map0'))).toEqual({ menu: false, legend: false, credit: true });
+    // The ground and the roads in the style's colors, which no preset of autk-map has.
+    expect(await pixelsIn(page, '#13263a', 'surface at night')).toBeGreaterThan(5000);
+    expect(await pixelsIn(page, '#4a6584', 'roads at night')).toBeGreaterThan(100);
+    await expectDrawn(page, 'map0');
+});
+
 test('raises Manhattan in map-terrain to the heights of its elevation model, under its neighborhoods and elevation colors', async ({ page }) => {
     await run(page, 'map-terrain');
     const terrain = await page.evaluate(() => window.terrain('map0'));
