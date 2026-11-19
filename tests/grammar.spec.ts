@@ -1336,7 +1336,16 @@ test("places buildings' windows in a table of their own, the points a building-w
                 tileSize: 8,
             },
         ],
-        map: { layerRefs: [{ dataRef: 'box_surface' }, { dataRef: 'windows' }] },
+        // Framed on the box, as compute-render frames it, with the windows small and colored by their building's height,
+        // so each wall shows; from autk-map's own view the box is a speck, and its windows one gray disc.
+        map: {
+            camera: { zoom: 13.8 },
+            layerRefs: [
+                { dataRef: 'box_surface' },
+                { dataRef: 'box_roads' },
+                { dataRef: 'windows', getFnv: 'buildingHeight', colorMapInterpolator: scheme('interpolateInferno'), pointSize: 2 },
+            ],
+        },
     });
     // The same windows, in the same order: their ids, points, buildings and floors.
     const { windows, seen } = await page.evaluate(async () => {
@@ -1357,9 +1366,10 @@ test("places buildings' windows in a table of their own, the points a building-w
     expect([...new Set(windows.map((point) => point.floor))].sort()).toEqual([0, 1]);
     expect(windows.filter((point) => point.render)).toEqual([]);
     expect(seen.every((point) => point.render)).toBe(true);
-    // The buildings stay as they are, and the map draws the windows as points.
+    // The buildings stay as they are, and the map draws the windows as points, colored by value.
     expect(await page.evaluate(() => window.valueAt('box_buildings', 0, 'floorIndex'))).toBeUndefined();
-    expect((await mapLayers(page)).map((layer) => [layer.id, layer.type])).toEqual([['box_surface', 'surface'], ['windows', 'points']]);
+    expect((await mapLayers(page)).map((layer) => [layer.id, layer.type, layer.isColorMap ?? false]))
+        .toEqual([['box_surface', 'surface', false], ['box_roads', 'roads', false], ['windows', 'points', true]]);
     await expectDrawn(page, 'map0');
 
     // A table of points has no facades to place windows on, and the pass says so.
