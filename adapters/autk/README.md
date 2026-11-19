@@ -400,8 +400,8 @@ A plot colors its marks by the values of its `color` column: a scatter plot's po
 
 | Key | Effect |
 |---|---|
-| `colorMapInterpolator` | The scheme of numbers: a sequential or diverging `interpolate*` scheme, `interpolateReds` by default. The lowest value takes its first color and the highest its last. |
-| `categoricalColorMapInterpolator` | The scheme of categories: a `scheme*` scheme, `schemeObservable10` by default. The categories take its colors in the order they first appear, and those past its last color take that one. |
+| `colorMapInterpolator` | The scheme of numbers: a sequential or diverging `interpolate*` scheme, `interpolateReds` by default. The scale's low end takes its first color and its high end its last: the lowest and highest values, unless `colorMapRange` or `normalization` sets them. |
+| `categoricalColorMapInterpolator` | The scheme of categories: a `scheme*` scheme, `schemeObservable10` by default. The categories take its colors in the order they first appear, or in `colorMapDomain`'s order, and those past its last color take that one. |
 
 A run refuses a `scheme*` name as `colorMapInterpolator`, and an `interpolate*` name as `categoricalColorMapInterpolator`.
 
@@ -539,7 +539,7 @@ const grammar = new AutkGrammar({ map: ['before', 'after'], plot: ['heights', 'a
 
 ## Lifecycle
 
-`destroy()` releases what the last run made: it destroys each map (its layers' GPU buffers, its textures, its canvas context, the controls it adds to the page and its event handlers) and clears the grammar's registries, caches and event forwarding. autk-map's maps share one GPU device, which stays for the maps of the next run. `run()` calls it before it starts, so running a new spec on the same instance does not leak the maps of the old one, and its maps and plots draw only its own tables. Call it yourself before the page or the canvases go away. A map whose layers fail to load is destroyed as the run fails, so it leaves nothing on the page.
+`destroy()` releases what the last run made: it destroys each map (its layers' GPU buffers, its textures, its canvas context, the controls it adds to the page and its event handlers), clears the grammar's registries, caches and event forwarding, and gives back the plot colors its spec set for the page (see [`markColor` and `highlightColor`](#markcolor-and-highlightcolor)). autk-map's maps share one GPU device, which stays for the maps of the next run. `run()` calls it before it starts, so running a new spec on the same instance does not leak the maps of the old one, and its maps and plots draw only its own tables. Call it yourself before the page or the canvases go away. A map whose layers fail to load is destroyed as the run fails, so it leaves nothing on the page.
 
 ## JSON Schema
 
