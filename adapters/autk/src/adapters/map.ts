@@ -480,6 +480,12 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
             // The run highlights pickedComps once the plots and links exist (see AutkGrammar).
             if(layerRef.pickedComps)
                 checkDrawnPositions(layerRef.pickedComps, 'pickedComps', layerId, type, drawnRows.length);
+            if(layerRef.skippedComps) {
+                checkDrawnPositions(layerRef.skippedComps, 'skippedComps', layerId, type, drawnRows.length);
+                // AutkMap.setSkippedIds passes over a points layer, which hides features of its own: the layer's own call
+                // hides them on every type of layer.
+                map.layerManager.searchByLayerId(layerId)?.setSkippedIds(layerRef.skippedComps);
+            }
             drawn.push(drawnRows);
         }
         return drawn;
@@ -493,6 +499,8 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 for(const layerRef of spec.layerRefs) {
                     checkColorMapRange(layerRef);
                     checkPointSize(layerRef.pointSize, layerIdOf(layerRef));
+                    if(layerRef.skippedComps !== undefined)
+                        checkPositions(layerRef.skippedComps, 'skippedComps', layerIdOf(layerRef));
                 }
                 checkPickedComps(spec);
                 checkMapColors(spec, index);

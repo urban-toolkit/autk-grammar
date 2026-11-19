@@ -1081,6 +1081,36 @@ test('hides the floating menu and legend of a map with showUi false, and keeps i
     expect(await ui()).toEqual({ menu: true, legend: true, credit: true });
 });
 
+test('hides the features skippedComps names, on a layer of polygons, of lines or of points', async ({ page }) => {
+    const red = '#d62728';
+    const drawnIn = async (dataRef: string, options: Partial<MapLayerSpec>, name: string) => {
+        await runSpec(page, { data: [area, zones, paths, spots], map: { layerRefs: [{ dataRef, title: 'Hidden', color: red, ...options }] } });
+        return pixelsIn(page, red, name);
+    };
+
+    // Two of the four zones hidden: about half of the red is left.
+    const zonesShown = await drawnIn('zones', {}, 'every zone');
+    const zonesLeft = await drawnIn('zones', { skippedComps: [0, 2] }, 'zones 0 and 2 hidden');
+    expect((await layerById(page)).Hidden.skippedIds).toEqual([0, 2]);
+    expect(zonesLeft).toBeGreaterThan(zonesShown * 0.3);
+    expect(zonesLeft).toBeLessThan(zonesShown * 0.7);
+
+    // Every line hidden, and every point, which AutkMap.setSkippedIds passes over.
+    expect(await drawnIn('paths', { width: 40 }, 'every path')).toBeGreaterThan(100);
+    expect(await drawnIn('paths', { width: 40, skippedComps: [0, 1, 2] }, 'no path')).toBe(0);
+    expect(await drawnIn('spots', {}, 'every spot')).toBeGreaterThan(100);
+    expect(await drawnIn('spots', { skippedComps: [0, 1, 2, 3, 4, 5, 6, 7, 8] }, 'no spot')).toBe(0);
+    expect((await layerById(page)).Hidden.skippedIds).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+
+    // Refused: positions that are not features the layer draws, and a raster.
+    await expect(drawnIn('zones', { skippedComps: [-1] }, 'refused'))
+        .rejects.toThrow('Layer "Hidden": skippedComps must list the positions of features the layer draws, whole numbers from 0, not [-1].');
+    await expect(drawnIn('zones', { skippedComps: [4] }, 'refused'))
+        .rejects.toThrow('Layer "Hidden": skippedComps names position 4, past the 4 features the layer draws.');
+    await expect(runSpec(page, heatmapWith({ skippedComps: [0] })))
+        .rejects.toThrow('Layer "heatmap": skippedComps names features, and a raster layer has none.');
+});
+
 test('colors two vector layers with different value ranges over one colorMapRange', async ({ page }) => {
     const twoLayers = (options: Partial<MapLayerSpec>): UrbanSpec => ({
         data: [area, zones, lots],

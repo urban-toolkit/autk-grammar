@@ -437,6 +437,14 @@ autk-map leaves out a building part that has no height: none of `height`, `build
 map: { layerRefs: [{ dataRef: 'downtown_buildings', buildingsZeroHeight: true }] }
 ```
 
+### `skippedComps`
+
+A layer's `skippedComps` lists the features it hides, by their positions among those it draws, as `map:picking` events and `highlightOnMap` give them: a filter the map applies as it is drawn. It hides features of every layer of polygons, lines, points or buildings. A run refuses it on a raster layer, and a position that is not a whole number from 0 or is past the last feature the layer draws. With autk-map 4.1.1, a hidden feature of a polygons or buildings layer can still be picked.
+
+```ts
+map: { layerRefs: [{ dataRef: 'parcels', skippedComps: [2, 5] }] }
+```
+
 ### `layerType`
 
 A layer draws its table as the table's own type, which its source or compute pass gave it. A layer's `layerType` draws the table as another type of its kind of geometry, in that type's color of the map's style and the way autk-map draws that type:

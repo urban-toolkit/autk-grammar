@@ -573,6 +573,12 @@ export type MapLayerSpec = {
      * rows. Read by the Autark adapter; the deck.gl adapter ignores it.
      */
     pickedComps?: RowPosition[],
+    /**
+     * Features the layer hides, by their positions among the features it draws, as `map:picking` events give them. A
+     * hidden feature of a polygons or buildings layer can still be picked with autk-map 4.1.1. Read by the Autark adapter;
+     * the deck.gl adapter ignores it.
+     */
+    skippedComps?: RowPosition[],
     /** How values are rescaled before coloring. */
     normalization?: { mode: NormalizationMode; lowerPercentile?: number; upperPercentile?: number },
     /**

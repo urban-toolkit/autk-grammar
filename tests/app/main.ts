@@ -27,6 +27,8 @@ export type LayerState = {
     domain?: Array<number | string>;
     labels?: string[];
     highlightedIds?: number[];
+    skippedIds?: number[];
+    polylinesWidthByComponent?: number[];
 };
 
 /**
@@ -282,6 +284,8 @@ window.cameraState = (canvasId: string) => {
 window.mapLayers = (canvasId: string) => mapOn(canvasId).layerManager.layers.map((layer) => {
     const info = layer.layerRenderInfo;
     const highlighted = (layer as unknown as { highlightedIds?: number[] }).highlightedIds;
+    // A points layer, unlike the others, has no getter for the features it hides.
+    const skipped = (layer as unknown as { _skippedIds?: Set<number> })._skippedIds;
     return {
         id: layer.layerInfo.id,
         type: layer.layerInfo.typeLayer,
@@ -296,6 +300,8 @@ window.mapLayers = (canvasId: string) => mapOn(canvasId).layerManager.layers.map
         domain: info.colormap.computedDomain ? [...info.colormap.computedDomain] : undefined,
         labels: info.colormap.computedLabels ? [...info.colormap.computedLabels] : undefined,
         highlightedIds: highlighted ? [...highlighted] : undefined,
+        skippedIds: skipped ? [...skipped].sort((a, b) => a - b) : undefined,
+        polylinesWidthByComponent: info.polylinesWidthByComponent ? [...info.polylinesWidthByComponent] : undefined,
     };
 });
 
