@@ -81,6 +81,7 @@ declare global {
         handedBand: (canvasId: string, layerId: string, band: string) => number[];
         terrain: (canvasId: string) => TerrainState | null;
         buildingTops: (canvasId: string, layerId: string) => Array<number | null>;
+        mapUi: (canvasId: string) => { menu: boolean; legend: boolean; credit: boolean };
         legend: () => LegendState | null;
         plotMarks: (target?: string) => DrawnMark[];
         plotTicks: (target: string, selector: string) => Array<Array<[unknown, string]>>;
@@ -344,6 +345,19 @@ window.buildingTops = (canvasId: string, layerId: string) => {
         first = nPoints;
         return top;
     });
+};
+
+/**
+ * Which of autk-map's floating elements the map on #canvasId put next to its canvas: its menu, its legend and its
+ * "made with autark" credit. autk-map adds them to the canvas's parent, which every map of this page shares.
+ */
+window.mapUi = (canvasId: string) => {
+    const parent = mapOn(canvasId).canvas.parentElement;
+    return {
+        menu: parent?.querySelector('#autkMapUi') != null,
+        legend: parent?.querySelector('#autkMapLegend') != null,
+        credit: parent?.querySelector('.autk-map-branding') != null,
+    };
 };
 
 /** The terrain of the map on #canvasId, or null when it draws none (see `TerrainState`). */

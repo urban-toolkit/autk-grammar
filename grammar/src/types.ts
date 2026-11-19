@@ -678,6 +678,12 @@ export type MapSpec = {
     workspace?: WorkspaceName,
     /** Map style. */
     style?: string,
+    /**
+     * Whether autk-map shows its floating controls on the map: the menu of its layers and the legend. `false` hides them,
+     * and the "made with autark" credit stays. Defaults to `true`. Read by the Autark adapter; the deck.gl adapter ignores
+     * it.
+     */
+    showUi?: boolean,
     /** Where the map looks from. */
     camera?: CameraSpec,
     /**

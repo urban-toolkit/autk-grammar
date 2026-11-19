@@ -453,7 +453,8 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 if(!(canvas instanceof HTMLCanvasElement))
                     throw new Error("Target for map is not a canvas: "+targets.map);
 
-                const map = new AutkMap(canvas);
+                // autk-map builds its floating menu and legend as the map starts, unless it is told not to.
+                const map = spec.showUi === false ? new AutkMap(canvas, false) : new AutkMap(canvas);
 
                 // A map is known to the grammar, which destroys it, once its layers are loaded. One that fails before
                 // is destroyed here, so its controls, event handlers and GPU buffers do not outlive the failed run.

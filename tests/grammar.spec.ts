@@ -996,6 +996,27 @@ test('draws the buildings that have no height with buildingsZeroHeight, each 3 t
     await expectDrawn(page, 'map0');
 });
 
+test('hides the floating menu and legend of a map with showUi false, and keeps its credit', async ({ page }) => {
+    const zonesWith = (showUi?: boolean): UrbanSpec => ({
+        data: [area, zones],
+        map: { ...(showUi !== undefined && { showUi }), layerRefs: [{ dataRef: 'zones', title: 'Zones', getFnv: 'v' }] },
+    });
+    const ui = () => page.evaluate(() => window.mapUi('map0'));
+
+    // By default autk-map shows its menu, and the legend of the layer colored by value.
+    await runSpec(page, zonesWith());
+    expect(await ui()).toEqual({ menu: true, legend: true, credit: true });
+    expect((await page.evaluate(() => window.legend()))?.visible).toBe(true);
+
+    await runSpec(page, zonesWith(false));
+    expect(await ui()).toEqual({ menu: false, legend: false, credit: true });
+    expect(await page.evaluate(() => window.legend())).toBeNull();
+    await expectDrawn(page, 'map0');
+
+    await runSpec(page, zonesWith(true));
+    expect(await ui()).toEqual({ menu: true, legend: true, credit: true });
+});
+
 test('colors two vector layers with different value ranges over one colorMapRange', async ({ page }) => {
     const twoLayers = (options: Partial<MapLayerSpec>): UrbanSpec => ({
         data: [area, zones, lots],

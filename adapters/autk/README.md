@@ -350,6 +350,14 @@ data: [
 map: { terrain: { dataRef: 'elevation' }, camera: { pitch: 60, bearing: 30 }, layerRefs: [{ dataRef: 'neighborhoods' }] },
 ```
 
+### `showUi`
+
+autk-map puts a menu of the map's layers at the map's top left and a legend at its bottom right. A map with `showUi: false` has neither; its "made with autark" credit stays. Without it, or with `true`, the map shows both.
+
+```ts
+map: { showUi: false, layerRefs: [{ dataRef: 'parcels', getFnv: 'area' }] }
+```
+
 ## Layer styling
 
 Besides `dataRef`, a layer of `map.layerRefs` takes these styling options:

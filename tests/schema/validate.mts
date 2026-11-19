@@ -310,6 +310,8 @@ expect('layer pickedComps as strings', layer({ isPick: true, pickedComps: ['1'] 
 expect('layer pickedComps as a number', layer({ isPick: true, pickedComps: 1 }), false);
 expect('layer buildingsZeroHeight', layer({ buildingsZeroHeight: true }), true);
 expect('layer buildingsZeroHeight as a string', layer({ buildingsZeroHeight: 'yes' }), false);
+expect('map without its controls', { map: { ...layers, showUi: false } }, true);
+expect('map showUi as a string', { map: { ...layers, showUi: 'no' } }, false);
 expect('layout with an unknown type', { map: layers, layout: { type: 'diagonal' } }, false);
 expect('layout grid with zero columns', { map: layers, layout: { type: 'grid', columns: 0 } }, false);
 expect('layout grid with columns that are not a whole number', { map: layers, layout: { type: 'grid', columns: 2.5 } }, false);
@@ -446,6 +448,7 @@ const newKeys: Array<[string, string[]]> = [
     ['TerrainSpec', ['']],
     ['MapLayerSpec', ['pickedComps', 'isPick']],
     ['MapLayerSpec', ['buildingsZeroHeight']],
+    ['UrbanSpec', ['map.showUi']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {
