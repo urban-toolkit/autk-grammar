@@ -51,7 +51,7 @@ declare global {
         runSpec: (spec: UrbanSpec, plotTargets?: 'one' | 'each') => Promise<RunSummary>;
         runBeside: (spec: UrbanSpec) => Promise<void>;
         plotStyle: () => { markColor: string; highlightColor: string };
-        runInPanes: (spec: UrbanSpec, width: number, height: number) => Promise<{ targets: Record<string, unknown>; panes: PaneBox[] }>;
+        runInPanes: (spec: UrbanSpec, width: number, height: number, styles?: 'hub') => Promise<{ targets: Record<string, unknown>; panes: PaneBox[] }>;
         runAgain: (spec: UrbanSpec) => Promise<void>;
         runExample: (name: string) => Promise<RunSummary>;
         exampleSpec: (name: string) => Promise<UrbanSpec>;
@@ -139,9 +139,11 @@ window.runSpec = async (spec: UrbanSpec, plotTargets: 'one' | 'each' = 'one') =>
 /**
  * Runs a spec in the panes the gallery hub builds for a spec with a layout (gallery/src/views.ts, which places each
  * view as `arrangeViews` says), in a stage of `width` by `height` pixels. Returns the grammar's targets and each pane's
- * box, once the views are drawn. The hub's code is loaded here, so only the tests that ask for it depend on it.
+ * box, once the views are drawn. The hub's code is loaded here, so only the tests that ask for it depend on it. With
+ * `styles: 'hub'` the page also takes the hub's stylesheet, which restyles the page's body and stage, as the hub does.
  */
-window.runInPanes = async (spec: UrbanSpec, width: number, height: number) => {
+window.runInPanes = async (spec: UrbanSpec, width: number, height: number, styles?: 'hub') => {
+    if (styles === 'hub') await import('../../gallery/src/hub.css');
     const { createPanes } = await import('../../gallery/src/views');
     window.grammar?.destroy();
     const stage = document.getElementById('stage')!;

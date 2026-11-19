@@ -1811,6 +1811,22 @@ test('places views in a grid by its columns and gap, and stacks them without a l
     expect(places(stacked.panes)).toEqual([['map-0', null, 0, 0, 400, 200], ['map-1', 'right', 0, 200, 400, 200], ['plot-0', 'sc', 0, 400, 400, 200]]);
 });
 
+test("draws a plot's axis titles in the gallery hub, in the color of its text", async ({ page }) => {
+    // autk-plot puts each axis title inside its axis group, which d3 gives fill="none", and leaves the title's fill to
+    // the page: without a rule of the hub's own, the titles of plot-colors were drawn with no fill.
+    const spec = await exampleSpec(page, 'plot-colors');
+    await page.evaluate((s) => window.runInPanes(s, 1212, 500, 'hub'), spec);
+    const titles = await page.evaluate(() => Array.from(document.querySelectorAll('#plot-0 .axis-label'), (title) => {
+        const style = getComputedStyle(title);
+        return { text: title.textContent, fill: style.fill, color: style.color };
+    }));
+    expect(titles.map((title) => title.text)).toEqual(['Neighborhood', 'Noise complaints']);
+    for (const title of titles) {
+        expect(title.fill, title.text ?? '').not.toBe('none');
+        expect(title.fill, title.text ?? '').toBe(title.color);
+    }
+});
+
 test('draws band 24 of geotiff-raster on its scheme, in at most maxRasterCells cells, each one a cell of the file', async ({ page }) => {
     const layerId = 'Summer surface temperature, 2024 (°C)';
     const spec = await exampleSpec(page, 'geotiff-raster');

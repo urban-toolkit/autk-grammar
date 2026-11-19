@@ -154,6 +154,9 @@ select:focus { outline: 2px solid #4a90d9; }
 
 .plot-body svg { max-width: 100%; display: block; }
 
+/* autk-plot puts each axis title inside its axis group, which d3 gives fill="none", and leaves the title's fill to the page. */
+.axis-label { fill: currentColor; }
+
 /* ── Status states ── */
 #status-bar.loading { color: #ffd700; }
 #status-bar.error   { color: #ff6b6b; }
