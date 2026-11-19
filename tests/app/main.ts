@@ -3,6 +3,7 @@ import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import { ColorMap } from '@urban-toolkit/autk-core';
 import type { ColorMapInterpolator, ColorRGB } from '@urban-toolkit/autk-core';
 import { AutkMap } from '@urban-toolkit/autk-map';
+import { PlotStyle } from '@urban-toolkit/autk-plot';
 import type { FeatureCollection, Geometry } from 'geojson';
 
 export type TableSummary = { features: number; properties: string[] };
@@ -46,7 +47,10 @@ function element(tag: 'canvas' | 'div', id: string): HTMLElement {
 declare global {
     interface Window {
         grammar: AutkGrammar;
+        besideGrammar?: AutkGrammar;
         runSpec: (spec: UrbanSpec, plotTargets?: 'one' | 'each') => Promise<RunSummary>;
+        runBeside: (spec: UrbanSpec) => Promise<void>;
+        plotStyle: () => { markColor: string; highlightColor: string };
         runInPanes: (spec: UrbanSpec, width: number, height: number) => Promise<{ targets: Record<string, unknown>; panes: PaneBox[] }>;
         runAgain: (spec: UrbanSpec) => Promise<void>;
         runExample: (name: string) => Promise<RunSummary>;
@@ -163,6 +167,22 @@ window.runInPanes = async (spec: UrbanSpec, width: number, height: number) => {
     });
     return { targets, panes };
 };
+
+/**
+ * Runs a spec on a second grammar of the page, whose plots draw in a div of their own, #beside, as a page that shows
+ * two specs does. The grammar of runSpec stays; the last second grammar is destroyed first.
+ */
+window.runBeside = async (spec: UrbanSpec) => {
+    window.besideGrammar?.destroy();
+    document.getElementById('beside')?.remove();
+    element('div', 'beside');
+    const grammar = new AutkGrammar({ plot: 'beside' });
+    window.besideGrammar = grammar;
+    await grammar.run(spec);
+};
+
+/** The mark and highlight colors autk-plot holds for the whole page (`PlotStyle`). */
+window.plotStyle = () => ({ markColor: PlotStyle.default, highlightColor: PlotStyle.highlight });
 
 /**
  * Runs a spec on the grammar of the last run, in the elements that run made, as a host that keeps one `AutkGrammar`

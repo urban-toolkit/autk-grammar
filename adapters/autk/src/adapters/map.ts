@@ -11,7 +11,7 @@ import type { ColorHEX, ColorMapConfig, ColorRGB, LayerType, TransferFunction } 
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { extentOf } from './data';
 import { checkPointSize, planarPointSize } from '../point-size';
-import { buildDomainSpec, colorMapRangeRefusal } from '../color-keys';
+import { HEX_COLOR, buildDomainSpec, colorMapRangeRefusal } from '../color-keys';
 
 /** The id a layer has in its map: its `title`, else its `dataRef`. */
 export function layerIdOf(layerRef: MapLayerSpec): string {
@@ -28,8 +28,6 @@ function checkLayerIds(spec: MapSpec, index: number): void {
         ids.add(id);
     }
 }
-
-const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 
 function hexColor(value: string, key: string, layerId: string): ColorRGB {
     if (!HEX_COLOR.test(value))

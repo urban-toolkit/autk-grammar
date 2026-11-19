@@ -5,9 +5,11 @@ import { addPlotLink, exportKey, exportOf, exportOptions } from '../drawn';
 import type { DrawnLayer, DrawnLayers, LayerExports, PlotLinks, PlotRows } from '../drawn';
 import { rowKeys, translateIds } from '../rows';
 import { checkPlotSelection, plotKey, plotOptions } from '../plot-options';
+import type { PlotColors } from '../plot-options';
 import { AutkDb, isRenderableTable } from '@urban-toolkit/autk-db';
-import { AutkPlot, PlotEvent as AutkPlotEvent } from '@urban-toolkit/autk-plot';
+import { AutkPlot, PlotEvent as AutkPlotEvent, PlotStyle } from '@urban-toolkit/autk-plot';
 import type { PlotEventData, PlotType, PlotTransformConfig } from '@urban-toolkit/autk-plot';
+import type { ColorHEX } from '@urban-toolkit/autk-core';
 import { MapEvent } from '@urban-toolkit/autk-map';
 import type { MapEventData } from '@urban-toolkit/autk-map';
 import { FeatureCollection } from 'geojson';
@@ -23,6 +25,47 @@ function grammarMarkToPlotType(mark: PlotMark): PlotType {
         'heatmatrix': 'heatmatrix',
     };
     return mapping[mark];
+}
+
+/**
+ * autk-plot keeps one mark color and one highlight color for the whole page (`PlotStyle`), which every plot reads as it
+ * draws and as it restyles its marks for a selection. So each grammar whose last run set them asks for them here, and
+ * the page's plots take the colors of the last run, among those still asking, that set each. Once none asks, they take
+ * back the colors autk-plot had before the first did. A page whose specs set neither never has its colors touched.
+ */
+const askedColors: Array<{ owner: object; colors: PlotColors }> = [];
+let colorsBefore: { markColor: ColorHEX; highlightColor: ColorHEX } | undefined;
+
+function applyPlotColors(): void {
+    if (askedColors.length === 0) {
+        if (colorsBefore) {
+            PlotStyle.setDefaultColor(colorsBefore.markColor);
+            PlotStyle.setHighlightColor(colorsBefore.highlightColor);
+        }
+        colorsBefore = undefined;
+        return;
+    }
+    colorsBefore ??= { markColor: PlotStyle.default, highlightColor: PlotStyle.highlight };
+    const last = (key: keyof PlotColors) => [...askedColors].reverse().find(({ colors }) => colors[key] !== undefined)?.colors[key];
+    PlotStyle.setDefaultColor((last('markColor') ?? colorsBefore.markColor) as ColorHEX);
+    PlotStyle.setHighlightColor((last('highlightColor') ?? colorsBefore.highlightColor) as ColorHEX);
+}
+
+/**
+ * Asks for the colors a run's plots set, for every plot autk-plot draws on the page, in place of what `owner`, the
+ * run's grammar, asked for before. `AutkGrammar.run` calls it before it draws any plot.
+ */
+export function askPlotColors(owner: object, colors: PlotColors): void {
+    const before = askedColors.findIndex((asked) => asked.owner === owner);
+    if (before >= 0) askedColors.splice(before, 1);
+    const asks = colors.markColor !== undefined || colors.highlightColor !== undefined;
+    if (asks) askedColors.push({ owner, colors });
+    if (asks || before >= 0) applyPlotColors();
+}
+
+/** Takes back the colors `owner` asked for, when it asked for any. `AutkGrammar.destroy` calls it. */
+export function releasePlotColors(owner: object): void {
+    askPlotColors(owner, {});
 }
 
 /**

@@ -3,7 +3,7 @@
 //   npm run test:unit
 import assert from 'node:assert/strict';
 import type { PlotSpec } from '@urban-toolkit/the-urban-grammar';
-import { checkPlotKeys, checkPlotSelection, plotOptions } from '../../adapters/autk/src/plot-options.ts';
+import { checkPlotKeys, checkPlotSelection, plotColorsOf, plotOptions } from '../../adapters/autk/src/plot-options.ts';
 
 /** A plot spec with the fields given, a bar chart of `t` colored by `v` unless they say otherwise. */
 const plot = (fields: Record<string, unknown> = {}) =>
@@ -137,6 +137,27 @@ test('refuses a selection that is not positions of rows, whole numbers from 0, o
     checkPlotSelection(plot(), 0);
     assert.throws(() => checkPlotSelection(plot({ selection: [0, 3] }), 3), { message: 'Plot "p": selection names row 3, but the plot draws 3 rows.' });
     assert.throws(() => checkPlotSelection(plot({ selection: [1] }), 1), { message: 'Plot "p": selection names row 1, but the plot draws 1 row.' });
+});
+
+test('refuses a mark or highlight color not written #rrggbb', () => {
+    refused({ markColor: 'red' }, 'markColor must be a color written #rrggbb, not "red".');
+    refused({ highlightColor: '#f00' }, 'highlightColor must be a color written #rrggbb, not "#f00".');
+    refused({ highlightColor: 3 }, 'highlightColor must be a color written #rrggbb, not 3.');
+    checkPlotKeys(plot({ markColor: '#2CA02C', highlightColor: '#d62728' }));
+});
+
+test("takes a spec's one mark color and one highlight color, and refuses two plots that set different ones", () => {
+    const other = (fields: Record<string, unknown> = {}) => plot({ id: 'q', ...fields });
+    assert.deepEqual(plotColorsOf([plot(), other()]), {});
+    assert.deepEqual(plotColorsOf([plot({ markColor: '#2ca02c' }), other({ highlightColor: '#d62728' })]), { markColor: '#2ca02c', highlightColor: '#d62728' });
+    // One color written in either case is one color, and a plot that sets neither takes the others'.
+    assert.deepEqual(plotColorsOf([plot({ markColor: '#2ca02c' }), other(), plot({ id: 'r', markColor: '#2CA02C' })]), { markColor: '#2ca02c' });
+    assert.throws(() => plotColorsOf([plot({ markColor: '#2ca02c' }), other({ markColor: '#1f77b4' })]), {
+        message: 'Plots "p" and "q" set different markColor values, "#2ca02c" and "#1f77b4": autk-plot draws every plot of a page in one mark color.',
+    });
+    assert.throws(() => plotColorsOf([plot({ highlightColor: '#d62728' }), other(), plot({ id: 'r', highlightColor: '#ff7f0e' })]), {
+        message: 'Plots "p" and "r" set different highlightColor values, "#d62728" and "#ff7f0e": autk-plot draws every plot of a page in one highlight color.',
+    });
 });
 
 let failed = 0;

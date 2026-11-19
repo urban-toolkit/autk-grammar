@@ -2218,3 +2218,48 @@ test('selects the rows a plot names in selection as it is drawn, and highlights 
     await expect(runSpec(page, { data: [area, zones], plot: plotOf({ id: 'p', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], selection: [4] }) }))
         .rejects.toThrow('Plot "p": selection names row 4, but the plot draws 4 rows.');
 });
+
+test('draws the marks of every plot of the page in one markColor, and the selected ones in one highlightColor', async ({ page }) => {
+    const green = 'rgb(44, 160, 44)'; // #2ca02c
+    const red = 'rgb(214, 39, 40)'; // #d62728
+    const fills = async (target: string) => (await plotMarks(page, target)).map(({ datum, fill }) => [datum?.id, fill]).sort();
+    const zonesPlot = (fields: Record<string, unknown>) => plotOf({ dataRef: 'zones', axis: ['id', 'v'], ...fields });
+    const plotStyle = () => page.evaluate(() => window.plotStyle());
+
+    // A bar chart that sets both colors, and a scatter plot of the spec that sets neither and takes them too: each draws
+    // its marks in the mark color, and its selected one in the highlight color.
+    await runSpec(page, {
+        data: [area, zones],
+        plot: [
+            zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c', highlightColor: '#d62728', selection: [1] }),
+            zonesPlot({ id: 'b', mark: 'scatter', selection: [2] }),
+        ],
+    }, 'each');
+    expect(await fills('plot0')).toEqual([[0, green], [1, red], [2, green], [3, green]]);
+    expect(await fills('plot1')).toEqual([[0, green], [1, green], [2, red], [3, green]]);
+
+    // A table draws its selected rows on the highlight color.
+    await runSpec(page, { data: [trees], plot: plotOf({ id: 't', dataRef: 'trees', mark: 'table', axis: ['id', 'kind'], highlightColor: '#d62728', selection: [0] }) });
+    const rows = await page.evaluate(() => Array.from(document.querySelectorAll('#plot tr.autkMark'),
+        (row) => [row.querySelector('td')?.textContent, getComputedStyle(row).backgroundColor]));
+    expect(rows).toEqual([['a', red], ['b', 'rgba(0, 0, 0, 0)'], ['c', 'rgba(0, 0, 0, 0)'], ['d', 'rgba(0, 0, 0, 0)']]);
+
+    // Two plots of one spec that set different mark colors are refused before anything is drawn.
+    await expect(runSpec(page, {
+        data: [area, zones],
+        plot: [zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c' }), zonesPlot({ id: 'b', mark: 'bar', markColor: '#1f77b4' })],
+    }, 'each')).rejects.toThrow('Plots "a" and "b" set different markColor values, "#2ca02c" and "#1f77b4": autk-plot draws every plot of a page in one mark color.');
+
+    // The colors are the page's: the plot of a second grammar, whose spec sets neither, takes the first one's mark color.
+    await runSpec(page, { data: [area, zones], plot: zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c', selection: [0] }) });
+    await page.evaluate((spec) => window.runBeside(spec), { data: [area, zones], plot: zonesPlot({ id: 'c', mark: 'bar', selection: [3] }) });
+    expect(await fills('beside')).toEqual([[0, green], [1, green], [2, green], [3, highlightBlue]]);
+    // A later run of the second that sets one colors the page; once it is destroyed, the first one's comes back, and
+    // once neither is left, autk-plot's own.
+    await page.evaluate((spec) => window.runBeside(spec), { data: [area, zones], plot: zonesPlot({ id: 'c', mark: 'bar', markColor: '#1f77b4' }) });
+    expect(await plotStyle()).toEqual({ markColor: '#1f77b4', highlightColor: '#5dade2' });
+    await page.evaluate(() => window.besideGrammar?.destroy());
+    expect(await plotStyle()).toEqual({ markColor: '#2ca02c', highlightColor: '#5dade2' });
+    await page.evaluate(() => window.grammar.destroy());
+    expect(await plotStyle()).toEqual({ markColor: '#bfbfbf', highlightColor: '#5dade2' });
+});

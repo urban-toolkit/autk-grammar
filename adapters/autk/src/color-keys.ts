@@ -5,8 +5,11 @@ import type { ColorMapDomainSpec } from '@urban-toolkit/autk-core';
 
 /**
  * The color keys a map layer and a plot share, read alike for both: `colorMapRange`, `colorMapDomain` and
- * `normalization`. Nothing here needs a page or a GPU, so the unit tests run it in Node.
+ * `normalization`, and colors written `#rrggbb`. Nothing here needs a page or a GPU, so the unit tests run it in Node.
  */
+
+/** A color as the schema's `HexColor` takes it, `#rrggbb`. */
+export const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 
 /**
  * Why a layer or a plot refuses its `colorMapRange`, or `undefined` when it takes it: a range that is not two numbers

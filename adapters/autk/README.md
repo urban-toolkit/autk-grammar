@@ -452,6 +452,22 @@ The titles of a plot's axes, in the order of `axis`, in place of the column name
 plot: { dataRef: 'parcels', mark: 'bar', axis: ['area', '@transform'], transform: { preset: 'binning-1d' }, axisLabels: ['Area (m²)', 'Parcels'] }
 ```
 
+### `markColor` and `highlightColor`
+
+| Key | Effect |
+|---|---|
+| `markColor` | The color of the marks that are neither colored by value nor selected, `#rrggbb`. autk-plot's is `#bfbfbf`. |
+| `highlightColor` | The color of the selected marks, and of a table's selected rows, `#rrggbb`. autk-plot's is `#5dade2`. |
+
+autk-plot keeps one mark color and one highlight color for the whole page, which every plot on it reads as it draws and as it shows a selection. So the plots of one spec cannot differ: a run refuses two plots that set different ones, and a plot that sets neither takes the others'. A run that sets them colors every plot on the page, other specs' too. When its grammar is destroyed, or runs a spec that sets neither, the page's plots take the colors of the last run still on the page that set them, else the colors autk-plot had before.
+
+```ts
+plot: [
+  { id: 'heights', dataRef: 'buildings', mark: 'bar', axis: ['id', 'height'], markColor: '#4e79a7', highlightColor: '#e15759' },
+  { id: 'areas', dataRef: 'buildings', mark: 'scatter', axis: ['area', 'height'] }, // drawn in the same colors
+]
+```
+
 ## Interactions
 
 A layer with `isPick` and a plot with `events` report what the user selects on `grammar.interactions`: `map:picking` and `plot:selection` give feature ids, the positions of the selected features among those the layer or the plot draws (a map layer leaves out features without a geometry). Every map of the spec reports its picks, though several draw one table. To link a selection to other tables, name the columns whose values identify those rows with `selectFields` on the layer or the plot, for example `selectFields: ['nta2020']`. The grammar does not read it; the events still report feature ids, and the app reads the key values from those rows.

@@ -3,7 +3,7 @@ import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator, valueAtPath } f
 import type { ColorMapDomainSpec } from '@urban-toolkit/autk-core';
 import type { PlotConfig } from '@urban-toolkit/autk-plot';
 import type { Feature } from 'geojson';
-import { buildDomainSpec, colorMapRangeRefusal } from './color-keys';
+import { HEX_COLOR, buildDomainSpec, colorMapRangeRefusal } from './color-keys';
 
 /**
  * What a plot spec sets of autk-plot's config, and what a run refuses of it before any view is drawn. Nothing here needs
@@ -68,6 +68,12 @@ function axisLabelsRefusal(axisLabels: unknown, axis: readonly string[]): string
     return undefined;
 }
 
+/** Why a plot refuses the color `key` names, or `undefined` when it takes it: a color not written `#rrggbb`. */
+function hexColorRefusal(key: 'markColor' | 'highlightColor', color: unknown): string | undefined {
+    if (color === undefined || (typeof color === 'string' && HEX_COLOR.test(color))) return undefined;
+    return `${key} must be a color written #rrggbb, not ${JSON.stringify(color)}.`;
+}
+
 /** Why a plot refuses its `selection`, or `undefined` when it takes it: positions that are not whole numbers from 0. */
 function selectionRefusal(selection: unknown): string | undefined {
     if (selection === undefined) return undefined;
@@ -86,8 +92,34 @@ export function checkPlotKeys(spec: PlotSpec): void {
         ?? colorMapRangeRefusal(spec.colorMapRange, spec.colorMapDomain)
         ?? tickFormatsRefusal(spec.tickFormats)
         ?? axisLabelsRefusal(spec.axisLabels, spec.axis)
-        ?? selectionRefusal(spec.selection);
+        ?? selectionRefusal(spec.selection)
+        ?? hexColorRefusal('markColor', spec.markColor)
+        ?? hexColorRefusal('highlightColor', spec.highlightColor);
     if (refusal) throw new Error(`Plot "${plotKey(spec)}": ${refusal}`);
+}
+
+/** The colors autk-plot keeps for the whole page, as the plots of a spec set them. */
+export type PlotColors = { markColor?: string; highlightColor?: string };
+
+/**
+ * The mark and highlight colors the plots of a spec set. autk-plot keeps one of each for the whole page, so the plots of
+ * one spec cannot differ: it refuses two plots that set different ones, with a sentence that names them. A plot that
+ * sets neither takes the others'.
+ */
+export function plotColorsOf(plots: readonly PlotSpec[]): PlotColors {
+    const colors: PlotColors = {};
+    for (const [key, kind] of [['markColor', 'mark'], ['highlightColor', 'highlight']] as const) {
+        let setter: PlotSpec | undefined;
+        for (const plot of plots) {
+            const color = plot[key];
+            if (color === undefined) continue;
+            if (setter && setter[key]!.toLowerCase() !== color.toLowerCase())
+                throw new Error(`Plots "${plotKey(setter)}" and "${plotKey(plot)}" set different ${key} values, "${setter[key]}" and "${color}": autk-plot draws every plot of a page in one ${kind} color.`);
+            setter ??= plot;
+        }
+        if (setter) colors[key] = setter[key];
+    }
+    return colors;
 }
 
 /**

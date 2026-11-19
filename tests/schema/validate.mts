@@ -346,6 +346,10 @@ expect('plot selection of a negative row', plotWith({ selection: [-1] }), false)
 expect('plot selection of a row between two', plotWith({ selection: [1.5] }), false);
 expect('plot selection as strings', plotWith({ selection: ['1'] }, 'table'), false);
 expect('plot selection as a number', plotWith({ selection: 1 }), false);
+expect('plot mark and highlight colors', plotWith({ markColor: '#2ca02c', highlightColor: '#D62728' }), true);
+expect('plot mark color by name', plotWith({ markColor: 'red' }), false);
+expect('plot highlight color as short hex', plotWith({ highlightColor: '#f00' }, 'table'), false);
+expect('plot mark color as a number', plotWith({ markColor: 3 }, 'scatter'), false);
 
 // Each layer styling option is documented in the schema.
 const layerProperties = schema.definitions?.MapLayerSpec?.properties ?? {};
@@ -419,6 +423,7 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['plot.tickFormats']],
     ['UrbanSpec', ['plot.axisLabels']],
     ['UrbanSpec', ['plot.selection']],
+    ['UrbanSpec', ['plot.markColor', 'plot.highlightColor']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {
