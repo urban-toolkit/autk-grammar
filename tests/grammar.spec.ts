@@ -912,6 +912,31 @@ async function pixelsIn(page: Page, color: string, name: string, canvasId = 'map
     return count;
 }
 
+/**
+ * How many pixels of the map on #map0, or on #canvasId, differ by more than 8 in some channel from the color most of
+ * them have, the map's background: the pixels its features are drawn in. A map that drew nothing has none. The image is
+ * attached to the test as `<name>.png`.
+ */
+async function drawnPixels(page: Page, name: string, canvasId = 'map0'): Promise<number> {
+    await page.waitForTimeout(1500);
+    const dataUrl = await page.evaluate((id) => window.readMap(id), canvasId);
+    const image = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
+    await test.info().attach(`${name}.png`, { body: image, contentType: 'image/png' });
+    const png = PNG.sync.read(image);
+    const counts = new Map<number, number>();
+    for (let i = 0; i < png.data.length; i += 4) {
+        const color = (png.data[i] << 16) | (png.data[i + 1] << 8) | png.data[i + 2];
+        counts.set(color, (counts.get(color) ?? 0) + 1);
+    }
+    const [background] = [...counts].reduce((most, entry) => (entry[1] > most[1] ? entry : most));
+    const [r, g, b] = [background >> 16, (background >> 8) & 255, background & 255];
+    let drawn = 0;
+    for (let i = 0; i < png.data.length; i += 4) {
+        if (Math.abs(png.data[i] - r) > 8 || Math.abs(png.data[i + 1] - g) > 8 || Math.abs(png.data[i + 2] - b) > 8) drawn++;
+    }
+    return drawn;
+}
+
 test('draws the points of a points layer with a pointSize radius in meters on the ground', async ({ page }) => {
     const red = '#d62728';
     const spotsWith = (options: Partial<MapLayerSpec>): UrbanSpec => ({
@@ -968,9 +993,10 @@ test('draws the buildings that have no height with buildingsZeroHeight, each 3 t
             features: [0, 1, 2, 3, 4, 5].map((i) => ({ type: 'Feature' as const, properties: i % 2 === 0 ? { id: i, height: 30 } : { id: i }, geometry: footprint(i) })),
         },
     };
+    // The map looks straight down on the row from about 2.9 km, so each roof is about 56 by 74 pixels.
     const buildingsWith = (options: Partial<MapLayerSpec>): UrbanSpec => ({
         data: [area, footprints],
-        map: { layerRefs: [{ dataRef: 'footprints', title: 'Footprints', ...options }] },
+        map: { camera: { zoom: 11.8 }, layerRefs: [{ dataRef: 'footprints', title: 'Footprints', ...options }] },
     });
     const tops = () => page.evaluate(() => window.buildingTops('map0', 'Footprints'));
     const tall = (heights: Array<number | null>) => heights.filter((top) => top !== null && Math.abs(top - 30) < 1e-3);
@@ -981,6 +1007,8 @@ test('draws the buildings that have no height with buildingsZeroHeight, each 3 t
     expect(without).toHaveLength(6);
     expect(tall(without)).toHaveLength(3);
     expect(without.filter((top) => top === null)).toHaveLength(3);
+    const threeRoofs = await drawnPixels(page, 'three buildings with a height');
+    expect(threeRoofs, 'pixels of the three roofs').toBeGreaterThan(5000);
 
     // With it, the others stand too, each at a random height of 3 to 7 floors of 3.4 m: only that range is checked.
     await runSpec(page, buildingsWith({ buildingsZeroHeight: true }));
@@ -993,7 +1021,9 @@ test('draws the buildings that have no height with buildingsZeroHeight, each 3 t
         expect(top!).toBeGreaterThanOrEqual(10.2 - 1e-3);
         expect(top!).toBeLessThanOrEqual(23.8 + 1e-3);
     }
-    await expectDrawn(page, 'map0');
+    // The canvas shows them: six roofs of one size cover about twice the pixels of three.
+    const sixRoofs = await drawnPixels(page, 'all six buildings');
+    expect(sixRoofs, `six roofs cover ${sixRoofs} pixels, three ${threeRoofs}`).toBeGreaterThan(threeRoofs * 1.6);
 });
 
 test('draws a map in the colors of its style, and its picked features and the values it cannot color in its own colors', async ({ page }) => {
@@ -1850,13 +1880,23 @@ test("keeps the camera's up direction across its line of sight at any pitch belo
 
 test('raises a map on the heights of the raster band its terrain names, and refuses a terrain that is not a raster band', async ({ page }) => {
     // The 24 yearly bands of the Niteroi temperature GeoTIFF, from 2001 to 2024, as heights: each band is another ground.
+    // 2024's temperatures are draped over it in viridis, so the frame shows the ground the raster covers, cell by cell.
     const area = { type: 'Polygon' as const, coordinates: [[[-43.2, -22.95], [-43.0, -22.95], [-43.0, -22.8], [-43.2, -22.8], [-43.2, -22.95]]] };
     const withTerrain = (terrain?: TerrainSpec): UrbanSpec => ({
         data: [
             { type: 'geojson', outputTableName: 'area', geojsonObject: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: area, properties: {} }] } },
             { type: 'geotiff', outputTableName: 'lst', geotiffFileUrl: '/data/niteroi_lst_verao_2001_2024.tif' },
         ],
-        map: { layerRefs: [{ dataRef: 'area' }], ...(terrain && { terrain }) },
+        map: {
+            layerRefs: [
+                { dataRef: 'area' },
+                {
+                    dataRef: 'lst', title: 'Temperature 2024', getFnv: 'band_24', colorMapInterpolator: scheme('interpolateViridis'),
+                    transferFunction: { opacityMin: 1, opacityMax: 1 },
+                },
+            ],
+            ...(terrain && { terrain }),
+        },
     });
     const terrainOf = () => page.evaluate(() => window.terrain('map0'));
 
