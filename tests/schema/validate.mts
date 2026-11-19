@@ -149,6 +149,14 @@ expect('render pass with a bad aggregation', { compute: [{ ...render, aggregatio
 const drawnTypes = ['surface', 'parks', 'water', 'roads', 'buildings', 'polygons', 'polylines'];
 expect('render pass with a layer of each type it draws', { compute: [{ ...render, layers: drawnTypes.map((type) => ({ id: type, dataRef: type, type })) }] }, true);
 expect('render pass with a points layer, which it cannot draw', { compute: [{ ...render, layers: [{ id: 'p', dataRef: 'p', type: 'points' }] }] }, false);
+const windowsPass = { type: 'windows', dataRef: 'b', floors: 3, outputTableName: 'w' };
+expect('windows pass', { compute: [windowsPass] }, true);
+expect('windows pass drawn as polygons, in a workspace', { compute: [{ ...windowsPass, layerType: 'polygons', workspace: 'west' }] }, true);
+expect('windows pass without floors', { compute: [(({ floors, ...rest }) => rest)(windowsPass)] }, false);
+expect('windows pass without outputTableName', { compute: [(({ outputTableName, ...rest }) => rest)(windowsPass)] }, false);
+expect('windows pass without dataRef', { compute: [(({ dataRef, ...rest }) => rest)(windowsPass)] }, false);
+expect('windows pass with floors as a string', { compute: [{ ...windowsPass, floors: '3' }] }, false);
+expect('windows pass with an unknown layer type', { compute: [{ ...windowsPass, layerType: 'windows' }] }, false);
 const heat = { type: 'heatmap', outputTableName: 'h', joinDataRef: 'n', near: { distance: 500 }, grid: { rows: 10, columns: 10 } };
 expect('heatmap with useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: false } }] }, true);
 expect('heatmap with a non-boolean useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: 'no' } }] }, false);
@@ -460,6 +468,7 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['map.camera.center']],
     ['UrbanSpec', ['map.camera.motion', 'map.camera.motion.type', 'map.camera.motion.amount', 'map.camera.motion.seconds', 'map.camera.motion.pan']],
     ['CameraMotionStep', ['']],
+    ['WindowsComputeSpec', ['', 'type', 'workspace', 'dataRef', 'floors', 'outputTableName', 'layerType']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

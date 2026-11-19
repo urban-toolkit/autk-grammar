@@ -258,7 +258,7 @@ plot: { dataRef: 'downtown_roads', mark: 'table', axis: ['osm_id', 'highway', 'n
 
 ## Compute
 
-Each entry of `compute` runs on the GPU with autk-compute, in order, once the data is loaded. Its `type` is `gpgpu`, the default, or `render`.
+Each entry of `compute` runs in order, once the data is loaded. Its `type` is `gpgpu`, the default, or `render`, which run on the GPU with autk-compute, or `windows`, which runs on the CPU through autk-core.
 
 A GPGPU pass runs a WGSL function once per feature of a table:
 
@@ -301,6 +301,34 @@ await grammar.run({
   }],
   map: { layerRefs: [{ dataRef: 'buildings' }, { dataRef: 'skyView', getFnv: 'compute.render.classes.background' }] },
 });
+```
+
+### `windows` passes
+
+A windows pass places the windows of a buildings table in a new table, one point a window, as a render pass's `building-windows` strategy places the viewpoints it renders from: the same autk-core code (`TriangulatorBuildingWithWindows.buildWindowLayout`) on the table read the same way, so the two hold the same points in the same order. It runs on the CPU, with no GPU.
+
+| Field | Effect |
+|---|---|
+| `dataRef` | The buildings table, read as an earlier pass wrote it, else as autk-db keeps it. |
+| `floors` | The rows of windows on each facade, spread evenly up each building's height, as `viewpoints.strategy.floors` places them. autk-core rounds it down and places at least one row. |
+| `outputTableName` | The new table. Required. |
+| `layerType` | How a map draws it. Defaults to `points`. |
+
+The windows are about 6 workspace units apart along each facade, one row a floor, each at the middle of its window: a point `[x, y, z]`, `z` its height above the ground. A building without a height is taken as 20 units high. Each window is a feature whose id is the window's, `windowId`, with these properties:
+
+| Property | Value |
+|---|---|
+| `sourceFeatureIndex` | The building's row in `dataRef`. |
+| `geometryIndex`, `polygonIndex`, `ringIndex`, `edgeIndex` | Where its facade is in the building's geometry: its part, its polygon, its ring (0 the outer one) and its edge. |
+| `floorIndex`, `windowIndex` | Its floor, from 0 at the bottom, and its place along the edge. |
+| `center`, `normal` | Its middle and the direction its facade faces. |
+| `width`, `height`, `buildingHeight` | Its size, and its building's height. |
+
+A run refuses a `floors` that is not a number, and a table autk-core finds no facades in, such as a table of points, naming the pass.
+
+```ts
+compute: [{ type: 'windows', dataRef: 'fidi_buildings', floors: 6, outputTableName: 'fidi_windows' }],
+map: { layerRefs: [{ dataRef: 'fidi_surface' }, { dataRef: 'fidi_windows', getFnv: 'buildingHeight' }] },
 ```
 
 ## Maps
@@ -613,7 +641,7 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 | Export | Effect |
 |---|---|
 | `createDataAdapter(targets?, cache?)` | The data adapter. Its `resolveWorkspaces(db, workspaces)` sets up a spec's `workspaces` before the first source loads, and its `resolveSource(db, source)` loads one `data` entry. Each takes an autk-db database, a new one when `db` is undefined, and returns it. `cache` receives each GeoJSON table and each table a join or an update wrote. |
-| `createComputeAdapter(cache?, types?, sources?)` | The compute adapter. Its `resolveCompute(db, pass)` runs one `compute` entry on the GPU. The results are kept only in `cache`, and `types` receives the layer type of each table a pass wrote under its own `outputTableName`. `sources` is the cache `createDataAdapter` fills, from which a pass reads a `fromFeature` table a GeoJSON source loaded in its workspace's CRS. |
+| `createComputeAdapter(cache?, types?, sources?)` | The compute adapter. Its `resolveCompute(db, pass)` runs one `compute` entry, on the GPU or, for a windows pass, on the CPU. The results are kept only in `cache`, and `types` receives the layer type of each table a pass wrote under its own `outputTableName`. `sources` is the cache `createDataAdapter` fills, from which a pass reads a `fromFeature` table a GeoJSON source loaded in its workspace's CRS. |
 | `enterWorkspace(db, workspace?)` | Makes an entry's workspace (the default one without a name) the one autk-db works in, and switches only when another is current. Every adapter calls it before it reads or writes an entry's tables. |
 | `tableKey(workspace, name)` | The key of a table in those caches: its name in the default workspace, `<workspace>/<name>` in another. |
 | `applyCamera(map, camera)` | Moves an `AutkMap`'s camera as a map's `camera` says, from the view that fits its layers, and refuses a `pitch` that is not at least 0 and less than 90. The map adapter calls it once the layers are loaded, before the map's first `draw()`. It looks at a `center` that `resolveCameraCenter` put on the map, and refuses any other, so a host's later turns of a map the grammar drew keep its center. |

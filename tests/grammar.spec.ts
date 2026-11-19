@@ -1322,6 +1322,53 @@ test('draws the windows of a building-windows render pass as points', async ({ p
     expect((await page.evaluate(() => window.mapLayers('map0'))).map((layer) => [layer.id, layer.type])).toEqual([['box_surface', 'surface'], ['windows', 'points']]);
 });
 
+test("places buildings' windows in a table of their own, the points a building-windows render pass renders from", async ({ page }) => {
+    const { tables } = await runSpec(page, {
+        ...boxSpec({ bbox: BOX }),
+        compute: [
+            { type: 'windows', dataRef: 'box_buildings', floors: 2, outputTableName: 'windows' },
+            {
+                type: 'render',
+                outputTableName: 'seen',
+                layers: [{ id: 'buildings', dataRef: 'box_buildings', type: 'buildings' }],
+                viewpoints: { dataRef: 'box_buildings', strategy: { type: 'building-windows', floors: 2 } },
+                aggregation: { type: 'classes', includeBackground: true },
+                tileSize: 8,
+            },
+        ],
+        map: { layerRefs: [{ dataRef: 'box_surface' }, { dataRef: 'windows' }] },
+    });
+    // The same windows, in the same order: their ids, points, buildings and floors.
+    const { windows, seen } = await page.evaluate(async () => {
+        const read = async (table: string) => (await window.grammar.data[table]).features.map((feature) => ({
+            id: feature.id,
+            at: (feature.geometry as { coordinates: number[] }).coordinates,
+            building: feature.properties?.sourceFeatureIndex,
+            floor: feature.properties?.floorIndex,
+            render: feature.properties?.compute?.render !== undefined,
+        }));
+        return { windows: await read('windows'), seen: await read('seen') };
+    });
+    expect(windows.length).toBeGreaterThan(tables.box_buildings.features);
+    const placed = (list: typeof windows) => list.map(({ id, at, building, floor }) => ({ id, at, building, floor }));
+    expect(placed(windows)).toEqual(placed(seen));
+    // Each a point at the middle of a window, on one of two floors, with no render metrics.
+    expect(windows.every((point) => point.at.length === 3 && point.at[2] > 0)).toBe(true);
+    expect([...new Set(windows.map((point) => point.floor))].sort()).toEqual([0, 1]);
+    expect(windows.filter((point) => point.render)).toEqual([]);
+    expect(seen.every((point) => point.render)).toBe(true);
+    // The buildings stay as they are, and the map draws the windows as points.
+    expect(await page.evaluate(() => window.valueAt('box_buildings', 0, 'floorIndex'))).toBeUndefined();
+    expect((await mapLayers(page)).map((layer) => [layer.id, layer.type])).toEqual([['box_surface', 'surface'], ['windows', 'points']]);
+    await expectDrawn(page, 'map0');
+
+    // A table of points has no facades to place windows on, and the pass says so.
+    await expect(runSpec(page, {
+        data: [area, spots],
+        compute: [{ type: 'windows', dataRef: 'spots', floors: 1, outputTableName: 'w' }],
+    })).rejects.toThrow('Windows pass "w": autk-core places no windows on "spots"');
+});
+
 test('refuses a points layer in a render pass, and names the layer', async ({ page }) => {
     // autk-compute would skip it with only a warning. The schema refuses the type too.
     await expect(runSpec(page, {

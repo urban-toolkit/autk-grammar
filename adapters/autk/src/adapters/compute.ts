@@ -1,10 +1,11 @@
-import { ComputeAdapter, ComputeSpec, GpgpuComputeSpec, RenderComputeSpec } from '@urban-toolkit/the-urban-grammar';
-import type { LayerType, RenderLayerSpec } from '@urban-toolkit/the-urban-grammar';
+import { ComputeAdapter, ComputeSpec, GpgpuComputeSpec, RenderComputeSpec, WindowsComputeSpec } from '@urban-toolkit/the-urban-grammar';
+import type { LayerType, RenderLayerSpec, WorkspaceName } from '@urban-toolkit/the-urban-grammar';
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkComputeEngine } from '@urban-toolkit/autk-compute';
 import { FeatureCollection } from 'geojson';
 import { ComputeCache, ComputeLayerTypes, GeoJsonCache } from '../types';
 import { computeLayerNames, runCompute } from '../compute-params';
+import { windowsTable } from '../compute-tables';
 import { enterWorkspace, inWorkspaceCrs, tableKey } from '../workspace';
 
 /**
@@ -19,11 +20,11 @@ function layerTypeOf(db: AutkDb, name: string, workspace: string | undefined, ty
 }
 
 /**
- * The compute adapter `AutkGrammar` runs. Its `resolveCompute(db, pass)` runs one entry of a spec's `compute`, a
- * GPGPU pass or a render pass, on autk-compute, in the pass's workspace, which it leaves current. It does nothing
- * without a database.
+ * The compute adapter `AutkGrammar` runs. Its `resolveCompute(db, pass)` runs one entry of a spec's `compute`, in the
+ * pass's workspace, which it leaves current: a GPGPU pass or a render pass on autk-compute, or a windows pass on the CPU
+ * through autk-core. It does nothing without a database.
  *
- * A host calls it to run compute passes exactly as the grammar does. The passes need WebGPU, and their results are
+ * A host calls it to run compute passes exactly as the grammar does. GPGPU and render passes need WebGPU, and results are
  * kept only in the caches: `cache` receives each pass's result under {@link tableKey} of its `outputTableName`, or of
  * the table it computed over, and a later pass reads a table from it first. `types` receives the layer type of each
  * table a pass wrote under its own `outputTableName`, which a map needs to draw it. `sources` is the cache the data
@@ -41,7 +42,10 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
      * Stores a pass's result under `outputTableName`, or, without it, in place of the table `source`. A map draws a
      * new table as the spec's `layerType` says, else as `resultType`, else as it draws `source`.
      */
-    function store(db: AutkDb, result: FeatureCollection, source: string, spec: GpgpuComputeSpec | RenderComputeSpec, resultType?: LayerType): void {
+    function store(
+        db: AutkDb, result: FeatureCollection, source: string,
+        spec: { workspace?: WorkspaceName; outputTableName?: string; layerType?: LayerType }, resultType?: LayerType,
+    ): void {
         if (!cache) return;
         const name = spec.outputTableName ?? source;
         cache.set(tableKey(spec.workspace, name), result);
@@ -78,6 +82,22 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
         store(db, result, spec.viewpoints.dataRef, spec, spec.viewpoints.strategy?.type === 'building-windows' ? 'points' : undefined);
     }
 
+    async function resolveWindows(db: AutkDb, spec: WindowsComputeSpec): Promise<void> {
+        const refuse = (message: string) => new Error(`Windows pass "${spec.outputTableName}": ${message}`);
+        if (typeof spec.floors !== 'number' || !Number.isFinite(spec.floors))
+            throw refuse(`floors must be a number of rows of windows, not ${JSON.stringify(spec.floors)}.`);
+        // The buildings are read as a render pass reads its viewpoints, so the windows are those its building-windows
+        // strategy renders from.
+        const buildings = await read(db, spec.dataRef, spec.workspace);
+        let windows: FeatureCollection;
+        try {
+            windows = windowsTable(buildings, spec.floors);
+        } catch (error) {
+            throw refuse(`autk-core places no windows on "${spec.dataRef}": ${error instanceof Error ? error.message : String(error)}`);
+        }
+        store(db, windows, spec.dataRef, spec, 'points');
+    }
+
     async function resolveGpgpu(db: AutkDb, spec: GpgpuComputeSpec): Promise<void> {
         // A table an earlier compute pass wrote is read from the cache, so passes chain.
         // Only the pass's own table must load; a `fromFeature` table that cannot
@@ -110,6 +130,7 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
             if (!context) return;
             await enterWorkspace(context, spec.workspace);
             if (spec.type === 'render') await resolveRender(context, spec);
+            else if (spec.type === 'windows') await resolveWindows(context, spec);
             else await resolveGpgpu(context, spec);
             return context;
         }

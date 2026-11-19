@@ -1064,8 +1064,32 @@ export type RenderComputeSpec = {
     tileSize?: number,
 }
 
-/** One entry of `compute`. A pass with `type: 'render'` is a {@link RenderComputeSpec}, any other a {@link GpgpuComputeSpec}. */
-export type ComputeSpec = GpgpuComputeSpec | RenderComputeSpec
+/**
+ * Buildings' windows as a table of their own: one point a window, placed along each building's facades as a render
+ * pass's `building-windows` viewpoints are, at the middle of the window. Each point is a feature whose id is the
+ * window's, with `properties` that name its building (`sourceFeatureIndex`, the building's row in `dataRef`), its
+ * facade, its floor (`floorIndex`, from 0 at the bottom) and its size. Runs on the CPU. Read by the Autark adapter only.
+ */
+export type WindowsComputeSpec = {
+    /** Selects a windows pass. */
+    type: 'windows',
+    /** Workspace of the tables the pass reads and writes. */
+    workspace?: WorkspaceName,
+    /** Name of the buildings table whose windows the pass places. */
+    dataRef: string,
+    /** Rows of windows on each facade, spread evenly up the building's height. */
+    floors: number,
+    /** Name of the table that receives the windows. Later passes, maps and plots read it by this name. */
+    outputTableName: string,
+    /** How the map draws the new table. Defaults to `points`. */
+    layerType?: LayerType,
+}
+
+/**
+ * One entry of `compute`: a {@link GpgpuComputeSpec} without a `type` or with `type: 'gpgpu'`, a {@link RenderComputeSpec}
+ * with `type: 'render'`, or a {@link WindowsComputeSpec} with `type: 'windows'`.
+ */
+export type ComputeSpec = GpgpuComputeSpec | RenderComputeSpec | WindowsComputeSpec
 
 /**
  * How the maps and plots of a specification are arranged on the page.
