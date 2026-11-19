@@ -2038,6 +2038,63 @@ test('tilts the view of map-camera to its zoom, pitch and bearing around the poi
     await expectDrawn(page, 'map0');
 });
 
+test('tours camera-tour around the Stock Exchange: in, tilted while moving north, then turned to face east', async ({ page }) => {
+    const { center, zoom } = ((await exampleSpec(page, 'camera-tour')).map as MapSpec).camera as Required<Pick<CameraSpec, 'center' | 'zoom'>>;
+    await run(page, 'camera-tour');
+    // The run does not wait for the tour: read the view once it has ended, never on the way.
+    await page.evaluate(() => window.grammar.tours[0]?.done);
+    const end = await page.evaluate(() => window.cameraView('map0'));
+    // From 10000 / 2^(zoom - 10) away, straight above the Stock Exchange: 1.5 levels in, 55 degrees of tilt while the
+    // point the view turns around moves 150 m north, the top of the view, then a quarter turn clockwise, to face east.
+    const [x, y] = worldMercator(...center);
+    expectTourView('the end of the tour', end, {
+        tilt: 55, heading: 90, distance: (10000 / 2 ** (zoom - 10)) * 2 ** -1.5, x: x - end.origin[0], y: y - end.origin[1] + 150,
+    });
+    await expectDrawn(page, 'map0');
+});
+
+test('places the windows of building-windows along the facades around Wall Street, three rows a facade', async ({ page }) => {
+    const { tables } = await run(page, 'building-windows');
+    expect(tables.wall_st_windows.features).toBeGreaterThan(3 * tables.wall_st_buildings.features);
+    const windows = await page.evaluate(async () => (await window.grammar.data.wall_st_windows).features.map((feature) => ({
+        building: feature.properties?.sourceFeatureIndex as number,
+        floor: feature.properties?.floorIndex as number,
+        height: feature.properties?.buildingHeight as number,
+    })));
+    // Each window names a building of the table, and each building's facades hold as many windows on each of its three
+    // rows.
+    const rows = new Map<number, number[]>();
+    for (const point of windows) {
+        const counts = rows.get(point.building) ?? [0, 0, 0];
+        counts[point.floor]++;
+        rows.set(point.building, counts);
+    }
+    expect([...rows.keys()].every((building) => Number.isInteger(building) && building >= 0 && building < tables.wall_st_buildings.features)).toBe(true);
+    expect([...rows.values()].filter(([first, second, third]) => !(first > 0 && second === first && third === first))).toEqual([]);
+    expect(windows.every((point) => point.height > 0)).toBe(true);
+    // The map draws them as points, in the color of their building's height.
+    expect((await layerById(page))['Windows, by building height (m)']).toMatchObject({ type: 'points', isColorMap: true, interpolator: 'interpolateInferno' });
+    await expectDrawn(page, 'map0');
+});
+
+test('colors the buildings of building-clusters by the block of touching buildings each is in', async ({ page }) => {
+    const { tables } = await run(page, 'building-clusters');
+    expect(tables.fidi_blocks.features).toBe(tables.fidi_buildings.features);
+    const { blocks, sourceBlocks } = await page.evaluate(async () => ({
+        blocks: (await window.grammar.data.fidi_blocks).features.map((feature) => feature.properties?.compute?.block as number),
+        sourceBlocks: (await window.grammar.data.fidi_buildings).features.filter((feature) => feature.properties?.compute?.block !== undefined).length,
+    }));
+    // Each building is in a block, the blocks numbered from 0 with no gap, and buildings that share walls share one.
+    const ids = [...new Set(blocks)].sort((a, b) => a - b);
+    expect(blocks.every((block) => Number.isInteger(block)), 'every building is in a block').toBe(true);
+    expect(ids).toEqual(ids.map((_, i) => i));
+    expect(ids.length, 'blocks of more than one building').toBeLessThan(blocks.length);
+    expect(sourceBlocks, 'buildings with a block column').toBe(0);
+    // The new table is drawn as its buildings are, colored by block.
+    expect((await layerById(page))['Buildings that share walls']).toMatchObject({ type: 'buildings', isColorMap: true, interpolator: 'interpolateTurbo' });
+    await expectDrawn(page, 'map0');
+});
+
 test('links the plot of linked-views to its map by their ids: a click in the plot highlights the layer, a pick selects in the plot', async ({ page }) => {
     const { tables, plotSvgs } = await run(page, 'linked-views');
     expect(plotSvgs).toBeGreaterThan(0);
