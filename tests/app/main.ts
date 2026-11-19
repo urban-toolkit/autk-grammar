@@ -301,11 +301,19 @@ window.legend = () => {
 };
 
 /**
+ * The elements `selector` finds inside the element whose id is `target`, the first of that id in the page. autk-plot
+ * gives the svg of every plot the id `plot` too, so a selector `#plot ...` would also reach into another element's plot.
+ */
+function within(target: string, selector: string): Element[] {
+    return Array.from(document.getElementById(target)?.querySelectorAll(selector) ?? []);
+}
+
+/**
  * The marks the plots in the element #target draw (every `.autkMark`: a point, a bar, a cell, a line or a table row),
  * in the page's order, each with the row autk-plot binds to it and its colors as the page computes them. A value autk-db
  * read as a BIGINT, such as a CSV table's whole numbers, comes back as a number.
  */
-window.plotMarks = (target = 'plot') => Array.from(document.querySelectorAll(`#${target} .autkMark`), (mark) => {
+window.plotMarks = (target = 'plot') => within(target, '.autkMark').map((mark) => {
     const style = getComputedStyle(mark);
     const datum = (mark as Element & { __data__?: Record<string, unknown> }).__data__;
     return {
@@ -319,12 +327,12 @@ window.plotMarks = (target = 'plot') => Array.from(document.querySelectorAll(`#$
  * The tick labels of the axes the selector finds in the element #target (`#axisX`, `#axisY`, or parallel coordinates'
  * `.autkBrush[autkBrushId]`), axis by axis, each tick as the value d3 binds to it and the text it shows.
  */
-window.plotTicks = (target: string, selector: string) => Array.from(document.querySelectorAll(`#${target} ${selector}`), (axis) =>
+window.plotTicks = (target: string, selector: string) => within(target, selector).map((axis) =>
     Array.from(axis.querySelectorAll('.tick'), (tick): [unknown, string] =>
         [(tick as Element & { __data__?: unknown }).__data__, tick.querySelector('text')?.textContent ?? '']));
 
 /** The text of each axis title (`.axis-label`) of the plots in the element #target, in the page's order. */
-window.plotAxisTitles = (target = 'plot') => Array.from(document.querySelectorAll(`#${target} .axis-label`), (title) => title.textContent ?? '');
+window.plotAxisTitles = (target = 'plot') => within(target, '.axis-label').map((title) => title.textContent ?? '');
 
 /** autk-core's color for a value on a scheme over a domain, as autk-map colors a raster cell. */
 window.schemeColor = (value: number, interpolator: string, domain: number[]) =>
