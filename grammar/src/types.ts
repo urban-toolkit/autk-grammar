@@ -205,7 +205,7 @@ export type OsmTagSet = {
 /**
  * Loads OpenStreetMap data for a named area or a box, from Overpass or from a PBF extract.
  * @if { "required": ["pbfFileUrl"] }
- * @then { "properties": { "tagSets": { "maxItems": 0 } } }
+ * @then { "not": { "required": ["tagSets"], "properties": { "tagSets": { "minItems": 1 } } } }
  */
 export interface OsmDataSourceSpec extends TableSourceBase {
     type: 'osm';
