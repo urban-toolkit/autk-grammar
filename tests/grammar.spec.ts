@@ -2169,3 +2169,52 @@ test("titles a plot's axes with its axisLabels, and the output of a transform va
     await expect(zonesBy({ mark: 'scatter', axisLabels: ['Zone', 'Value', 'Extra'] }))
         .rejects.toThrow('Plot "p": axisLabels has 3 titles for the 2 columns of axis.');
 });
+
+/** autk-plot's highlight color: the fill of a selected mark. */
+const highlightBlue = 'rgb(93, 173, 226)';
+
+test('selects the rows a plot names in selection as it is drawn, and highlights them on the layers it is linked to', async ({ page }) => {
+    const plotSelection = () => page.evaluate(() => [...(window.grammar as any)._plotRegistry.get('p').selection]);
+    /** The ids of the zones a layer of map0 highlights, read from the rows it draws at its highlighted positions. */
+    const litZones = async (layerId: string) => {
+        const drawn = await page.evaluate((id) => window.drawnRows('map0', id), layerId);
+        const lit = (await layerById(page))[layerId]?.highlightedIds ?? [];
+        return lit.map((position) => drawn[position]?.id).sort();
+    };
+
+    // A scatter plot of the zones, linked by mapRef: rows 1 and 3 are selected as it is drawn, in the highlight color,
+    // and the layer highlights the same zones.
+    await runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones', title: 'Zones' }] },
+        plot: plotOf({ id: 'p', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], events: ['click'], mapRef: 'zones', selection: [1, 3] }),
+    });
+    expect(await plotSelection()).toEqual([1, 3]);
+    for (const { datum, fill } of await plotMarks(page))
+        expect(fill, `point ${datum?.id}`).toBe([1, 3].includes(Number(datum?.id)) ? highlightBlue : markGray);
+    expect(await litZones('Zones')).toEqual([1, 3]);
+
+    // A bar chart without events, linked by links: its selected bar is lit, and so is the layer the link names.
+    await runSpec(page, {
+        data: [area, zones],
+        map: { id: 'm', layerRefs: [{ dataRef: 'zones', title: 'Zones' }] },
+        plot: plotOf({ id: 'p', dataRef: 'zones', mark: 'bar', axis: ['id', 'v'], selection: [2] }),
+        links: [{ source: 'p', target: 'm', layer: 'Zones' }],
+    });
+    expect((await plotMarks(page)).map(({ datum, fill }) => [datum?.id, fill]).sort())
+        .toEqual([[0, markGray], [1, markGray], [2, highlightBlue], [3, markGray]]);
+    expect(await litZones('Zones')).toEqual([2]);
+
+    // A binned bar chart lights the bin that holds a selected row.
+    await runSpec(page, {
+        data: [area, zones],
+        plot: plotOf({ id: 'p', dataRef: 'zones', mark: 'bar', axis: ['v', '@transform'], transform: { preset: 'binning-1d', options: { bins: 2 } }, selection: [3] }),
+    });
+    const bins = await plotMarks(page);
+    expect(bins.filter(({ fill }) => fill === highlightBlue).map(({ datum }) => datum?.autkIds)).toEqual([expect.arrayContaining([3])]);
+    expect(bins.filter(({ fill }) => fill !== highlightBlue).every(({ datum }) => !(datum?.autkIds as number[]).includes(3))).toBe(true);
+
+    // A row past the last is refused before the plot is drawn.
+    await expect(runSpec(page, { data: [area, zones], plot: plotOf({ id: 'p', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], selection: [4] }) }))
+        .rejects.toThrow('Plot "p": selection names row 4, but the plot draws 4 rows.');
+});

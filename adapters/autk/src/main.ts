@@ -197,6 +197,7 @@ export class AutkGrammar {
         // Leave the database in the default workspace, whose tables `data` lists.
         if (db) await enterWorkspace(db);
         this._wireLinks(spec);
+        this._selectFromTheStart(spec);
         this._rewireInteractions(spec);
 
         if (!db) {
@@ -336,6 +337,17 @@ export class AutkGrammar {
             if (!layer) continue;
             linkPlotToLayer(plot, this._plotRows.get(link.source) ?? [], (plotSpec.events ?? []) as unknown as PlotEvent[], layer);
             addPlotLink(this._plotLinks, link.source, layer);
+        }
+    }
+
+    /**
+     * Applies each plot's `selection` once the plots and their links exist, as `setPlotSelection` does: the plot selects
+     * the rows, and the layers it is linked to, by `mapRef` or `links`, highlight them. autk-plot's `setSelection` emits
+     * no event, so no `plot:selection` reports it.
+     */
+    private _selectFromTheStart(spec: UrbanSpec): void {
+        for (const plot of asList(spec.plot)) {
+            if (plot.selection && plot.selection.length > 0) this.setPlotSelection(plotKey(plot), plot.selection);
         }
     }
 

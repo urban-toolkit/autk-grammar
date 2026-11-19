@@ -650,6 +650,13 @@ export type MapSpec = {
  */
 type TickFormat = string;
 
+/**
+ * A row of a table as a view draws it: its position among the rows the view draws, from 0.
+ * @minimum 0
+ * @multipleOf 1
+ */
+type RowPosition = number;
+
 export interface PlotBase {
     /**
      * Name of the plot, which a link in `links` uses as its `source`. Unique among the ids of the maps and plots.
@@ -741,6 +748,14 @@ export interface PlotBase {
     margins?: { left: number; right: number; top: number; bottom: number },
     /** `dataRef` of the map layer this plot links its selection to. A shorthand for a link in `links`. */
     mapRef?: string,
+    /**
+     * Rows selected when the plot is drawn, by their positions among the rows it draws, as `plot:selection` events and
+     * `setPlotSelection` name them. The plot draws them in its highlight color (a binned plot, the bins that hold them),
+     * and the map layers it is linked to, by `mapRef` or `links`, highlight the same rows, as after `setPlotSelection`.
+     * No `plot:selection` event reports it. A run refuses a position past the plot's last row. Read by the Autark
+     * adapter; the deck.gl adapter ignores it.
+     */
+    selection?: RowPosition[],
     /**
      * Plot an OpenStreetMap layer table as one row per OSM element it was built from, each with the element's tags,
      * `osm_type` and `osm_id` (and `building_id` in a buildings table), rather than one row per table row. A table that

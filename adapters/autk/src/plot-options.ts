@@ -68,6 +68,14 @@ function axisLabelsRefusal(axisLabels: unknown, axis: readonly string[]): string
     return undefined;
 }
 
+/** Why a plot refuses its `selection`, or `undefined` when it takes it: positions that are not whole numbers from 0. */
+function selectionRefusal(selection: unknown): string | undefined {
+    if (selection === undefined) return undefined;
+    if (!Array.isArray(selection) || !selection.every((position) => Number.isInteger(position) && position >= 0))
+        return 'selection must list the positions of rows, whole numbers from 0.';
+    return undefined;
+}
+
 /**
  * Refuses what a plot spec sets that autk-plot cannot draw, with a sentence that names the plot. `AutkGrammar.run` calls
  * it for each plot before it draws any view. The schema refuses the same values; a host that skips it gets the sentence.
@@ -77,8 +85,19 @@ export function checkPlotKeys(spec: PlotSpec): void {
         ?? schemeRefusal('categoricalColorMapInterpolator', spec.categoricalColorMapInterpolator, true)
         ?? colorMapRangeRefusal(spec.colorMapRange, spec.colorMapDomain)
         ?? tickFormatsRefusal(spec.tickFormats)
-        ?? axisLabelsRefusal(spec.axisLabels, spec.axis);
+        ?? axisLabelsRefusal(spec.axisLabels, spec.axis)
+        ?? selectionRefusal(spec.selection);
     if (refusal) throw new Error(`Plot "${plotKey(spec)}": ${refusal}`);
+}
+
+/**
+ * Refuses a `selection` that names a row past the plot's last, of the `rowCount` it draws, with a sentence that names
+ * the plot. The plot adapter calls it once it has the rows, before it draws the plot. JSON Schema cannot know the rows.
+ */
+export function checkPlotSelection(spec: PlotSpec, rowCount: number): void {
+    const past = spec.selection?.find((position) => position >= rowCount);
+    if (past !== undefined)
+        throw new Error(`Plot "${plotKey(spec)}": selection names row ${past}, but the plot draws ${rowCount === 1 ? '1 row' : `${rowCount} rows`}.`);
 }
 
 /**

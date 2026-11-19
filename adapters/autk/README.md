@@ -489,6 +489,14 @@ grammar.highlightOnMap('buildings', [3, 7], 'after');  // the map whose id is 'a
 grammar.clearHighlightOnMap('buildings', 0);           // the first map
 ```
 
+### `selection`
+
+A plot's `selection` lists the rows selected as it is drawn, by their feature ids, as `plot:selection` events and `setPlotSelection` give them. The run applies it once the plots and their links exist, as `setPlotSelection` does: the plot draws the rows in its highlight color (a binned plot, the bins that hold them), and the layers it is linked to, by `mapRef` or `links`, highlight the same rows. No `plot:selection` event reports it. A run refuses a feature id that is not a whole number from 0, or one past the plot's last row.
+
+```ts
+plot: { id: 'sizes', dataRef: 'parcels', mark: 'scatter', axis: ['area', 'perimeter'], mapRef: 'parcels', selection: [0, 4] }
+```
+
 ## Page layout
 
 A spec's `layout` says how its maps and plots are arranged on the page. The grammar's run never reads it: the page that hosts the views does, when it makes their canvases and elements, with `arrangeViews(spec)` (see [For hosts](#for-hosts)), so every host arranges a spec's views alike.

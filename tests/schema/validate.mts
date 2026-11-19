@@ -340,6 +340,12 @@ expect('plot axis title for the first axis only', plotWith({ axisLabels: ['Area'
 expect('plot axis titles as a string', plotWith({ axisLabels: 'Area' }), false);
 expect('plot axis title as a number', plotWith({ axisLabels: ['Area', 3] }), false);
 expect('plot axis titles alike', plotWith({ axisLabels: ['Area', 'Area'] }, 'scatter'), false);
+expect('plot selection', plotWith({ selection: [0, 3] }, 'scatter'), true);
+expect('plot empty selection', plotWith({ selection: [] }), true);
+expect('plot selection of a negative row', plotWith({ selection: [-1] }), false);
+expect('plot selection of a row between two', plotWith({ selection: [1.5] }), false);
+expect('plot selection as strings', plotWith({ selection: ['1'] }, 'table'), false);
+expect('plot selection as a number', plotWith({ selection: 1 }), false);
 
 // Each layer styling option is documented in the schema.
 const layerProperties = schema.definitions?.MapLayerSpec?.properties ?? {};
@@ -412,6 +418,7 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['plot.normalization', 'plot.colorMapRange', 'plot.colorMapDomain']],
     ['UrbanSpec', ['plot.tickFormats']],
     ['UrbanSpec', ['plot.axisLabels']],
+    ['UrbanSpec', ['plot.selection']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

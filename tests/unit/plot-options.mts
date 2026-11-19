@@ -3,7 +3,7 @@
 //   npm run test:unit
 import assert from 'node:assert/strict';
 import type { PlotSpec } from '@urban-toolkit/the-urban-grammar';
-import { checkPlotKeys, plotOptions } from '../../adapters/autk/src/plot-options.ts';
+import { checkPlotKeys, checkPlotSelection, plotOptions } from '../../adapters/autk/src/plot-options.ts';
 
 /** A plot spec with the fields given, a bar chart of `t` colored by `v` unless they say otherwise. */
 const plot = (fields: Record<string, unknown> = {}) =>
@@ -123,6 +123,20 @@ test('refuses axis titles that are not strings, more titles than axis columns, o
     refused({ axisLabels: ['Name', 3] }, list);
     refused({ axisLabels: ['Name', 'Value', 'Kind'] }, 'axisLabels has 3 titles for the 2 columns of axis.');
     refused({ axisLabels: ['Value', 'Value'] }, 'axisLabels gives two axes the title "Value".');
+});
+
+test('refuses a selection that is not positions of rows, whole numbers from 0, or that names a row past the last', () => {
+    const positions = 'selection must list the positions of rows, whole numbers from 0.';
+    refused({ selection: [-1] }, positions);
+    refused({ selection: [1.5] }, positions);
+    refused({ selection: ['1'] }, positions);
+    refused({ selection: 1 }, positions);
+    for (const selection of [[], [0], [2, 0, 2]]) checkPlotKeys(plot({ selection }));
+
+    checkPlotSelection(plot({ selection: [0, 2] }), 3);
+    checkPlotSelection(plot(), 0);
+    assert.throws(() => checkPlotSelection(plot({ selection: [0, 3] }), 3), { message: 'Plot "p": selection names row 3, but the plot draws 3 rows.' });
+    assert.throws(() => checkPlotSelection(plot({ selection: [1] }), 1), { message: 'Plot "p": selection names row 1, but the plot draws 1 row.' });
 });
 
 let failed = 0;
