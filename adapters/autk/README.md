@@ -350,6 +350,40 @@ data: [
 map: { terrain: { dataRef: 'elevation' }, camera: { pitch: 60, bearing: 30 }, layerRefs: [{ dataRef: 'neighborhoods' }] },
 ```
 
+### `style`
+
+A map's `style` names one of autk-map's styles, such as `apple`, its default, or `light`, and a name autk-map does not know draws in `apple`. It can also give the colors of a style of the spec's own, each `#rrggbb`: autk-map takes a style only whole, so a run refuses one that lacks any of the nine.
+
+| Color | Effect |
+|---|---|
+| `background` | The map's background, where no layer is drawn. |
+| `surface`, `parks`, `water`, `roads`, `buildings`, `points`, `polylines`, `polygons` | The layers of each of those types. |
+
+A layer with a `color` is drawn in it instead, and a layer colored by value in its scheme.
+
+```ts
+map: {
+  style: {
+    background: '#0b1a2a', surface: '#13263a', parks: '#1f4d3a', water: '#08121d', roads: '#3a5068',
+    buildings: '#5b7083', points: '#f2c14e', polylines: '#7f97ad', polygons: '#2a3d52',
+  },
+  layerRefs: [{ dataRef: 'downtown_surface' }, { dataRef: 'downtown_roads' }, { dataRef: 'downtown_buildings' }],
+}
+```
+
+### `highlightColor` and `invalidValueColor`
+
+| Key | Effect |
+|---|---|
+| `highlightColor` | The color of the features the map draws as picked: by the user, by a layer's `pickedComps`, by a link, or by a call such as `highlightOnMap`, `#rrggbb`. autk-map's is `#5dade2`. |
+| `invalidValueColor` | The color of the features of a layer colored by value whose value autk-map cannot color: one without a value, or with one that is not on the layer's scale, `#rrggbb`. autk-map's is `#ffffff`. |
+
+autk-map keeps both for each map, unlike autk-plot's mark and highlight colors, which are the page's: each map of a spec draws in its own.
+
+```ts
+map: { highlightColor: '#ff7f0e', invalidValueColor: '#bfbfbf', layerRefs: [{ dataRef: 'parcels', getFnv: 'value', isPick: true }] }
+```
+
 ### `showUi`
 
 autk-map puts a menu of the map's layers at the map's top left and a legend at its bottom right. A map with `showUi: false` has neither; its "made with autark" credit stays. Without it, or with `true`, the map shows both.

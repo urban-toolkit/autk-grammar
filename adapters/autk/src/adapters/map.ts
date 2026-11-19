@@ -5,7 +5,7 @@ import { Targets, ComputeCache, ComputeLayerTypes } from '../types';
 import { DrawnLayers, LayerExports, exportKey, exportOf, exportOptions, mapIdOf } from '../drawn';
 import { rowKeys } from '../rows';
 import { AutkMap } from '@urban-toolkit/autk-map';
-import type { LayerRenderInfo } from '@urban-toolkit/autk-map';
+import type { LayerRenderInfo, MapStyleShape } from '@urban-toolkit/autk-map';
 import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator } from '@urban-toolkit/autk-core';
 import type { ColorHEX, ColorMapConfig, ColorRGB, LayerType, TransferFunction } from '@urban-toolkit/autk-core';
 import { AutkDb } from '@urban-toolkit/autk-db';
@@ -131,6 +131,47 @@ function checkColorMapRange(layerRef: MapLayerSpec): void {
     const center = layerRef.colorMapCenter;
     if (center != null && (center < low || center > high))
         throw refuse(`colorMapCenter (${center}) must lie within colorMapRange [${low}, ${high}].`);
+}
+
+/** The colors a style of the spec's own gives, all of which autk-map's `setCustomStyle` takes. */
+const STYLE_COLORS = ['background', 'surface', 'parks', 'water', 'roads', 'buildings', 'points', 'polylines', 'polygons'] as const;
+
+/**
+ * Refuses a `style` that is neither a name nor the nine colors of a style, each `#rrggbb`, and a `highlightColor` or an
+ * `invalidValueColor` that is not `#rrggbb`. autk-map would throw at the first color a style lacks.
+ */
+function checkMapColors(spec: MapSpec, index: number): void {
+    const refuse = (message: string) => new Error(`Map ${index}: ${message}`);
+    const style: unknown = spec.style;
+    if (style !== undefined && typeof style !== 'string') {
+        if (style === null || typeof style !== 'object' || Array.isArray(style))
+            throw refuse(`style must be the name of one of autk-map's styles or the colors of a style, not ${JSON.stringify(style)}.`);
+        const missing = STYLE_COLORS.filter((key) => !(key in style));
+        if (missing.length > 0)
+            throw refuse(`style gives no color for ${missing.join(', ')}: a style of the spec's own gives each of ${STYLE_COLORS.join(', ')}.`);
+        for (const key of STYLE_COLORS) {
+            const color = (style as Record<string, unknown>)[key];
+            if (typeof color !== 'string' || !HEX_COLOR.test(color))
+                throw refuse(`style.${key} must be a color written #rrggbb, not ${JSON.stringify(color)}.`);
+        }
+    }
+    for (const key of ['highlightColor', 'invalidValueColor'] as const) {
+        const color: unknown = spec[key];
+        if (color !== undefined && (typeof color !== 'string' || !HEX_COLOR.test(color)))
+            throw refuse(`${key} must be a color written #rrggbb, not ${JSON.stringify(color)}.`);
+    }
+}
+
+/** Sets a map's style, and its highlight and invalid-value colors, which autk-map keeps for each map. */
+function applyMapColors(map: AutkMap, spec: MapSpec): void {
+    if (typeof spec.style === 'string')
+        map.style.setPredefinedStyle(spec.style);
+    else if (spec.style)
+        map.style.setCustomStyle(spec.style as MapStyleShape);
+    if (spec.highlightColor !== undefined)
+        map.style.setHighlightColor(spec.highlightColor as ColorHEX);
+    if (spec.invalidValueColor !== undefined)
+        map.style.setInvalidValueColor(spec.invalidValueColor as ColorHEX);
 }
 
 /** Refuses a list of feature positions that is not whole numbers from 0, as `key` of a layer. */
@@ -434,6 +475,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                     checkPointSize(layerRef.pointSize, layerIdOf(layerRef));
                 }
                 checkPickedComps(spec);
+                checkMapColors(spec, index);
                 // Refused before the map is made, so a refused camera leaves nothing on the page.
                 const refusedCamera = spec.camera && cameraRefusal(spec.camera);
                 if(refusedCamera)
@@ -460,8 +502,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 // is destroyed here, so its controls, event handlers and GPU buffers do not outlive the failed run.
                 let drawn: string[][];
                 try {
-                    if(spec.style)
-                        map.style.setPredefinedStyle(spec.style)
+                    applyMapColors(map, spec);
 
                     await map.init();
                     await enterWorkspace(context, spec.workspace);

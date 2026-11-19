@@ -666,6 +666,32 @@ export type TerrainSpec = {
 }
 
 /**
+ * The colors of a map style of the spec's own, each `#rrggbb`: the background, and the color of each kind of layer
+ * drawn in one color. autk-map takes a style only whole, so each of the nine is given. Read by the Autark adapter; the
+ * deck.gl adapter ignores it.
+ */
+export type MapStyleColors = {
+    /** The map's background, where no layer is drawn. */
+    background: HexColor,
+    /** Surface layers: the ground of an area. */
+    surface: HexColor,
+    /** Parks layers. */
+    parks: HexColor,
+    /** Water layers. */
+    water: HexColor,
+    /** Roads layers. */
+    roads: HexColor,
+    /** Buildings layers. */
+    buildings: HexColor,
+    /** Points layers. */
+    points: HexColor,
+    /** Polylines layers. */
+    polylines: HexColor,
+    /** Polygons layers. */
+    polygons: HexColor,
+}
+
+/**
  * A map view.
  */
 export type MapSpec = {
@@ -676,8 +702,24 @@ export type MapSpec = {
     id?: string,
     /** Workspace the map reads its layers' tables from. */
     workspace?: WorkspaceName,
-    /** Map style. */
-    style?: string,
+    /**
+     * Map style: the name of one of autk-map's styles, such as `apple`, its default, or `light` (a name autk-map does not
+     * know draws in `apple`), or the colors of a style of the spec's own. A layer with a `color` is drawn in it instead,
+     * and a layer colored by value in its scheme. Read by the Autark adapter; the deck.gl adapter ignores it.
+     */
+    style?: string | MapStyleColors,
+    /**
+     * The color of the features the map draws as picked, by the user, a layer's `pickedComps`, a link or a call such as
+     * `highlightOnMap`, `#rrggbb`. Each map has its own; autk-map's is `#5dade2`. Read by the Autark adapter; the deck.gl
+     * adapter ignores it.
+     */
+    highlightColor?: HexColor,
+    /**
+     * The color of the features of a layer colored by value whose value autk-map cannot color: one without a value, or
+     * with one that is not on the layer's scale, `#rrggbb`. Each map has its own; autk-map's is `#ffffff`. Read by the
+     * Autark adapter; the deck.gl adapter ignores it.
+     */
+    invalidValueColor?: HexColor,
     /**
      * Whether autk-map shows its floating controls on the map: the menu of its layers and the legend. `false` hides them,
      * and the "made with autark" credit stays. Defaults to `true`. Read by the Autark adapter; the deck.gl adapter ignores

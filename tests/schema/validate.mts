@@ -312,6 +312,19 @@ expect('layer buildingsZeroHeight', layer({ buildingsZeroHeight: true }), true);
 expect('layer buildingsZeroHeight as a string', layer({ buildingsZeroHeight: 'yes' }), false);
 expect('map without its controls', { map: { ...layers, showUi: false } }, true);
 expect('map showUi as a string', { map: { ...layers, showUi: 'no' } }, false);
+const styleColors = {
+    background: '#102030', surface: '#203040', parks: '#2ca02c', water: '#1f77b4', roads: '#7f7f7f',
+    buildings: '#8c564b', points: '#e377c2', polylines: '#bcbd22', polygons: '#D62728',
+};
+expect('map style by name', { map: { ...layers, style: 'light' } }, true);
+expect('map style of its own colors', { map: { ...layers, style: styleColors } }, true);
+expect('map style without a parks color', { map: { ...layers, style: Object.fromEntries(Object.entries(styleColors).filter(([key]) => key !== 'parks')) } }, false);
+expect('map style with a color by name', { map: { ...layers, style: { ...styleColors, water: 'blue' } } }, false);
+expect('map style with a short hex color', { map: { ...layers, style: { ...styleColors, roads: '#777' } } }, false);
+expect('map style as a number', { map: { ...layers, style: 3 } }, false);
+expect('map highlight and invalid-value colors', { map: { ...layers, highlightColor: '#ff7f0e', invalidValueColor: '#BFBFBF' } }, true);
+expect('map highlightColor by name', { map: { ...layers, highlightColor: 'orange' } }, false);
+expect('map invalidValueColor as short hex', { map: { ...layers, invalidValueColor: '#f0f' } }, false);
 expect('layout with an unknown type', { map: layers, layout: { type: 'diagonal' } }, false);
 expect('layout grid with zero columns', { map: layers, layout: { type: 'grid', columns: 0 } }, false);
 expect('layout grid with columns that are not a whole number', { map: layers, layout: { type: 'grid', columns: 2.5 } }, false);
@@ -449,6 +462,8 @@ const newKeys: Array<[string, string[]]> = [
     ['MapLayerSpec', ['pickedComps', 'isPick']],
     ['MapLayerSpec', ['buildingsZeroHeight']],
     ['UrbanSpec', ['map.showUi']],
+    ['UrbanSpec', ['map.style', 'map.highlightColor', 'map.invalidValueColor']],
+    ['MapStyleColors', ['', 'background', 'surface', 'parks', 'water', 'roads', 'buildings', 'points', 'polylines', 'polygons']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

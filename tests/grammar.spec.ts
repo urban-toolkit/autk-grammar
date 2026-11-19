@@ -895,12 +895,12 @@ function worldMercatorScale(lat: number): number {
 }
 
 /**
- * How many pixels of the map on #map0 are drawn in `color`, `#rrggbb`, give or take 8 in each channel. The image is
- * attached to the test as `<name>.png`.
+ * How many pixels of the map on #map0, or on #canvasId, are drawn in `color`, `#rrggbb`, give or take 8 in each
+ * channel. The image is attached to the test as `<name>.png`.
  */
-async function pixelsIn(page: Page, color: string, name: string): Promise<number> {
+async function pixelsIn(page: Page, color: string, name: string, canvasId = 'map0'): Promise<number> {
     await page.waitForTimeout(1500);
-    const dataUrl = await page.evaluate(() => window.readMap('map0'));
+    const dataUrl = await page.evaluate((id) => window.readMap(id), canvasId);
     const image = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
     await test.info().attach(`${name}.png`, { body: image, contentType: 'image/png' });
     const png = PNG.sync.read(image);
@@ -994,6 +994,70 @@ test('draws the buildings that have no height with buildingsZeroHeight, each 3 t
         expect(top!).toBeLessThanOrEqual(23.8 + 1e-3);
     }
     await expectDrawn(page, 'map0');
+});
+
+test('draws a map in the colors of its style, and its picked features and the values it cannot color in its own colors', async ({ page }) => {
+    // Four squares whose layer is colored by v, the third without one.
+    const square = (i: number) => {
+        const x = -73.99 + i * 0.004;
+        return { type: 'Polygon' as const, coordinates: [[[x, 40.75], [x + 0.003, 40.75], [x + 0.003, 40.753], [x, 40.753], [x, 40.75]]] };
+    };
+    const gaps: DataSourceSpec = {
+        type: 'geojson', outputTableName: 'gaps',
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [0, 1, 2, 3].map((i) => ({ type: 'Feature' as const, properties: i === 2 ? { id: i } : { id: i, v: i * 10 }, geometry: square(i) })),
+        },
+    };
+    const colors = {
+        background: '#102030', surface: '#203040', parks: '#2ca02c', water: '#1f77b4', roads: '#7f7f7f',
+        buildings: '#8c564b', points: '#e377c2', polylines: '#bcbd22', polygons: '#d62728',
+    };
+
+    // A style of the spec's own: the background, and a layer without a color in the style's polygons color.
+    await runSpec(page, { data: [area, zones], map: { style: colors, layerRefs: [{ dataRef: 'zones' }] } });
+    expect(await pixelsIn(page, '#d62728', 'zones in the style')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, '#102030', 'background of the style')).toBeGreaterThan(10000);
+    // A style by its name draws in that style's colors, not these.
+    await runSpec(page, { data: [area, zones], map: { style: 'light', layerRefs: [{ dataRef: 'zones' }] } });
+    expect(await pixelsIn(page, '#d62728', 'zones in light')).toBe(0);
+
+    // highlightColor: the picked zones in orange rather than autk-map's blue.
+    const picked = (highlightColor?: string): MapSpec => ({
+        ...(highlightColor && { highlightColor }),
+        layerRefs: [{ dataRef: 'zones', title: 'Zones', color: '#d9d9d9', isPick: true, pickedComps: [0, 2] }],
+    });
+    await runSpec(page, { data: [area, zones], map: picked('#ff7f0e') });
+    expect(await pixelsIn(page, '#ff7f0e', 'picked in orange')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, '#5dade2', 'picked in orange, no blue')).toBe(0);
+    // autk-map keeps one highlight color for each map, so two maps of one spec draw theirs.
+    await runSpec(page, { data: [area, zones], map: [picked('#ff7f0e'), picked('#9467bd')] });
+    expect(await pixelsIn(page, '#ff7f0e', 'orange on the first map')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, '#9467bd', 'no purple on the first map')).toBe(0);
+    expect(await pixelsIn(page, '#9467bd', 'purple on the second map', 'map1')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, '#ff7f0e', 'no orange on the second map', 'map1')).toBe(0);
+
+    // invalidValueColor: the square without a v in magenta, rather than autk-map's white.
+    const byValue = (invalidValueColor?: string): UrbanSpec => ({
+        data: [area, gaps],
+        map: { ...(invalidValueColor && { invalidValueColor }), layerRefs: [{ dataRef: 'gaps', getFnv: 'v' }] },
+    });
+    await runSpec(page, byValue());
+    expect(await pixelsIn(page, '#ff00ff', 'no value in white')).toBe(0);
+    await runSpec(page, byValue('#ff00ff'));
+    expect(await pixelsIn(page, '#ff00ff', 'no value in magenta')).toBeGreaterThan(400);
+
+    // Refused before the map is made: a style that lacks a color or gives one autk-map cannot read, and colors not #rrggbb.
+    const withoutParks = Object.fromEntries(Object.entries(colors).filter(([key]) => key !== 'parks'));
+    await expect(runSpec(page, { data: [area, zones], map: { style: withoutParks as never, layerRefs: [{ dataRef: 'zones' }] } }))
+        .rejects.toThrow(`Map 0: style gives no color for parks: a style of the spec's own gives each of background, surface, parks, water, roads, buildings, points, polylines, polygons.`);
+    await expect(runSpec(page, { data: [area, zones], map: { style: { ...colors, water: 'blue' }, layerRefs: [{ dataRef: 'zones' }] } }))
+        .rejects.toThrow('Map 0: style.water must be a color written #rrggbb, not "blue".');
+    await expect(runSpec(page, { data: [area, zones], map: { ...picked('orange') } }))
+        .rejects.toThrow('Map 0: highlightColor must be a color written #rrggbb, not "orange".');
+    await expect(runSpec(page, byValue('#f0f')))
+        .rejects.toThrow('Map 0: invalidValueColor must be a color written #rrggbb, not "#f0f".');
+    expect(await page.evaluate(() => window.grammar.maps.length)).toBe(0);
 });
 
 test('hides the floating menu and legend of a map with showUi false, and keeps its credit', async ({ page }) => {
