@@ -258,7 +258,7 @@ plot: { dataRef: 'downtown_roads', mark: 'table', axis: ['osm_id', 'highway', 'n
 
 ## Compute
 
-Each entry of `compute` runs in order, once the data is loaded. Its `type` is `gpgpu`, the default, or `render`, which run on the GPU with autk-compute, or `windows` or `clusters`, which run on the CPU through autk-core.
+Each entry of `compute` runs in order, once the data is loaded. Its `type` is `gpgpu`, the default, or `render`, which run on the GPU with autk-compute, or `windows` or `clusters`, which run on the CPU through autk-core. A run refuses a pass of any other `type`.
 
 A GPGPU pass runs a WGSL function once per feature of a table:
 

@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
 import type {
-    CameraMotionStep, CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec, MapSpec,
-    PlotSpec, RenderComputeSpec, UrbanSpec,
+    CameraMotionStep, CameraSpec, ColorMapInterpolator, ComputeSpec, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec,
+    MapSpec, PlotSpec, RenderComputeSpec, UrbanSpec,
 } from '@urban-toolkit/the-urban-grammar';
 import type { CameraView, DrawnMark, LayerState, PaneBox, RunSummary } from './app/main';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
@@ -1438,6 +1438,14 @@ test('refuses a points layer in a render pass, and names the layer', async ({ pa
             aggregation: { type: 'classes' },
         }],
     })).rejects.toThrow('Render pass "seen": layer "spots" has the type "points", which a render pass cannot draw.');
+});
+
+test('refuses a compute pass of an unknown type, which ran as a GPGPU pass', async ({ page }) => {
+    // A misspelt type ran the pass as a GPGPU pass, which failed on the shader fields it lacks, with no word of the type.
+    await expect(runSpec(page, {
+        data: [area, zones],
+        compute: [{ type: 'window', dataRef: 'zones', floors: 1, outputTableName: 'w' } as unknown as ComputeSpec],
+    })).rejects.toThrow('Unknown compute pass type "window".');
 });
 
 test('refuses collect in a heatmap groupBy, naming the heatmap, and builds the heatmap with count', async ({ page }) => {

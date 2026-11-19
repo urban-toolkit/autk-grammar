@@ -14,6 +14,9 @@ import { enterWorkspace, inWorkspaceCrs, tableKey } from '../workspace';
  */
 const RENDER_LAYER_TYPES: ReadonlyArray<RenderLayerSpec['type']> = ['surface', 'parks', 'water', 'roads', 'buildings', 'polygons', 'polylines'];
 
+/** The `type` of each kind of compute pass; a pass without one is a GPGPU pass. */
+const COMPUTE_TYPES: ReadonlyArray<NonNullable<ComputeSpec['type']>> = ['gpgpu', 'render', 'windows', 'clusters'];
+
 /** The type of the table `name`, which the database knows or an earlier pass wrote. */
 function layerTypeOf(db: AutkDb, name: string, workspace: string | undefined, types?: ComputeLayerTypes): LayerType | undefined {
     return types?.get(tableKey(workspace, name)) ?? db.getTablesMetadata().find((table) => table.name === name)?.type as LayerType | undefined;
@@ -135,6 +138,10 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
 
     return {
         async resolveCompute(context: AutkDb | undefined, spec: ComputeSpec): Promise<AutkDb | undefined> {
+            // A pass of any other type would run as a GPGPU pass, and fail on the fields it lacks.
+            const type: unknown = (spec as { type?: unknown }).type;
+            if (type !== undefined && !(COMPUTE_TYPES as readonly unknown[]).includes(type))
+                throw new Error(`Unknown compute pass type "${String(type)}".`);
             if (!context) return;
             await enterWorkspace(context, spec.workspace);
             if (spec.type === 'render') await resolveRender(context, spec);
