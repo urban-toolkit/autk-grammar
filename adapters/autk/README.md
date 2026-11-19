@@ -426,6 +426,24 @@ map: { layerRefs: [{ dataRef: 'tracts', getFnv: 'income', colorMapInterpolator: 
 plot: { dataRef: 'tracts', mark: 'scatter', axis: ['area', 'income'], color: 'income', colorMapInterpolator: ColorMapInterpolator.SEQ_BLUES, colorMapRange: [0, 200000] },
 ```
 
+### `tickFormats`
+
+The d3-format specifiers of the tick labels of a plot's axes, `[x, y]`, such as `~s`, `,d`, `.2f` or `.0%`. Without it, `['~s', '~s']`.
+
+| Mark | Reads |
+|---|---|
+| `scatter` | x for the x axis and y for the y axis. |
+| `bar` | x for the x axis's labels that read as numbers, and y for the y axis. |
+| `line`, `linechart` | x for the x axis's buckets that read as numbers, and y for the y axis. |
+| `parallel-coordinates` | x for every axis of numbers. |
+| `heatmatrix`, `table` | Neither. |
+
+A run refuses a list that is not two specifiers d3-format reads.
+
+```ts
+plot: { dataRef: 'parcels', mark: 'scatter', axis: ['area', 'share'], tickFormats: [',.0f', '.0%'] }
+```
+
 ## Interactions
 
 A layer with `isPick` and a plot with `events` report what the user selects on `grammar.interactions`: `map:picking` and `plot:selection` give feature ids, the positions of the selected features among those the layer or the plot draws (a map layer leaves out features without a geometry). Every map of the spec reports its picks, though several draw one table. To link a selection to other tables, name the columns whose values identify those rows with `selectFields` on the layer or the plot, for example `selectFields: ['nta2020']`. The grammar does not read it; the events still report feature ids, and the app reads the key values from those rows.

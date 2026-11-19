@@ -60,6 +60,8 @@ declare global {
         rasterCells: (canvasId: string, layerId: string) => { values: number[]; rgba: number[] };
         legend: () => LegendState | null;
         plotMarks: (target?: string) => DrawnMark[];
+        plotTicks: (target: string, selector: string) => Array<Array<[unknown, string]>>;
+        plotAxisTitles: (target?: string) => string[];
         schemeColor: (value: number, interpolator: string, domain: number[]) => ColorRGB;
         domainLabels: (domain: number[]) => string[];
     }
@@ -286,6 +288,17 @@ window.plotMarks = (target = 'plot') => Array.from(document.querySelectorAll(`#$
     const style = getComputedStyle(mark);
     return { datum: (mark as Element & { __data__?: Record<string, unknown> }).__data__ ?? null, fill: style.fill, stroke: style.stroke };
 });
+
+/**
+ * The tick labels of the axes the selector finds in the element #target (`#axisX`, `#axisY`, or parallel coordinates'
+ * `.autkBrush[autkBrushId]`), axis by axis, each tick as the value d3 binds to it and the text it shows.
+ */
+window.plotTicks = (target: string, selector: string) => Array.from(document.querySelectorAll(`#${target} ${selector}`), (axis) =>
+    Array.from(axis.querySelectorAll('.tick'), (tick): [unknown, string] =>
+        [(tick as Element & { __data__?: unknown }).__data__, tick.querySelector('text')?.textContent ?? '']));
+
+/** The text of each axis title (`.axis-label`) of the plots in the element #target, in the page's order. */
+window.plotAxisTitles = (target = 'plot') => Array.from(document.querySelectorAll(`#${target} .axis-label`), (title) => title.textContent ?? '');
 
 /** autk-core's color for a value on a scheme over a domain, as autk-map colors a raster cell. */
 window.schemeColor = (value: number, interpolator: string, domain: number[]) =>

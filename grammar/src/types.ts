@@ -643,6 +643,13 @@ export type MapSpec = {
     layerRefs: MapLayerSpec[]
 }
 
+/**
+ * A d3-format specifier, such as `~s`, `,d`, `.2f` or `.0%`: d3-format's
+ * `[[fill]align][sign][symbol][0][width][,][.precision][~][type]`.
+ * @pattern ^(?:.?[<>=^])?[-+( ]?[$#]?0?\d*,?(?:\.\d+)?~?[a-zA-Z%]?$
+ */
+type TickFormat = string;
+
 export interface PlotBase {
     /**
      * Name of the plot, which a link in `links` uses as its `source`. Unique among the ids of the maps and plots.
@@ -703,6 +710,13 @@ export interface PlotBase {
      * color. It cannot be set with `colorMapRange`. Read by the Autark adapter; the deck.gl adapter ignores it.
      */
     colorMapDomain?: string[],
+    /**
+     * d3-format specifiers of the tick labels of the plot's axes, `[x, y]`: a scatter plot's x and y axes; a bar or line
+     * chart's x axis, for labels that read as numbers, and its y axis; and every axis of numbers of parallel coordinates,
+     * which read only the first. Heat matrices and tables ignore it. Without it, `['~s', '~s']`. Read by the Autark
+     * adapter; the deck.gl adapter ignores it.
+     */
+    tickFormats?: [x: TickFormat, y: TickFormat],
     title?: string,
     /** Interactions the plot emits. */
     events?: PlotEvent[],

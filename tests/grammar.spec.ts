@@ -2102,3 +2102,36 @@ test("colors a plot over its colorMapRange, colorMapDomain's categories or norma
     await expect(runSpec(page, { data: [area, zones], plot: bar({ colorMapRange: [30, 0] }) }))
         .rejects.toThrow('Plot "z": colorMapRange low (30) must be less than high (0).');
 });
+
+test("formats the tick labels of a plot's axes with its tickFormats", async ({ page }) => {
+    const ticks = (selector: string) => page.evaluate(([target, axes]) => window.plotTicks(target, axes), ['plot', selector] as [string, string]);
+    const percent = (value: unknown) => `${(Number(value) * 100).toFixed(0)}%`;
+    const zonesBy = (mark: string, tickFormats: unknown) =>
+        runSpec(page, { data: [area, zones], plot: plotOf({ id: 'p', dataRef: 'zones', mark, axis: ['id', 'v'], tickFormats }) });
+
+    // A scatter plot: the first formats the x axis, the zones' ids from 0 to 3, and the second the y axis, their values
+    // from 0 to 30. autk-plot's '~s' would show 0.5 as "500m".
+    await zonesBy('scatter', ['.2f', '.0%']);
+    const [[x], [y]] = [await ticks('#axisX'), await ticks('#axisY')];
+    expect(x.length).toBeGreaterThan(2);
+    expect(y.length).toBeGreaterThan(2);
+    for (const [value, text] of x) expect(text).toBe(Number(value).toFixed(2));
+    for (const [value, text] of y) expect(text).toBe(percent(value));
+
+    // A bar chart: the first formats the x labels that read as numbers, the ids, and the second the y axis.
+    await zonesBy('bar', ['.1f', '.0%']);
+    expect((await ticks('#axisX'))[0].map(([, text]) => text)).toEqual(['0.0', '1.0', '2.0', '3.0']);
+    for (const [value, text] of (await ticks('#axisY'))[0]) expect(text).toBe(percent(value));
+
+    // Parallel coordinates: the first formats every axis of numbers, and the second none.
+    await zonesBy('parallel-coordinates', ['.1f', '.0%']);
+    const axes = await ticks('.autkBrush');
+    expect(axes).toHaveLength(2);
+    for (const axis of axes) {
+        expect(axis.length).toBeGreaterThan(2);
+        for (const [value, text] of axis) expect(text).toBe(Number(value).toFixed(1));
+    }
+
+    // A list d3-format cannot read is refused before anything is drawn.
+    await expect(zonesBy('scatter', ['.2f'])).rejects.toThrow('Plot "p": tickFormats must hold two d3-format specifiers, [x, y].');
+});

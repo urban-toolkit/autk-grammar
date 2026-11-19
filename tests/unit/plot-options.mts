@@ -87,6 +87,24 @@ test('refuses a colorMapRange that is not [low, high] with low below high, or on
     checkPlotKeys(plot({ colorMapRange: [-10, 10] }));
 });
 
+test('hands autk-plot the tick formats of the x and y axes, as d3-format reads them', () => {
+    assert.deepEqual(plotOptions(plot({ tickFormats: ['.2f', '.0%'] }), rows).tickFormats, ['.2f', '.0%']);
+    assert.equal('tickFormats' in plotOptions(plot(), rows), false);
+    for (const tickFormats of [['', ''], ['~s', ',d'], ['$,.2f', '+.1e'], ['>8.3~s', '(,.0f'], ['x^10', '#x'], ['.0%', '08.2f']])
+        checkPlotKeys(plot({ tickFormats }));
+});
+
+test('refuses tick formats that are not two specifiers d3-format reads', () => {
+    const two = 'tickFormats must hold two d3-format specifiers, [x, y].';
+    refused({ tickFormats: ['~s'] }, two);
+    refused({ tickFormats: ['~s', '~s', '~s'] }, two);
+    refused({ tickFormats: '~s' }, two);
+    const unread = (at: number, format: string) => `tickFormats[${at}] ${format} is not a d3-format specifier, such as "~s", ",d" or ".0%".`;
+    refused({ tickFormats: ['~s', '%%'] }, unread(1, '"%%"'));
+    refused({ tickFormats: ['dollars', '~s'] }, unread(0, '"dollars"'));
+    refused({ tickFormats: [2, '~s'] }, unread(0, '2'));
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
     try { fn(); console.log(`ok ${name}`); }

@@ -16,7 +16,7 @@ export function plotKey(spec: PlotSpec): string {
 }
 
 /** What a plot spec sets of autk-plot's config, beside the plot's type, rows, columns, events and size. */
-export type PlotOptions = Pick<PlotConfig, 'labels' | 'colorMapInterpolator' | 'categoricalColorMapInterpolator' | 'domainSpec'>;
+export type PlotOptions = Pick<PlotConfig, 'labels' | 'colorMapInterpolator' | 'categoricalColorMapInterpolator' | 'domainSpec' | 'tickFormats'>;
 
 const SCHEMES = new Set<string>(Object.values(ColorMapInterpolator));
 
@@ -34,6 +34,23 @@ function schemeRefusal(key: 'colorMapInterpolator' | 'categoricalColorMapInterpo
         : `${key} "${scheme}" is a categorical scheme: numbers take an interpolate* scheme, and categories take categoricalColorMapInterpolator.`;
 }
 
+/** The specifiers d3-format reads: its own pattern, `[[fill]align][sign][symbol][0][width][,][.precision][~][type]`. */
+const D3_FORMAT = /^(?:.?[<>=^])?[-+( ]?[$#]?0?\d*,?(?:\.\d+)?~?[a-zA-Z%]?$/;
+
+/**
+ * Why a plot refuses its `tickFormats`, or `undefined` when it takes them: autk-plot formats the x axis with the first
+ * and the y axis with the second, and d3-format throws on a specifier it cannot read, `undefined` among them.
+ */
+function tickFormatsRefusal(tickFormats: unknown): string | undefined {
+    if (tickFormats === undefined) return undefined;
+    if (!Array.isArray(tickFormats) || tickFormats.length !== 2)
+        return 'tickFormats must hold two d3-format specifiers, [x, y].';
+    const unread = tickFormats.findIndex((format) => typeof format !== 'string' || !D3_FORMAT.test(format));
+    if (unread >= 0)
+        return `tickFormats[${unread}] ${JSON.stringify(tickFormats[unread])} is not a d3-format specifier, such as "~s", ",d" or ".0%".`;
+    return undefined;
+}
+
 /**
  * Refuses what a plot spec sets that autk-plot cannot draw, with a sentence that names the plot. `AutkGrammar.run` calls
  * it for each plot before it draws any view. The schema refuses the same values; a host that skips it gets the sentence.
@@ -41,7 +58,8 @@ function schemeRefusal(key: 'colorMapInterpolator' | 'categoricalColorMapInterpo
 export function checkPlotKeys(spec: PlotSpec): void {
     const refusal = schemeRefusal('colorMapInterpolator', spec.colorMapInterpolator, false)
         ?? schemeRefusal('categoricalColorMapInterpolator', spec.categoricalColorMapInterpolator, true)
-        ?? colorMapRangeRefusal(spec.colorMapRange, spec.colorMapDomain);
+        ?? colorMapRangeRefusal(spec.colorMapRange, spec.colorMapDomain)
+        ?? tickFormatsRefusal(spec.tickFormats);
     if (refusal) throw new Error(`Plot "${plotKey(spec)}": ${refusal}`);
 }
 
@@ -85,5 +103,6 @@ export function plotOptions(spec: PlotSpec, rows: readonly (Feature | null | und
             categoricalColorMapInterpolator: spec.categoricalColorMapInterpolator as unknown as ColorMapInterpolator,
         }),
         ...(domainSpec && { domainSpec }),
+        ...(spec.tickFormats !== undefined && { tickFormats: [...spec.tickFormats] }),
     };
 }

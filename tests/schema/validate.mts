@@ -327,6 +327,14 @@ expect('plot colorMapDomain with a number', plotWith({ colorMapDomain: ['oak', 3
 expect('plot normalization of an unknown mode', plotWith({ normalization: { mode: 'log' } }), false);
 expect('plot normalization without a mode', plotWith({ normalization: { lowerPercentile: 5 } }), false);
 expect('plot normalization as a string', plotWith({ normalization: 'percentile' }), false);
+expect('plot tick formats', plotWith({ tickFormats: ['.2f', '.0%'] }, 'scatter'), true);
+expect('plot tick formats with fill, sign, symbol, width, comma, precision and trim', plotWith({ tickFormats: ['x^10', '+$,.2~f'] }), true);
+expect('plot tick formats empty, as d3-format reads them', plotWith({ tickFormats: ['', ''] }, 'parallel-coordinates'), true);
+expect('plot tick formats with one specifier', plotWith({ tickFormats: ['~s'] }, 'scatter'), false);
+expect('plot tick formats with three specifiers', plotWith({ tickFormats: ['~s', '~s', '~s'] }), false);
+expect('plot tick formats as a string', plotWith({ tickFormats: '~s' }), false);
+expect('plot tick format d3-format cannot read', plotWith({ tickFormats: ['~s', '%%'] }), false);
+expect('plot tick format as a number', plotWith({ tickFormats: [2, '~s'] }), false);
 
 // Each layer styling option is documented in the schema.
 const layerProperties = schema.definitions?.MapLayerSpec?.properties ?? {};
@@ -397,6 +405,7 @@ const newKeys: Array<[string, string[]]> = [
     ['DropSourceSpec', ['', 'workspace', 'dataRef']],
     ['UrbanSpec', ['plot.color', 'plot.colorMapInterpolator', 'plot.categoricalColorMapInterpolator']],
     ['UrbanSpec', ['plot.normalization', 'plot.colorMapRange', 'plot.colorMapDomain']],
+    ['UrbanSpec', ['plot.tickFormats']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {
