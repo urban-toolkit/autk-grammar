@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
 import type {
     CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec, MapSpec, PlotSpec,
-    RenderComputeSpec, UrbanSpec,
+    RenderComputeSpec, TerrainSpec, UrbanSpec,
 } from '@urban-toolkit/the-urban-grammar';
 import type { DrawnMark, LayerState, PaneBox, RunSummary } from './app/main';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
@@ -1541,6 +1541,52 @@ test("keeps the camera's up direction across its line of sight at any pitch belo
         .rejects.toThrow('Map 0: camera.pitch must be at least 0 and less than 90 degrees, not 90');
 });
 
+test('raises a map on the heights of the raster band its terrain names, and refuses a terrain that is not a raster band', async ({ page }) => {
+    // The 24 yearly bands of the Niteroi temperature GeoTIFF, from 2001 to 2024, as heights: each band is another ground.
+    const area = { type: 'Polygon' as const, coordinates: [[[-43.2, -22.95], [-43.0, -22.95], [-43.0, -22.8], [-43.2, -22.8], [-43.2, -22.95]]] };
+    const withTerrain = (terrain?: TerrainSpec): UrbanSpec => ({
+        data: [
+            { type: 'geojson', outputTableName: 'area', geojsonObject: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: area, properties: {} }] } },
+            { type: 'geotiff', outputTableName: 'lst', geotiffFileUrl: '/data/niteroi_lst_verao_2001_2024.tif' },
+        ],
+        map: { layerRefs: [{ dataRef: 'area' }], ...(terrain && { terrain }) },
+    });
+    const terrainOf = () => page.evaluate(() => window.terrain('map0'));
+
+    // Without a terrain the map is flat.
+    await runSpec(page, withTerrain());
+    expect(await terrainOf()).toBeNull();
+
+    // The first band by default: the ground's heights run over that band's values.
+    await runSpec(page, withTerrain({ dataRef: 'lst' }));
+    const first = await terrainOf();
+    expect(first).toMatchObject({ band: 'band_1', width: 22, height: 15 });
+    expect(first!.minHeight).toBeCloseTo(first!.bandMin, 4);
+    expect(first!.maxHeight).toBeCloseTo(first!.bandMax, 4);
+    // autk-map fits the view to the ground: it looks at the middle of the raster.
+    const [minX, minY, maxX, maxY] = first!.bounds;
+    const { lookAt } = await page.evaluate(() => window.cameraState('map0'));
+    expect(lookAt[0]).toBeCloseTo((minX + maxX) / 2, 0);
+    expect(lookAt[1]).toBeCloseTo((minY + maxY) / 2, 0);
+    await expectDrawn(page, 'map0');
+
+    // A band by its id: 2024's ground, not 2001's.
+    await runSpec(page, withTerrain({ dataRef: 'lst', band: 'band_24' }));
+    const last = await terrainOf();
+    expect(last).toMatchObject({ band: 'band_24' });
+    expect(last!.minHeight).toBeCloseTo(last!.bandMin, 4);
+    expect(last!.maxHeight).toBeCloseTo(last!.bandMax, 4);
+    expect(last!.maxHeight).not.toBeCloseTo(first!.maxHeight, 1);
+
+    // A band that names none of the 24, a table that is not a raster, and a name that is no table.
+    await expect(runSpec(page, withTerrain({ dataRef: 'lst', band: 'band_25' })))
+        .rejects.toThrow('Map 0: terrain band "band_25" names none of its 24 bands: band_1, band_2,');
+    await expect(runSpec(page, withTerrain({ dataRef: 'area' })))
+        .rejects.toThrow('Map 0: terrain dataRef "area" names a polygons table, and a terrain takes its heights from a raster table');
+    await expect(runSpec(page, withTerrain({ dataRef: 'elevation' })))
+        .rejects.toThrow(`Map 0: terrain dataRef "elevation" names no table of the map's workspace.`);
+});
+
 test('draws the second run of a reused grammar from its own table, though the first run loaded a GeoJSON table of that name', async ({ page }) => {
     // The grammar kept each GeoJSON table it loaded, which its plots read before the database, until the instance went
     // away: run again with a table of the same name from a CSV, a plot drew the first run's GeoJSON rows.
@@ -2376,4 +2422,17 @@ test("reads each building part's outline in a pass's fromFeature table, as a Geo
     const widths = await page.evaluate(() => Promise.all([0, 1, 2, 3].map((i) => window.valueAt('spots', i, 'compute.width'))));
     expect(widths).toHaveLength(4);
     for (const width of widths) expect(width as number).toBeCloseTo(60, 3);
+});
+
+test('raises Manhattan in map-terrain to the heights of its elevation model, under its neighborhoods and elevation colors', async ({ page }) => {
+    await run(page, 'map-terrain');
+    const terrain = await page.evaluate(() => window.terrain('map0'));
+    expect(terrain).toMatchObject({ band: 'band_1' });
+    expect(terrain!.minHeight).toBeCloseTo(terrain!.bandMin, 3);
+    expect(terrain!.maxHeight).toBeCloseTo(terrain!.bandMax, 3);
+    // The model's 30 m cells: the island rises to about 80 m in Inwood.
+    expect(terrain!.width * terrain!.height).toBeGreaterThan(400_000);
+    expect(terrain!.maxHeight).toBeGreaterThan(60);
+    expect((await mapLayers(page)).map((layer) => [layer.id, layer.type])).toEqual([['Neighborhoods', 'polygons'], ['Elevation (m)', 'raster']]);
+    await expectDrawn(page, 'map0');
 });

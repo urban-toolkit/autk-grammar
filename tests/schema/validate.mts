@@ -292,6 +292,14 @@ expect('camera pitch below 0', { map: { ...layers, camera: { pitch: -1 } } }, fa
 expect('camera bearing above 360', { map: { ...layers, camera: { bearing: 361 } } }, false);
 expect('camera zoom below 0', { map: { ...layers, camera: { zoom: -1 } } }, false);
 expect('camera zoom as a string', { map: { ...layers, camera: { zoom: '12' } } }, false);
+// Map keys of 5.3.0. Keys the schema does not name are allowed, so each refused form is valid until its key is typed.
+expect('map terrain', { map: { ...layers, terrain: { dataRef: 'dem' } } }, true);
+expect('map terrain from a band', { map: { ...layers, terrain: { dataRef: 'lst', band: 'band_24' } } }, true);
+expect('map terrain as a table name', { map: { ...layers, terrain: 'dem' } }, false);
+expect('map terrain without dataRef', { map: { ...layers, terrain: { band: 'band_1' } } }, false);
+expect('map terrain with an empty dataRef', { map: { ...layers, terrain: { dataRef: '' } } }, false);
+expect('map terrain with an empty band', { map: { ...layers, terrain: { dataRef: 'dem', band: '' } } }, false);
+expect('map terrain with a band as a number', { map: { ...layers, terrain: { dataRef: 'dem', band: 1 } } }, false);
 expect('layout with an unknown type', { map: layers, layout: { type: 'diagonal' } }, false);
 expect('layout grid with zero columns', { map: layers, layout: { type: 'grid', columns: 0 } }, false);
 expect('layout grid with columns that are not a whole number', { map: layers, layout: { type: 'grid', columns: 2.5 } }, false);
@@ -424,6 +432,8 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['plot.axisLabels']],
     ['UrbanSpec', ['plot.selection']],
     ['UrbanSpec', ['plot.markColor', 'plot.highlightColor']],
+    ['UrbanSpec', ['map.terrain', 'map.terrain.dataRef', 'map.terrain.band']],
+    ['TerrainSpec', ['']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

@@ -629,6 +629,26 @@ export type CameraSpec = {
 }
 
 /**
+ * The ground of a map in 3D, raised to the heights a raster band gives. Read by the Autark adapter; the deck.gl adapter
+ * ignores it.
+ */
+export type TerrainSpec = {
+    /**
+     * Name of the raster table whose band gives the ground's height in each of its cells, in the workspace's units, such
+     * as a `geotiff` source of an elevation model in meters. It is a table of the map's workspace. A cell without a value
+     * lies at height 0.
+     * @minLength 1
+     */
+    dataRef: string,
+    /**
+     * The band of heights, by its id (`band_1`, ...) or its label, as a raster layer's `getFnv` names one. Defaults to the
+     * first band. On a raster of several bands, a band that names none of them is refused.
+     * @minLength 1
+     */
+    band?: string,
+}
+
+/**
  * A map view.
  */
 export type MapSpec = {
@@ -643,6 +663,12 @@ export type MapSpec = {
     style?: string,
     /** Where the map looks from. */
     camera?: CameraSpec,
+    /**
+     * A 3D ground from an elevation raster: autk-map raises the ground the raster covers to its heights, drapes the map's
+     * flat layers over it, stands its buildings on it, and fits the view to it, from which `camera` moves. Read by the
+     * Autark adapter; the deck.gl adapter ignores it.
+     */
+    terrain?: TerrainSpec,
     /** Layers to draw, bottom first. Each names a table with `dataRef`. */
     layerRefs: MapLayerSpec[]
 }

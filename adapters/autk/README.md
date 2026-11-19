@@ -331,6 +331,25 @@ The camera turns around the point the map looks at, which the view that fits the
 map: { id: 'downtown', camera: { zoom: 15, pitch: 50, bearing: 30 }, layerRefs: [{ dataRef: 'buildings' }] }
 ```
 
+### `terrain`
+
+A map's `terrain` raises its ground to the heights a raster band gives, through autk-map's terrain mode: the ground the raster covers rises to its heights, the map's flat layers are draped over it, and its buildings stand on it. The view fits the raster, and the map's `camera` moves from there.
+
+| Field | Effect |
+|---|---|
+| `dataRef` | The raster table of heights, in the workspace's units: a `geotiff` source of an elevation model in meters, for example. It is a table of the map's workspace. A cell without a value lies at height 0. |
+| `band` | The band of heights, by its id (`band_1`, ...) or its label, as a raster layer's `getFnv` names one. Defaults to the first band. |
+
+A run refuses a `dataRef` that names no raster table of the map's workspace, and a `band` that names none of the bands of a raster of several.
+
+```ts
+data: [
+  { type: 'geojson', outputTableName: 'neighborhoods', geojsonFileUrl: '/data/mnt_neighs.geojson' },
+  { type: 'geotiff', outputTableName: 'elevation', geotiffFileUrl: '/data/mnt_dem.tif', coordinateFormat: 'EPSG:3857' },
+],
+map: { terrain: { dataRef: 'elevation' }, camera: { pitch: 60, bearing: 30 }, layerRefs: [{ dataRef: 'neighborhoods' }] },
+```
+
 ## Layer styling
 
 Besides `dataRef`, a layer of `map.layerRefs` takes these styling options:

@@ -1,5 +1,5 @@
 import type { FeatureCollection } from 'geojson';
-import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec } from '@urban-toolkit/the-urban-grammar';
+import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec, TerrainSpec } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, ComputeCache, ComputeLayerTypes } from '../types';
 import { DrawnLayers, LayerExports, exportKey, exportOf, exportOptions, mapIdOf } from '../drawn';
@@ -216,6 +216,27 @@ export function applyCamera(map: AutkMap, camera: CameraSpec): void {
 }
 
 /**
+ * Raises the map's ground to the heights of a raster band, through autk-map's `enableTerrainMode`, once its layers are
+ * loaded. autk-map drapes the flat layers over the ground the raster covers and fits the view to it. It refuses a
+ * `dataRef` that names no raster table of the map's workspace, and a `band` that names none of several bands.
+ */
+async function loadTerrain(map: AutkMap, context: AutkDb, terrain: TerrainSpec, index: number): Promise<void> {
+    const refuse = (message: string) => new Error(`Map ${index}: terrain ${message}`);
+    const table = context.getTablesMetadata().find((candidate) => candidate.name === terrain.dataRef);
+    if (!table)
+        throw refuse(`dataRef "${terrain.dataRef}" names no table of the map's workspace.`);
+    if (table.type !== 'raster')
+        throw refuse(`dataRef "${terrain.dataRef}" names a ${table.type ?? 'plain'} table, and a terrain takes its heights from a raster table, such as a geotiff source's.`);
+    const collection = await context.getRaster(terrain.dataRef) as unknown as FeatureCollection;
+    const band = rasterBand(collection, terrain.band, (message) => refuse(`band ${message}`));
+    try {
+        map.enableTerrainMode(collection, band);
+    } catch (error) {
+        throw refuse(`"${terrain.dataRef}": ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+
+/**
  * The key of the row a vector layer draws at each of its positions. autk-map draws each feature it is handed as one
  * component, in order, and none for a feature with nothing to draw; a component names its feature by its index among
  * those handed (`featureIndex`). `kept` gives the table row of each feature handed, and `keys` each table row's key.
@@ -405,6 +426,8 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                     await map.init();
                     await enterWorkspace(context, spec.workspace);
                     drawn = await loadLayers(map, context, spec);
+                    if(spec.terrain)
+                        await loadTerrain(map, context, spec.terrain, index);
                 } catch(error) {
                     try {
                         map.destroy();

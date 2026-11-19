@@ -29,6 +29,22 @@ export type LayerState = {
     highlightedIds?: number[];
 };
 
+/**
+ * A map's terrain: the band autk-map was handed for it, the lowest and highest finite values of that band, and the
+ * heightfield autk-map built from it: its cells across and down, its lowest and highest heights, and its bounds
+ * `[minX, minY, maxX, maxY]` around the map's origin.
+ */
+export type TerrainState = {
+    band: string;
+    bandMin: number;
+    bandMax: number;
+    width: number;
+    height: number;
+    minHeight: number;
+    maxHeight: number;
+    bounds: number[];
+};
+
 /** A map's legend as the page shows it: its heading, its labels left to right, and whether it shows. */
 export type LegendState = { title: string | null; labels: string[]; visible: boolean };
 
@@ -63,6 +79,7 @@ declare global {
         cameraState: (canvasId: string) => { eye: number[]; lookAt: number[] };
         rasterCells: (canvasId: string, layerId: string) => { values: number[]; rgba: number[] };
         handedBand: (canvasId: string, layerId: string, band: string) => number[];
+        terrain: (canvasId: string) => TerrainState | null;
         legend: () => LegendState | null;
         plotMarks: (target?: string) => DrawnMark[];
         plotTicks: (target: string, selector: string) => Array<Array<[unknown, string]>>;
@@ -89,6 +106,15 @@ AutkMap.prototype.loadCollection = function (this: AutkMap, ...args: Parameters<
     if (!handed.has(this)) handed.set(this, new Map());
     handed.get(this)!.set(layerId, collection as FeatureCollection);
     return loadCollection.apply(this, args);
+};
+
+/** The raster collection and the band's path autk-map was handed for the terrain of each map, recorded as it builds it. */
+const terrains = new WeakMap<AutkMap, { collection: FeatureCollection; property: string }>();
+const enableTerrainMode = AutkMap.prototype.enableTerrainMode;
+AutkMap.prototype.enableTerrainMode = function (this: AutkMap, ...args: Parameters<AutkMap['enableTerrainMode']>) {
+    const [collection, property] = args;
+    terrains.set(this, { collection: collection as FeatureCollection, property });
+    return enableTerrainMode.apply(this, args);
 };
 
 /**
@@ -298,6 +324,24 @@ window.handedBand = (canvasId: string, layerId: string, band: string) => {
     const values = (collection?.features[0]?.properties as Record<string, unknown> | null | undefined)?.[band];
     if (!values) throw new Error(`#${canvasId} was handed no band ${band} for ${layerId}`);
     return Array.from(values as ArrayLike<number>);
+};
+
+/** The terrain of the map on #canvasId, or null when it draws none (see `TerrainState`). */
+window.terrain = (canvasId: string) => {
+    const map = mapOn(canvasId);
+    const path = (map as unknown as { _terrainRenderPath?: { heightfield?: Omit<TerrainState, 'band' | 'bandMin' | 'bandMax'> } | null })._terrainRenderPath;
+    const handedTerrain = terrains.get(map);
+    if (!path?.heightfield || !handedTerrain) return null;
+    const values = (handedTerrain.collection.features[0]?.properties as Record<string, ArrayLike<number>> | null)?.[handedTerrain.property] ?? [];
+    let bandMin = Infinity;
+    let bandMax = -Infinity;
+    for (let i = 0; i < values.length; i++) {
+        if (!Number.isFinite(values[i])) continue;
+        bandMin = Math.min(bandMin, values[i]);
+        bandMax = Math.max(bandMax, values[i]);
+    }
+    const { width, height, minHeight, maxHeight, bounds } = path.heightfield;
+    return { band: handedTerrain.property, bandMin, bandMax, width, height, minHeight, maxHeight, bounds: [...bounds] };
 };
 
 /** The legend of the page's map. */
