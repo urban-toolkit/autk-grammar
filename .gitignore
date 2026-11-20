@@ -3,4 +3,5 @@ dist
 .claude
 tests/test-results
 tests/playwright-report
+tests/.duckdb-extensions
 build
