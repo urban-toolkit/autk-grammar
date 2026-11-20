@@ -312,6 +312,16 @@ test("a heatmap hands autk-db each band's normalize", async () => {
     ]);
 });
 
+test('a heatmap without groupBy hands autk-db the count its one band holds, which autk-db 4.1.1 built as 0 without it', async () => {
+    const heatmap = { type: 'heatmap', outputTableName: 'heat', joinDataRef: 'noise', near: { distance: 500 }, grid: { rows: 4, columns: 4 } };
+    const count = [{ column: '*', aggregateFn: 'count' }];
+    for (const fields of [{}, { groupBy: [] }]) {
+        assert.deepEqual(await callsFor({ ...heatmap, ...fields }), [
+            ['buildHeatmap', { tableJoinName: 'noise', near: { distance: 500 }, outputTableName: 'heat', grid: { rows: 4, columns: 4 }, groupBy: count }],
+        ]);
+    }
+});
+
 // Sources after compute: the same calls, and the tables they write leave the compute adapter's caches.
 test('a source after compute hands autk-db the fields it reads, never after', async () => {
     assert.deepEqual(await callsFor({ type: 'csv', outputTableName: 'c', csvFileUrl: 'rows.csv', after: 'compute' }),

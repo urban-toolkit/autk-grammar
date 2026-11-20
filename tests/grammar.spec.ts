@@ -2022,7 +2022,10 @@ test('builds a heatmap after compute from the windows a pass wrote back', async 
             ({ ...feature, properties: { ...feature.properties, height: 15 } })) },
     };
     await runSpec(page, {
-        data: [area, buildings, { type: 'heatmap', outputTableName: 'heat', joinDataRef: 'windows', near: { distance: 10000 }, grid: { rows: 1, columns: 1 }, after: 'compute' }],
+        data: [area, buildings, {
+            type: 'heatmap', outputTableName: 'heat', joinDataRef: 'windows', near: { distance: 10000 }, grid: { rows: 1, columns: 1 },
+            groupBy: [{ column: '*', aggregateFn: 'count' }], after: 'compute',
+        }],
         compute: [{ type: 'windows', dataRef: 'buildings', floors: 2, outputTableName: 'windows', writeBack: true }],
         map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'heat' }] },
     });
@@ -2092,6 +2095,19 @@ test('refuses collect in a heatmap groupBy, naming the heatmap, and builds the h
         .rejects.toThrow('Heatmap "heat": aggregateFn "collect" lists the rows near a cell, and a cell holds one value; use sum, avg, count, min, max or weighted.');
     await runSpec(page, { data: [area, spots, heatmap('count')], map: { layerRefs: [{ dataRef: 'heat', getFnv: 'count.spots' }] } });
     expect((await mapLayers(page)).map((layer) => [layer.id, layer.type])).toEqual([['heat', 'raster']]);
+});
+
+test('counts the rows near each cell of a heatmap without groupBy, as with a count, which autk-db 4.1.1 drew as 0', async ({ page }) => {
+    // Each of the four cells is within 10 km of all nine spots.
+    const heatmap = (fields: object): DataSourceSpec => ({
+        type: 'heatmap', outputTableName: 'heat', joinDataRef: 'spots', near: { distance: 10000 }, grid: { rows: 2, columns: 2 }, ...fields,
+    }) as DataSourceSpec;
+    const cells = async (fields: object) => {
+        await runSpec(page, { data: [area, spots, heatmap(fields)], map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'heat' }] } });
+        return page.evaluate(() => window.handedBand('map0', 'heat', 'band_1'));
+    };
+    expect(await cells({ groupBy: [{ column: '*', aggregateFn: 'count' }] })).toEqual([9, 9, 9, 9]);
+    expect(await cells({})).toEqual([9, 9, 9, 9]);
 });
 
 test('accepts useCentroid on a heatmap', async ({ page }) => {
