@@ -1,5 +1,8 @@
 import type { GpgpuComputeSpec, FromFeatureDirective } from '@urban-toolkit/the-urban-grammar';
 import type { GpgpuPipelineParams } from '@urban-toolkit/autk-compute';
+// A `fromFeature` path is read as autk-map reads a layer's getFnv: key by key, else as a key with dots in it, such as
+// the `<table>.<column>` a join writes its aggregates under.
+import { valueAtPath } from '@urban-toolkit/autk-core';
 import type { Feature, FeatureCollection } from 'geojson';
 
 /** Tables a compute pass can read, keyed by table name. */
@@ -37,13 +40,6 @@ export function isFromFeature(value: unknown): value is FromFeatureDirective {
 
 function lookup(layers: ComputeLayers, name: string): FeatureCollection | undefined {
     return layers instanceof Map ? layers.get(name) : layers[name];
-}
-
-function valueAtPath(item: unknown, path: string): unknown {
-    return path.split('.').reduce<unknown>((acc, key) => {
-        if (acc == null || typeof acc !== 'object') return undefined;
-        return (acc as Record<string, unknown>)[key];
-    }, item);
 }
 
 function directives(block: GpgpuComputeSpec): FromFeatureDirective[] {

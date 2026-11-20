@@ -6,7 +6,8 @@ import { DrawnLayers, LayerExports, exportKey, exportOf, exportOptions, mapIdOf 
 import { rowKeys } from '../rows';
 import { AutkMap } from '@urban-toolkit/autk-map';
 import type { LayerRenderInfo, MapStyleShape } from '@urban-toolkit/autk-map';
-import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator } from '@urban-toolkit/autk-core';
+// A path is read as autk-map reads getFnv: key by key, else as a key with dots in it, such as a join's `<table>.<column>`.
+import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator, valueAtPath } from '@urban-toolkit/autk-core';
 import type { ColorHEX, ColorMapConfig, ColorRGB, LayerType, TransferFunction } from '@urban-toolkit/autk-core';
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { extentOf } from './data';
@@ -289,13 +290,6 @@ function checkPickedComps(spec: MapSpec): void {
         if (later)
             throw new Error(`Layer "${layerId}": pickedComps draws features as picked on the layer that picks, but layer "${layerIdOf(later)}", after it, picks too: autk-map lets one layer of a map pick, the last.`);
     });
-}
-
-function valueAtPath(obj: unknown, path: string): unknown {
-    return path.split('.').reduce<unknown>((acc, key) => {
-        if (acc == null || typeof acc !== 'object') return undefined;
-        return (acc as Record<string, unknown>)[key];
-    }, obj);
 }
 
 function setValueAtPath(obj: Record<string, unknown>, path: string, value: unknown): Record<string, unknown> {

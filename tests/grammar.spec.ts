@@ -1241,6 +1241,28 @@ test('draws each line of a roads layer as wide as widthBy says, and a line witho
         .rejects.toThrow('Layer "Lanes": widthBy "lanes" gives no line of the layer a width: none has a positive number there.');
 });
 
+test("reads widthBy at a key with dots in it, as a join writes an aggregate under '<table>.<column>', as getFnv is read", async ({ page }) => {
+    // Three east-west lines, each with the width a join of pins would give it: sjoin.avg['pins.w'].
+    const joined: DataSourceSpec = {
+        type: 'geojson', outputTableName: 'lanes',
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [40, 120, 240].map((w, i) => ({
+                type: 'Feature' as const,
+                properties: { id: i, sjoin: { avg: { 'pins.w': w } } },
+                geometry: { type: 'LineString' as const, coordinates: [[-73.99, 40.748 - i * 0.003], [-73.975, 40.748 - i * 0.003]] },
+            })),
+        },
+    };
+    await runSpec(page, {
+        data: [area, joined],
+        map: { layerRefs: [{ dataRef: 'lanes', title: 'Lanes', layerType: 'roads', widthBy: 'sjoin.avg.pins.w' }] },
+    });
+    const drawn = await page.evaluate(() => window.drawnRows('map0', 'Lanes'));
+    const widths = (await layerById(page)).Lanes.polylinesWidthByComponent ?? [];
+    expect(Object.fromEntries(drawn.map((row, position) => [String(row?.id), widths[position]]))).toEqual({ 0: 40, 1: 120, 2: 240 });
+});
+
 test('colors two vector layers with different value ranges over one colorMapRange', async ({ page }) => {
     const twoLayers = (options: Partial<MapLayerSpec>): UrbanSpec => ({
         data: [area, zones, lots],
