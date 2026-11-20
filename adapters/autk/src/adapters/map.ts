@@ -408,6 +408,31 @@ function drawnRowKeys(map: AutkMap, layerId: string, keys: readonly string[], ke
 }
 
 /**
+ * Puts the origin of a map whose first layer is a raster at the middle of the raster, before autk-map loads it, so a
+ * map that draws a raster alone, such as a heatmap, draws it. autk-map draws every layer of a map from one origin, the
+ * middle of the geometries of the first collection it loads. A raster's one feature has no geometry, so autk-map
+ * before urban-toolkit/autark#125 (`resolveCollectionBounds`, on autark's main since 11-11, not released) put the
+ * origin at [0, 0], thousands of kilometres from the raster, and drew an empty canvas. The raster's `bbox` is handed to
+ * autk-map as a polygon, whose middle any autk-map takes as the origin, as #125 takes the raster's own. This can go
+ * once the grammar's autk-map has #125.
+ */
+function setRasterOrigin(map: AutkMap, raster: FeatureCollection): void {
+    if(map.layerManager.hasOrigin) return;
+    const bbox = raster.bbox;
+    if(!bbox) return;
+    const [west, south, east, north] = bbox.length === 6 ? [bbox[0], bbox[1], bbox[3], bbox[4]] : [bbox[0], bbox[1], bbox[2], bbox[3]];
+    if(![west, south, east, north].every(Number.isFinite)) return;
+    map.layerManager.initializeOrigin({
+        type: 'FeatureCollection',
+        features: [{
+            type: 'Feature',
+            properties: {},
+            geometry: { type: 'Polygon', coordinates: [[[west, south], [east, south], [east, north], [west, north], [west, south]]] },
+        }],
+    });
+}
+
+/**
  * The map adapter `AutkGrammar` runs. Each map it draws goes in `maps` at its index, and each of its layers in `layers`,
  * with the rows it draws, so every map stays known, though several draw one table. A table's export is taken once a
  * run, in `exports`, which the plot adapter reads too.
@@ -444,6 +469,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 : '';
 
             if(type === 'raster') {
+                setRasterOrigin(map, data);
                 map.loadCollection(layerId, { collection: data, type: 'raster', property: band });
             } else {
                 // autk-map leaves out a building part without a height, unless it is told to give each a random one.
