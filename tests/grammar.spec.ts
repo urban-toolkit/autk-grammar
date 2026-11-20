@@ -1,10 +1,10 @@
 import { test, expect, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
 import type {
-    CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec, MapSpec, PlotSpec,
-    RenderComputeSpec, TerrainSpec, UrbanSpec,
+    CameraMotionStep, CameraSpec, ColorMapInterpolator, ComputeSpec, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec,
+    MapSpec, PlotSpec, RenderComputeSpec, TerrainSpec, UrbanSpec,
 } from '@urban-toolkit/the-urban-grammar';
-import type { DrawnMark, LayerState, PaneBox, RunSummary } from './app/main';
+import type { CameraView, DrawnMark, LayerState, PaneBox, RunSummary } from './app/main';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
 import { spec as heatmapGeojson } from '../gallery/src/examples/heatmap-vis-geojson';
 
@@ -1686,6 +1686,120 @@ test('draws the windows of a building-windows render pass as points', async ({ p
     expect((await page.evaluate(() => window.mapLayers('map0'))).map((layer) => [layer.id, layer.type])).toEqual([['box_surface', 'surface'], ['windows', 'points']]);
 });
 
+test("places buildings' windows in a table of their own, the points a building-windows render pass renders from", async ({ page }) => {
+    const { tables } = await runSpec(page, {
+        ...boxSpec({ bbox: BOX }),
+        compute: [
+            { type: 'windows', dataRef: 'box_buildings', floors: 2, outputTableName: 'windows' },
+            {
+                type: 'render',
+                outputTableName: 'seen',
+                layers: [{ id: 'buildings', dataRef: 'box_buildings', type: 'buildings' }],
+                viewpoints: { dataRef: 'box_buildings', strategy: { type: 'building-windows', floors: 2 } },
+                aggregation: { type: 'classes', includeBackground: true },
+                tileSize: 8,
+            },
+        ],
+        // Framed on the box, as compute-render frames it, with the windows small and colored by their building's height,
+        // so each wall shows; from autk-map's own view the box is a speck, and its windows one gray disc.
+        map: {
+            camera: { zoom: 13.8 },
+            layerRefs: [
+                { dataRef: 'box_surface' },
+                { dataRef: 'box_roads' },
+                { dataRef: 'windows', getFnv: 'buildingHeight', colorMapInterpolator: scheme('interpolateInferno'), pointSize: 2 },
+            ],
+        },
+    });
+    // The same windows, in the same order: their ids, points, buildings and floors.
+    const { windows, seen } = await page.evaluate(async () => {
+        const read = async (table: string) => (await window.grammar.data[table]).features.map((feature) => ({
+            id: feature.id,
+            at: (feature.geometry as { coordinates: number[] }).coordinates,
+            building: feature.properties?.sourceFeatureIndex,
+            floor: feature.properties?.floorIndex,
+            render: feature.properties?.compute?.render !== undefined,
+        }));
+        return { windows: await read('windows'), seen: await read('seen') };
+    });
+    expect(windows.length).toBeGreaterThan(tables.box_buildings.features);
+    const placed = (list: typeof windows) => list.map(({ id, at, building, floor }) => ({ id, at, building, floor }));
+    expect(placed(windows)).toEqual(placed(seen));
+    // Each a point at the middle of a window, on one of two floors, with no render metrics.
+    expect(windows.every((point) => point.at.length === 3 && point.at[2] > 0)).toBe(true);
+    expect([...new Set(windows.map((point) => point.floor))].sort()).toEqual([0, 1]);
+    expect(windows.filter((point) => point.render)).toEqual([]);
+    expect(seen.every((point) => point.render)).toBe(true);
+    // The buildings stay as they are, and the map draws the windows as points, colored by value.
+    expect(await page.evaluate(() => window.valueAt('box_buildings', 0, 'floorIndex'))).toBeUndefined();
+    expect((await mapLayers(page)).map((layer) => [layer.id, layer.type, layer.isColorMap ?? false]))
+        .toEqual([['box_surface', 'surface', false], ['box_roads', 'roads', false], ['windows', 'points', true]]);
+    await expectDrawn(page, 'map0');
+
+    // A table of points has no facades to place windows on, and the pass says so.
+    await expect(runSpec(page, {
+        data: [area, spots],
+        compute: [{ type: 'windows', dataRef: 'spots', floors: 1, outputTableName: 'w' }],
+    })).rejects.toThrow('Windows pass "w": autk-core places no windows on "spots"');
+});
+
+test('writes the cluster of touching geometries to a column, in place or into a new table', async ({ page }) => {
+    // Four squares inside area: a and b share an edge, c stands apart, and d touches c at a corner only.
+    const square = (name: string, x: number, y: number) => ({
+        type: 'Feature' as const,
+        properties: { name },
+        geometry: { type: 'Polygon' as const, coordinates: [[[x, y], [x + 0.001, y], [x + 0.001, y + 0.001], [x, y + 0.001], [x, y]]] },
+    });
+    const blocks: DataSourceSpec = {
+        type: 'geojson',
+        outputTableName: 'blocks',
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [square('a', -73.99, 40.75), square('b', -73.989, 40.75), square('c', -73.985, 40.75), square('d', -73.984, 40.751)],
+        },
+    };
+    const clustersOf = (table: string, column: string) => page.evaluate(async ([name, key]) =>
+        Object.fromEntries((await window.grammar.data[name]).features.map((feature) =>
+            [feature.properties?.name, feature.properties?.compute?.[key] ?? null])), [table, column] as const);
+
+    // Into a new table, which the map draws as the table it was computed from; the blocks stay as they are.
+    await runSpec(page, {
+        data: [area, blocks],
+        compute: [{ type: 'clusters', dataRef: 'blocks', outputColumnName: 'cluster', outputTableName: 'joined' }],
+        map: { layerRefs: [{ dataRef: 'joined', getFnv: 'compute.cluster' }] },
+    });
+    const joined = await clustersOf('joined', 'cluster');
+    expect(joined.a).toBe(joined.b);
+    expect(joined.c).toBe(joined.d);
+    expect(joined.a).not.toBe(joined.c);
+    expect([joined.a, joined.c].sort()).toEqual([0, 1]);
+    // The first row's cluster is 0.
+    expect(await page.evaluate(() => window.valueAt('joined', 0, 'compute.cluster'))).toBe(0);
+    expect(await clustersOf('blocks', 'cluster')).toEqual({ a: null, b: null, c: null, d: null });
+    expect((await mapLayers(page)).map((layer) => [layer.id, layer.type, layer.isColorMap])).toEqual([['joined', 'polygons', true]]);
+
+    // In place, beside the column of an earlier pass.
+    await runSpec(page, {
+        data: [area, blocks],
+        compute: [
+            { type: 'clusters', dataRef: 'blocks', outputColumnName: 'first' },
+            { type: 'clusters', dataRef: 'blocks', outputColumnName: 'second' },
+        ],
+    });
+    expect(await clustersOf('blocks', 'second')).toEqual(await clustersOf('blocks', 'first'));
+    expect(await clustersOf('blocks', 'first')).toEqual(joined);
+
+    // The buildings around Wall Street: walls shared along a block put many in one cluster.
+    await runSpec(page, { ...boxSpec({ bbox: BOX }), compute: [{ type: 'clusters', dataRef: 'box_buildings', outputColumnName: 'block' }] });
+    const ids = await page.evaluate(async () =>
+        (await window.grammar.data.box_buildings).features.map((feature) => feature.properties?.compute?.block as number));
+    const clusters = [...new Set(ids)].sort((a, b) => a - b);
+    expect(ids.every((id) => Number.isInteger(id) && id >= 0), 'every building has a cluster').toBe(true);
+    expect(clusters, 'the ids run from 0 with no gap').toEqual(clusters.map((_, i) => i));
+    expect(clusters.length, 'buildings that share walls share a cluster').toBeLessThan(ids.length);
+    expect(ids[0]).toBe(0);
+});
+
 test('refuses a points layer in a render pass, and names the layer', async ({ page }) => {
     // autk-compute would skip it with only a warning. The schema refuses the type too.
     await expect(runSpec(page, {
@@ -1698,6 +1812,14 @@ test('refuses a points layer in a render pass, and names the layer', async ({ pa
             aggregation: { type: 'classes' },
         }],
     })).rejects.toThrow('Render pass "seen": layer "spots" has the type "points", which a render pass cannot draw.');
+});
+
+test('refuses a compute pass of an unknown type, which ran as a GPGPU pass', async ({ page }) => {
+    // A misspelt type ran the pass as a GPGPU pass, which failed on the shader fields it lacks, with no word of the type.
+    await expect(runSpec(page, {
+        data: [area, zones],
+        compute: [{ type: 'window', dataRef: 'zones', floors: 1, outputTableName: 'w' } as unknown as ComputeSpec],
+    })).rejects.toThrow('Unknown compute pass type "window".');
 });
 
 test('refuses collect in a heatmap groupBy, naming the heatmap, and builds the heatmap with count', async ({ page }) => {
@@ -1876,6 +1998,221 @@ test("keeps the camera's up direction across its line of sight at any pitch belo
     // At 90 the eye would sit on the ground, edge-on to the flat layers, and the map could not pan.
     await expect(runSpec(page, spec({ zoom: 12, pitch: 90 })))
         .rejects.toThrow('Map 0: camera.pitch must be at least 0 and less than 90 degrees, not 90');
+});
+
+test("looks at camera.center, put in the CRS of the map's workspace, and turns the view around it", async ({ page }) => {
+    // A point of zones about 220 m west and 510 m south of the middle of area, the map's origin, which the view without
+    // a center looks at.
+    const center: [number, number] = [-73.982, 40.7515];
+    const spec = (camera: CameraSpec, workspaces?: UrbanSpec['workspaces']): UrbanSpec => ({
+        ...(workspaces && { workspaces }), data: [area, zones], map: { camera, layerRefs: [{ dataRef: 'zones' }] },
+    });
+    const view = () => page.evaluate(() => window.cameraView('map0'));
+    const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const unit = (a: number[]) => a.map((value) => value / Math.sqrt(dot(a, a)));
+    // The point looked at, back in the workspace's CRS: the world is relative to the map's origin.
+    const lookedAt = ({ lookAt, origin }: { lookAt: number[]; origin: number[] }) => [lookAt[0] + origin[0], lookAt[1] + origin[1]];
+
+    await runSpec(page, { data: [area, zones], map: { layerRefs: [{ dataRef: 'zones' }] } });
+    const fitted = await view();
+
+    // A center alone: the eye goes straight above it, as high as the view without a center has it.
+    await runSpec(page, spec({ center }));
+    const above = await view();
+    const [x, y] = worldMercator(...center);
+    const [atX, atY] = lookedAt(above);
+    expect(Math.abs(atX - x), 'x of the point looked at, in World Mercator meters').toBeLessThan(0.01);
+    expect(Math.abs(atY - y), 'y of the point looked at, in World Mercator meters').toBeLessThan(0.01);
+    expect(above.eye[0]).toBeCloseTo(above.lookAt[0], 2);
+    expect(above.eye[1]).toBeCloseTo(above.lookAt[1], 2);
+    expect(above.eye[2]).toBeCloseTo(fitted.eye[2], 2);
+
+    // With zoom, pitch and bearing, the eye turns around the center, with its up across the line of sight.
+    await runSpec(page, spec({ center, zoom: 13, pitch: 55, bearing: 30 }));
+    const turned = await view();
+    const [turnedX, turnedY] = lookedAt(turned);
+    expect(Math.abs(turnedX - x)).toBeLessThan(0.01);
+    expect(Math.abs(turnedY - y)).toBeLessThan(0.01);
+    const distance = 10000 / 2 ** 3;
+    const [tilt, heading] = [55, 30].map((degrees) => (degrees * Math.PI) / 180);
+    expect(turned.eye[0] - turned.lookAt[0]).toBeCloseTo(-distance * Math.sin(tilt) * Math.sin(heading), 2);
+    expect(turned.eye[1] - turned.lookAt[1]).toBeCloseTo(-distance * Math.sin(tilt) * Math.cos(heading), 2);
+    expect(turned.eye[2] - turned.lookAt[2]).toBeCloseTo(distance * Math.cos(tilt), 2);
+    const sight = unit(turned.lookAt.map((value, i) => value - turned.eye[i]));
+    expect(Math.abs(dot(unit(turned.up), sight)), 'up across the line of sight').toBeLessThan(1e-5);
+    expect(turned.up[2], 'up toward the sky').toBeGreaterThan(0);
+
+    // A host's later turn of the map, by the same camera, looks at the same center; one the run never put on the map
+    // is refused.
+    await page.evaluate((camera) => window.turnCamera('map0', camera), { center, pitch: 40 } as CameraSpec);
+    const again = lookedAt(await view());
+    expect(Math.abs(again[0] - x)).toBeLessThan(0.01);
+    expect(Math.abs(again[1] - y)).toBeLessThan(0.01);
+    await expect(page.evaluate(() => window.turnCamera('map0', { center: [-73.97, 40.76] })))
+        .rejects.toThrow('camera.center [-73.97, 40.76] has no point on this map yet');
+
+    // In a workspace in Web Mercator, the center is a point of Web Mercator, about 33 km from World Mercator's here.
+    await runSpec(page, spec({ center }, [{ coordinateFormat: 'EPSG:3857', precisionGrid: 0.01 }]));
+    const [webX, webY] = lookedAt(await view());
+    const [wx, wy] = webMercator(...center);
+    expect(Math.abs(webX - wx), 'x of the point looked at, in Web Mercator meters').toBeLessThan(0.01);
+    expect(Math.abs(webY - wy), 'y of the point looked at, in Web Mercator meters').toBeLessThan(0.01);
+
+    // A center that is not [longitude, latitude] is refused before anything draws, and leaves no map on the page.
+    await expect(runSpec(page, spec({ center: [-73.98, 40.75, 0] as unknown as [number, number] })))
+        .rejects.toThrow('Map 0: camera.center must be [longitude, latitude] in degrees');
+    expect(await page.evaluate(() => window.grammar.maps.length)).toBe(0);
+});
+
+/**
+ * A view as a camera tour leaves it, in a map's world: tilted `tilt` degrees from straight down, facing `heading`
+ * clockwise from north and banked `bank` degrees, `distance` from the point `[x, y]` of the ground it looks at.
+ */
+type TourView = { tilt: number; heading: number; distance: number; x: number; y: number; bank?: number };
+
+/**
+ * Checks a map's camera, as window.cameraView reads it, against `expected`: its eye, the point of the ground its line of
+ * sight meets, and its up direction, which a bank turns around the line of sight, clockwise as the viewer sees it.
+ */
+function expectTourView(name: string, view: CameraView, expected: TourView): void {
+    const radians = (degrees: number) => (degrees * Math.PI) / 180;
+    const [t, h, k] = [radians(expected.tilt), radians(expected.heading), radians(expected.bank ?? 0)];
+    const eye = [
+        expected.x - expected.distance * Math.sin(t) * Math.sin(h),
+        expected.y - expected.distance * Math.sin(t) * Math.cos(h),
+        expected.distance * Math.cos(t),
+    ];
+    const sight = [Math.sin(t) * Math.sin(h), Math.sin(t) * Math.cos(h), -Math.cos(t)];
+    const level = [Math.cos(t) * Math.sin(h), Math.cos(t) * Math.cos(h), Math.sin(t)];
+    const side = [sight[1] * level[2] - sight[2] * level[1], sight[2] * level[0] - sight[0] * level[2], sight[0] * level[1] - sight[1] * level[0]];
+    const up = level.map((value, i) => value * Math.cos(k) + side[i] * Math.sin(k));
+    const reach = -view.eye[2] / view.sight[2];
+    const ground = [view.eye[0] + view.sight[0] * reach, view.eye[1] + view.sight[1] * reach];
+    const length = Math.hypot(view.up[0], view.up[1], view.up[2]);
+    eye.forEach((value, i) => expect(Math.abs(view.eye[i] - value), `${name}: eye ${i}`).toBeLessThan(0.05));
+    [expected.x, expected.y].forEach((value, i) => expect(Math.abs(ground[i] - value), `${name}: ground point ${i}`).toBeLessThan(0.05));
+    up.forEach((value, i) => expect(Math.abs(view.up[i] / length - value), `${name}: up ${i}`).toBeLessThan(1e-4));
+}
+
+test("plays camera.motion once the map is drawn, from the view its camera sets, and ends where the steps add up to", async ({ page }) => {
+    const camera: CameraSpec = { zoom: 12, pitch: 30 };
+    const motion: CameraMotionStep[] = [
+        { type: 'zoom', amount: 1, seconds: 0.25 },
+        { type: 'pitch', amount: 20, seconds: 0.25, pan: 200 },
+        { type: 'bearing', amount: 90, seconds: 0.25 },
+        { type: 'roll', amount: 30, seconds: 0.25 },
+    ];
+    const spec = (withMotion: boolean): UrbanSpec => ({
+        data: [area, zones], map: { camera: { ...camera, ...(withMotion && { motion }) }, layerRefs: [{ dataRef: 'zones' }] },
+    });
+    // The view the camera sets, which the tour starts from: 2500 units from the point the map looks at, tilted 30 degrees.
+    await runSpec(page, spec(false));
+    const start = await page.evaluate(() => window.cameraView('map0'));
+    expectTourView('the view before the tour', start, { tilt: 30, heading: 0, distance: 2500, x: start.lookAt[0], y: start.lookAt[1] });
+    expect(await page.evaluate(() => window.grammar.tours.map((tour) => tour === undefined))).toEqual([true]);
+
+    // The run does not wait for the tour; its done settles once the last step ends. One level in halves the distance,
+    // the pitch step tilts 20 degrees further and moves the point it turns around 200 units north, the top of the view,
+    // the bearing turns the heading clockwise to east, and the roll banks the view 30 degrees.
+    await runSpec(page, spec(true));
+    expect(await page.evaluate(async () => {
+        const tours = window.grammar.tours;
+        await tours[0]?.done;
+        return tours.map((tour) => tour === undefined);
+    })).toEqual([false]);
+    const end = await page.evaluate(() => window.cameraView('map0'));
+    expectTourView('the end of the tour', end, { tilt: 50, heading: 90, distance: 1250, x: start.lookAt[0], y: start.lookAt[1] + 200, bank: 30 });
+    await expectDrawn(page, 'map0');
+});
+
+test('turns the view of a camera tour at the times a clock the test controls says', async ({ page }) => {
+    // The clock runs the page's time from here: CameraMotion reads performance.now() and turns the camera in animation
+    // frames, which this clock draws every 16 ms of its time, each called with that time.
+    await page.clock.install();
+    await runSpec(page, { data: [area, zones], map: { camera: { zoom: 12, pitch: 30 }, layerRefs: [{ dataRef: 'zones' }] } });
+    const start = await page.evaluate(() => window.cameraView('map0'));
+    const [x, y] = start.lookAt;
+
+    // Stop the clock, on a frame's time, then play a tour from the view the camera set, with the grammar's player.
+    await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000);
+    const ticks = await page.evaluate(() => performance.now());
+    await page.clock.runFor((16 - (ticks % 16)) % 16);
+    await page.evaluate((motion) => window.playTour('map0', motion), [
+        { type: 'zoom', amount: 1, seconds: 0.512 },
+        { type: 'bearing', amount: -90, seconds: 0.512 },
+    ] as CameraMotionStep[]);
+
+    // Each step eases in and out over its 512 ms: an eighth of the way at a quarter of it, half at half.
+    const after = async (ms: number, name: string, expected: TourView) => {
+        await page.clock.runFor(ms);
+        expectTourView(name, await page.evaluate(() => window.cameraView('map0')), expected);
+    };
+    await after(128, 'a quarter of the zoom', { tilt: 30, heading: 0, distance: 2500 * 2 ** -0.125, x, y });
+    await after(128, 'half the zoom', { tilt: 30, heading: 0, distance: 2500 * 2 ** -0.5, x, y });
+    await after(256, 'the end of the zoom', { tilt: 30, heading: 0, distance: 1250, x, y });
+    await after(256, 'half the bearing, turning counterclockwise', { tilt: 30, heading: -45, distance: 1250, x, y });
+    expect(await page.evaluate(() => window.tourEnded), 'the tour plays on until its last step ends').toBe(false);
+    await after(256, 'the end of the bearing', { tilt: 30, heading: -90, distance: 1250, x, y });
+    expect(await page.evaluate(() => window.tourEnded), 'done settles as the last step ends').toBe(true);
+});
+
+test('stops a camera tour when the grammar is destroyed, and refuses a tour that would tilt the view to 90 or take no time', async ({ page }) => {
+    await runSpec(page, {
+        data: [area, zones],
+        map: { camera: { zoom: 12, pitch: 30, motion: [{ type: 'bearing', amount: 360, seconds: 60 }] }, layerRefs: [{ dataRef: 'zones' }] },
+    });
+    // destroy() stops the tour, whose done settles at once, and its steps no longer turn the map's camera.
+    expect(await page.evaluate(async () => {
+        const map = window.grammar.maps[0];
+        const tour = window.grammar.tours[0]!;
+        window.grammar.destroy();
+        const settled = await Promise.race([
+            tour.done.then(() => 'stopped'),
+            new Promise((resolve) => setTimeout(() => resolve('still playing'), 5000)),
+        ]);
+        const eye = [...map.camera.getEye()];
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return { settled, still: map.camera.getEye().every((value, i) => value === eye[i]) };
+    })).toEqual({ settled: 'stopped', still: true });
+
+    // The camera's pitch and the pitch steps add up to a tilt below 90, and a step takes some time; a tour that breaks
+    // either is refused before the map is made.
+    const run = (motion: CameraMotionStep[]) => runSpec(page, {
+        data: [area, zones], map: { camera: { pitch: 30, motion }, layerRefs: [{ dataRef: 'zones' }] },
+    });
+    await expect(run([{ type: 'zoom', amount: 1, seconds: 1 }, { type: 'pitch', amount: 60, seconds: 1 }]))
+        .rejects.toThrow('Map 0: camera.motion[1]: this pitch step would tilt the view 90 degrees from straight down.');
+    expect(await page.evaluate(() => window.grammar.maps.length)).toBe(0);
+    await expect(run([{ type: 'zoom', amount: 1, seconds: 0 }]))
+        .rejects.toThrow('Map 0: camera.motion[0]: seconds must be a number greater than 0, not 0.');
+});
+
+test('stops a camera tour when the user drags, scrolls or presses a key on the map', async ({ page }) => {
+    // Each frame of a tour sets the camera, so a tour that played on would undo every drag and zoom the user made.
+    await runSpec(page, { data: [area, zones], map: { camera: { zoom: 12, pitch: 30 }, layerRefs: [{ dataRef: 'zones' }] } });
+    for (const kind of ['drag', 'scroll', 'key']) {
+        expect(await page.evaluate(async (input) => {
+            window.playTour('map0', [{ type: 'bearing', amount: 360, seconds: 60 }]);
+            const tour = window.tour!;
+            const { camera, canvas } = window.grammar.maps[0];
+            await new Promise((resolve) => setTimeout(resolve, 200));
+            if (input === 'drag') {
+                canvas.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+                document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+            } else if (input === 'scroll') {
+                canvas.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 1, clientX: 10, clientY: 10 }));
+            } else {
+                canvas.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'x' }));
+            }
+            const settled = await Promise.race([
+                tour.done.then(() => 'stopped'),
+                new Promise((resolve) => setTimeout(() => resolve('still playing'), 5000)),
+            ]);
+            const eye = [...camera.getEye()];
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            return { settled, still: camera.getEye().every((value, i) => value === eye[i]) };
+        }, kind), kind).toEqual({ settled: 'stopped', still: true });
+    }
 });
 
 test('raises a map on the heights of the raster band its terrain names, and refuses a terrain that is not a raster band', async ({ page }) => {
@@ -2155,6 +2492,63 @@ test('tilts the view of map-camera to its zoom, pitch and bearing around the poi
     expect(view.eye[0] - view.lookAt[0]).toBeCloseTo(-distance * Math.sin(tilt) * Math.sin(heading), 3);
     expect(view.eye[1] - view.lookAt[1]).toBeCloseTo(-distance * Math.sin(tilt) * Math.cos(heading), 3);
     expect(view.eye[2] - view.lookAt[2]).toBeCloseTo(distance * Math.cos(tilt), 3);
+    await expectDrawn(page, 'map0');
+});
+
+test('tours camera-tour around the Stock Exchange: in, tilted while moving north, then turned to face east', async ({ page }) => {
+    const { center, zoom } = ((await exampleSpec(page, 'camera-tour')).map as MapSpec).camera as Required<Pick<CameraSpec, 'center' | 'zoom'>>;
+    await run(page, 'camera-tour');
+    // The run does not wait for the tour: read the view once it has ended, never on the way.
+    await page.evaluate(() => window.grammar.tours[0]?.done);
+    const end = await page.evaluate(() => window.cameraView('map0'));
+    // From 10000 / 2^(zoom - 10) away, straight above the Stock Exchange: 1.5 levels in, 55 degrees of tilt while the
+    // point the view turns around moves 150 m north, the top of the view, then a quarter turn clockwise, to face east.
+    const [x, y] = worldMercator(...center);
+    expectTourView('the end of the tour', end, {
+        tilt: 55, heading: 90, distance: (10000 / 2 ** (zoom - 10)) * 2 ** -1.5, x: x - end.origin[0], y: y - end.origin[1] + 150,
+    });
+    await expectDrawn(page, 'map0');
+});
+
+test('places the windows of building-windows along the facades around Wall Street, three rows a facade', async ({ page }) => {
+    const { tables } = await run(page, 'building-windows');
+    expect(tables.wall_st_windows.features).toBeGreaterThan(3 * tables.wall_st_buildings.features);
+    const windows = await page.evaluate(async () => (await window.grammar.data.wall_st_windows).features.map((feature) => ({
+        building: feature.properties?.sourceFeatureIndex as number,
+        floor: feature.properties?.floorIndex as number,
+        height: feature.properties?.buildingHeight as number,
+    })));
+    // Each window names a building of the table, and each building's facades hold as many windows on each of its three
+    // rows.
+    const rows = new Map<number, number[]>();
+    for (const point of windows) {
+        const counts = rows.get(point.building) ?? [0, 0, 0];
+        counts[point.floor]++;
+        rows.set(point.building, counts);
+    }
+    expect([...rows.keys()].every((building) => Number.isInteger(building) && building >= 0 && building < tables.wall_st_buildings.features)).toBe(true);
+    expect([...rows.values()].filter(([first, second, third]) => !(first > 0 && second === first && third === first))).toEqual([]);
+    expect(windows.every((point) => point.height > 0)).toBe(true);
+    // The map draws them as points, in the color of their building's height.
+    expect((await layerById(page))['Windows, by building height (m)']).toMatchObject({ type: 'points', isColorMap: true, interpolator: 'interpolateInferno' });
+    await expectDrawn(page, 'map0');
+});
+
+test('colors the buildings of building-clusters by the block of touching buildings each is in', async ({ page }) => {
+    const { tables } = await run(page, 'building-clusters');
+    expect(tables.fidi_blocks.features).toBe(tables.fidi_buildings.features);
+    const { blocks, sourceBlocks } = await page.evaluate(async () => ({
+        blocks: (await window.grammar.data.fidi_blocks).features.map((feature) => feature.properties?.compute?.block as number),
+        sourceBlocks: (await window.grammar.data.fidi_buildings).features.filter((feature) => feature.properties?.compute?.block !== undefined).length,
+    }));
+    // Each building is in a block, the blocks numbered from 0 with no gap, and buildings that share walls share one.
+    const ids = [...new Set(blocks)].sort((a, b) => a - b);
+    expect(blocks.every((block) => Number.isInteger(block)), 'every building is in a block').toBe(true);
+    expect(ids).toEqual(ids.map((_, i) => i));
+    expect(ids.length, 'blocks of more than one building').toBeLessThan(blocks.length);
+    expect(sourceBlocks, 'buildings with a block column').toBe(0);
+    // The new table is drawn as its buildings are, colored by block.
+    expect((await layerById(page))['Buildings that share walls']).toMatchObject({ type: 'buildings', isColorMap: true, interpolator: 'interpolateTurbo' });
     await expectDrawn(page, 'map0');
 });
 

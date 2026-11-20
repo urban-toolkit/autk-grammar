@@ -674,6 +674,43 @@ export type CameraSpec = {
      * @maximum 360
      */
     bearing?: number,
+    /**
+     * The point the view looks at, as `[longitude, latitude]` in degrees (WGS84). The run puts it in the CRS of the
+     * map's workspace, and the eye turns around it as `pitch` and `bearing` say. Without it, the middle of the view that
+     * fits the map's layers. Read by the Autark adapter only.
+     */
+    center?: [longitude: Longitude, latitude: Latitude],
+    /**
+     * A camera tour: steps the view takes one after another once the map is drawn, each over its own `seconds`, from
+     * the view the other fields set. The run does not wait for it. Read by the Autark adapter only.
+     */
+    motion?: CameraMotionStep[],
+}
+
+/**
+ * One step of a camera tour. `amount` is in the unit of the camera field of the same name: `zoom` levels, each of which
+ * halves the eye's distance (zooming out when negative); `pitch` degrees of tilt, away from straight down when positive;
+ * `bearing` degrees of heading, clockwise when positive. `roll` turns the view around its line of sight, by `amount`
+ * degrees: when positive, the direction at the top of the view turns clockwise, so a roll of a view that looks straight
+ * down turns its heading as `bearing` does, and a roll of a tilted view banks it.
+ * @if { "not": { "properties": { "type": { "const": "pitch" } } } }
+ * @then { "not": { "required": ["pan"] } }
+ */
+export type CameraMotionStep = {
+    /** What the step changes: `zoom`, `pitch`, `bearing` or `roll`. */
+    type: 'zoom' | 'pitch' | 'bearing' | 'roll',
+    /** How much the step changes it, in the unit of its `type`. */
+    amount: number,
+    /**
+     * How long the step takes, in seconds, greater than 0: the view eases in and out of it.
+     * @exclusiveMinimum 0
+     */
+    seconds: number,
+    /**
+     * With a `pitch` step only: how far the point the view turns around moves during the step, in workspace units,
+     * toward the top of the view when positive.
+     */
+    pan?: number,
 }
 
 /**
@@ -1011,7 +1048,10 @@ type GpgpuComputeBase = {
     wgslFunction: string | string[]
 }
 
-/** Where a GPGPU pass writes its result. A render pass declares its own `outputTableName` and `layerType`. */
+/**
+ * Where a GPGPU or clusters pass writes its result. A render or windows pass declares its own `outputTableName` and
+ * `layerType`.
+ */
 type ComputeOutput = {
     /**
      * Name of a new table that receives the result, so the source table stays as it is and later passes, maps and
@@ -1153,8 +1193,50 @@ export type RenderComputeSpec = {
     tileSize?: number,
 }
 
-/** One entry of `compute`. A pass with `type: 'render'` is a {@link RenderComputeSpec}, any other a {@link GpgpuComputeSpec}. */
-export type ComputeSpec = GpgpuComputeSpec | RenderComputeSpec
+/**
+ * Buildings' windows as a table of their own: one point a window, placed along each building's facades as a render
+ * pass's `building-windows` viewpoints are, at the middle of the window. Each point is a feature whose id is the
+ * window's, with `properties` that name its building (`sourceFeatureIndex`, the building's row in `dataRef`), its
+ * facade, its floor (`floorIndex`, from 0 at the bottom) and its size. Runs on the CPU. Read by the Autark adapter only.
+ */
+export type WindowsComputeSpec = {
+    /** Selects a windows pass. */
+    type: 'windows',
+    /** Workspace of the tables the pass reads and writes. */
+    workspace?: WorkspaceName,
+    /** Name of the buildings table whose windows the pass places. */
+    dataRef: string,
+    /** Rows of windows on each facade, spread evenly up the building's height. */
+    floors: number,
+    /** Name of the table that receives the windows. Later passes, maps and plots read it by this name. */
+    outputTableName: string,
+    /** How the map draws the new table. Defaults to `points`. */
+    layerType?: LayerType,
+}
+
+/**
+ * Cluster ids of touching geometries: rows whose geometries intersect or touch, directly or through other rows, share a
+ * cluster. The id, a whole number from 0, is written to `feature.properties.compute.<outputColumnName>`; the first row's
+ * cluster is 0, and each other cluster takes the next number in the order of its first row. A row without a geometry,
+ * or with an empty one, is in no cluster, and its id is `null`. Runs on the CPU. Read by the Autark adapter only.
+ */
+export type ClustersComputeSpec = ComputeOutput & {
+    /** Selects a clusters pass. */
+    type: 'clusters',
+    /** Workspace of the tables the pass reads and writes. */
+    workspace?: WorkspaceName,
+    /** Name of the table whose rows the pass clusters. */
+    dataRef: string,
+    /** Column written with each row's cluster id. */
+    outputColumnName: string,
+}
+
+/**
+ * One entry of `compute`: a {@link GpgpuComputeSpec} without a `type` or with `type: 'gpgpu'`, a {@link RenderComputeSpec}
+ * with `type: 'render'`, a {@link WindowsComputeSpec} with `type: 'windows'`, or a {@link ClustersComputeSpec} with
+ * `type: 'clusters'`.
+ */
+export type ComputeSpec = GpgpuComputeSpec | RenderComputeSpec | WindowsComputeSpec | ClustersComputeSpec
 
 /**
  * How the maps and plots of a specification are arranged on the page.

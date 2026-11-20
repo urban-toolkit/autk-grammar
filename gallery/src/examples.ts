@@ -386,4 +386,22 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         supportedAdapters: ['autk'],
         load: () => import('./examples/map-style'),
     },
+    'camera-tour': {
+        title: 'Camera: A Tour Around the Stock Exchange',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/camera-tour'),
+    },
+    'building-windows': {
+        title: 'Compute: Every Window Around Wall Street',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/building-windows'),
+    },
+    'building-clusters': {
+        title: 'Compute: Buildings That Share Walls',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/building-clusters'),
+    },
 };

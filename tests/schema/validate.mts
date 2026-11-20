@@ -149,6 +149,21 @@ expect('render pass with a bad aggregation', { compute: [{ ...render, aggregatio
 const drawnTypes = ['surface', 'parks', 'water', 'roads', 'buildings', 'polygons', 'polylines'];
 expect('render pass with a layer of each type it draws', { compute: [{ ...render, layers: drawnTypes.map((type) => ({ id: type, dataRef: type, type })) }] }, true);
 expect('render pass with a points layer, which it cannot draw', { compute: [{ ...render, layers: [{ id: 'p', dataRef: 'p', type: 'points' }] }] }, false);
+const windowsPass = { type: 'windows', dataRef: 'b', floors: 3, outputTableName: 'w' };
+expect('windows pass', { compute: [windowsPass] }, true);
+expect('windows pass drawn as polygons, in a workspace', { compute: [{ ...windowsPass, layerType: 'polygons', workspace: 'west' }] }, true);
+expect('windows pass without floors', { compute: [(({ floors, ...rest }) => rest)(windowsPass)] }, false);
+expect('windows pass without outputTableName', { compute: [(({ outputTableName, ...rest }) => rest)(windowsPass)] }, false);
+expect('windows pass without dataRef', { compute: [(({ dataRef, ...rest }) => rest)(windowsPass)] }, false);
+expect('windows pass with floors as a string', { compute: [{ ...windowsPass, floors: '3' }] }, false);
+expect('windows pass with an unknown layer type', { compute: [{ ...windowsPass, layerType: 'windows' }] }, false);
+const clustersPass = { type: 'clusters', dataRef: 'b', outputColumnName: 'cluster' };
+expect('clusters pass in place', { compute: [clustersPass] }, true);
+expect('clusters pass into a new table, drawn as polygons, in a workspace', { compute: [{ ...clustersPass, outputTableName: 'blocks', layerType: 'polygons', workspace: 'west' }] }, true);
+expect('clusters pass without outputColumnName', { compute: [(({ outputColumnName, ...rest }) => rest)(clustersPass)] }, false);
+expect('clusters pass without dataRef', { compute: [(({ dataRef, ...rest }) => rest)(clustersPass)] }, false);
+expect('clusters pass with outputColumnName as a number', { compute: [{ ...clustersPass, outputColumnName: 3 }] }, false);
+expect('clusters pass with an unknown layer type', { compute: [{ ...clustersPass, outputTableName: 'blocks', layerType: 'blocks' }] }, false);
 const heat = { type: 'heatmap', outputTableName: 'h', joinDataRef: 'n', near: { distance: 500 }, grid: { rows: 10, columns: 10 } };
 expect('heatmap with useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: false } }] }, true);
 expect('heatmap with a non-boolean useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: 'no' } }] }, false);
@@ -292,6 +307,39 @@ expect('camera pitch below 0', { map: { ...layers, camera: { pitch: -1 } } }, fa
 expect('camera bearing above 360', { map: { ...layers, camera: { bearing: 361 } } }, false);
 expect('camera zoom below 0', { map: { ...layers, camera: { zoom: -1 } } }, false);
 expect('camera zoom as a string', { map: { ...layers, camera: { zoom: '12' } } }, false);
+// Camera keys, valid and refused. CameraSpec allows keys it does not name, so each refused form is valid until its key
+// is typed.
+const cameraWith = (camera: Record<string, unknown>) => ({ map: { ...layers, camera } });
+expect('camera center', cameraWith({ center: [-73.98, 40.75] }), true);
+expect('camera center with zoom, pitch and bearing', cameraWith({ center: [-73.98, 40.75], zoom: 15, pitch: 50, bearing: 30 }), true);
+expect('camera center at the edges of the degrees', cameraWith({ center: [-180, 90] }), true);
+expect('camera center with three numbers', cameraWith({ center: [-73.98, 40.75, 0] }), false);
+expect('camera center with one number', cameraWith({ center: [-73.98] }), false);
+expect('camera center longitude above 180', cameraWith({ center: [181, 40.75] }), false);
+expect('camera center latitude below -90', cameraWith({ center: [-73.98, -90.5] }), false);
+expect('camera center as strings', cameraWith({ center: ['-73.98', '40.75'] }), false);
+expect('camera center as an object', cameraWith({ center: { lon: -73.98, lat: 40.75 } }), false);
+const tourStep = (fields: Record<string, unknown>) => ({ type: 'zoom', amount: 1, seconds: 2, ...fields });
+expect('camera motion of each step type', cameraWith({
+    pitch: 30,
+    motion: [
+        tourStep({}),
+        tourStep({ type: 'pitch', amount: 20, pan: 500 }),
+        tourStep({ type: 'bearing', amount: -90, seconds: 3 }),
+        tourStep({ type: 'roll', amount: 15, seconds: 0.5 }),
+    ],
+}), true);
+expect('camera motion with no steps', cameraWith({ motion: [] }), true);
+expect('camera motion as one step', cameraWith({ motion: tourStep({}) }), false);
+expect('camera motion step of an unknown type', cameraWith({ motion: [tourStep({ type: 'spin' })] }), false);
+expect('camera motion step without an amount', cameraWith({ motion: [{ type: 'zoom', seconds: 2 }] }), false);
+expect('camera motion step without seconds', cameraWith({ motion: [{ type: 'zoom', amount: 1 }] }), false);
+expect('camera motion step of no time', cameraWith({ motion: [tourStep({ seconds: 0 })] }), false);
+expect('camera motion step of negative seconds', cameraWith({ motion: [tourStep({ seconds: -1 })] }), false);
+expect('camera motion step amount as a string', cameraWith({ motion: [tourStep({ amount: '1' })] }), false);
+expect('camera motion zoom step with a pan', cameraWith({ motion: [tourStep({ pan: 100 })] }), false);
+expect('camera motion bearing step with a pan', cameraWith({ motion: [tourStep({ type: 'bearing', pan: 100 })] }), false);
+expect('camera motion pitch step pan as a string', cameraWith({ motion: [tourStep({ type: 'pitch', pan: '100' })] }), false);
 // Map keys of 5.3.0. Keys the schema does not name are allowed, so each refused form is valid until its key is typed.
 expect('map terrain', { map: { ...layers, terrain: { dataRef: 'dem' } } }, true);
 expect('map terrain from a band', { map: { ...layers, terrain: { dataRef: 'lst', band: 'band_24' } } }, true);
@@ -480,6 +528,11 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['map.showUi']],
     ['UrbanSpec', ['map.style', 'map.highlightColor', 'map.invalidValueColor']],
     ['MapStyleColors', ['', 'background', 'surface', 'parks', 'water', 'roads', 'buildings', 'points', 'polylines', 'polygons']],
+    ['UrbanSpec', ['map.camera.center']],
+    ['UrbanSpec', ['map.camera.motion', 'map.camera.motion.type', 'map.camera.motion.amount', 'map.camera.motion.seconds', 'map.camera.motion.pan']],
+    ['CameraMotionStep', ['']],
+    ['WindowsComputeSpec', ['', 'type', 'workspace', 'dataRef', 'floors', 'outputTableName', 'layerType']],
+    ['ClustersComputeSpec', ['', 'type', 'workspace', 'dataRef', 'outputColumnName', 'outputTableName', 'layerType']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {
