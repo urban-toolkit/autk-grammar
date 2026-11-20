@@ -61,6 +61,31 @@ jobs:
       - name: Show Autark versions
         run: npm ls @urban-toolkit/autk-core @urban-toolkit/autk-db @urban-toolkit/autk-map @urban-toolkit/autk-plot @urban-toolkit/autk-compute || true
 
+      # The tests answer DuckDB's requests for its extensions from tests/.duckdb-extensions (tests/duckdb-extensions.ts),
+      # so no test fetches them from extensions.duckdb.org. The copy is kept in the Actions cache under the DuckDB build
+      # autk-db loads, and fetched, with retries, only when the cache holds none for that build.
+      - name: Name the DuckDB extensions copy
+        id: duckdb
+        run: npx tsx tests/duckdb-extensions.ts key >> "$GITHUB_OUTPUT"
+
+      - name: Restore the DuckDB extensions copy
+        id: duckdb-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: tests/.duckdb-extensions
+          key: ${{ steps.duckdb.outputs.key }}
+
+      - name: Fetch DuckDB's extensions
+        if: steps.duckdb-cache.outputs.cache-hit != 'true'
+        run: npx tsx tests/duckdb-extensions.ts fetch
+
+      - name: Save the DuckDB extensions copy
+        if: steps.duckdb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: tests/.duckdb-extensions
+          key: ${{ steps.duckdb.outputs.key }}
+
       - name: Install Chromium if the runner has no Chrome
         run: |
           if ! command -v google-chrome >/dev/null && ! command -v chromium >/dev/null; then

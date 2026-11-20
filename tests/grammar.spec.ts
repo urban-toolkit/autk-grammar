@@ -5,6 +5,7 @@ import type {
     MapSpec, PlotSpec, RenderComputeSpec, TerrainSpec, UrbanSpec,
 } from '@urban-toolkit/the-urban-grammar';
 import type { CameraView, DrawnMark, LayerState, PaneBox, RunSummary } from './app/main';
+import { serveExtensions, type ExtensionRequests } from './duckdb-extensions';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
 import { spec as heatmapGeojson } from '../gallery/src/examples/heatmap-vis-geojson';
 
@@ -13,10 +14,13 @@ import { spec as heatmapGeojson } from '../gallery/src/examples/heatmap-vis-geoj
 
 let pageErrors: string[] = [];
 let adapterLogged = false;
+let extensionRequests: ExtensionRequests = { served: [], missing: [] };
 
 test.beforeEach(async ({ page }) => {
     pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
+    // DuckDB's extensions come from the tests' copy (tests/duckdb-extensions.ts), never from extensions.duckdb.org.
+    extensionRequests = await serveExtensions(page);
     await page.goto('/');
     // A freshly launched Chrome can answer requestAdapter() with null until its GPU process has
     // started (about a second on the Linux GPU runner), so wait for an adapter before running specs.
@@ -35,6 +39,7 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(() => {
     expect(pageErrors, 'uncaught errors in the page').toEqual([]);
+    expect(extensionRequests.missing, 'DuckDB asked for extensions the tests\' copy does not hold: add them to EXTENSIONS in tests/duckdb-extensions.ts').toEqual([]);
 });
 
 function run(page: Page, example: string): Promise<RunSummary> {
@@ -70,6 +75,8 @@ test('loads CSV and JSON sources', async ({ page }) => {
     const { tables } = await run(page, 'load-multiple');
     expect(tables.noise.features).toBeGreaterThan(1000);
     expect(tables.noise.properties).toContain('Unique Key');
+    // The tests' copy answered DuckDB's request for spatial, which autk-db loads as its database starts.
+    expect(extensionRequests.served).toContain('spatial');
 });
 
 test('draws a GeoJSON layer', async ({ page }) => {
