@@ -424,6 +424,67 @@ await grammar.run(spec);
 await grammar.tours[0]?.done;  // the tour has ended: the view is where its steps add up to
 ```
 
+### `terrain`
+
+A map's `terrain` raises its ground to the heights a raster band gives, through autk-map's terrain mode: the ground the raster covers rises to its heights, the map's flat layers are draped over it, and its buildings stand on it. The view fits the raster, and the map's `camera` moves from there.
+
+| Field | Effect |
+|---|---|
+| `dataRef` | The raster table of heights, in the workspace's units: a `geotiff` source of an elevation model in meters, for example. It is a table of the map's workspace. A cell without a value lies at height 0. |
+| `band` | The band of heights, by its id (`band_1`, ...) or its label, as a raster layer's `getFnv` names one. Defaults to the first band. |
+
+A run refuses a `dataRef` that names no raster table of the map's workspace, and a `band` that names none of the bands of a raster of several.
+
+```ts
+data: [
+  { type: 'geojson', outputTableName: 'neighborhoods', geojsonFileUrl: '/data/mnt_neighs.geojson' },
+  { type: 'geotiff', outputTableName: 'elevation', geotiffFileUrl: '/data/mnt_dem.tif', coordinateFormat: 'EPSG:3857' },
+],
+map: { terrain: { dataRef: 'elevation' }, camera: { zoom: 10, pitch: 60, bearing: 30 }, layerRefs: [{ dataRef: 'neighborhoods' }] },
+```
+
+### `style`
+
+A map's `style` names one of autk-map's styles, such as `apple`, its default, or `light`, and a name autk-map does not know draws in `apple`. It can also give the colors of a style of the spec's own, each `#rrggbb`: autk-map takes a style only whole, so a run refuses one that lacks any of the nine.
+
+| Color | Effect |
+|---|---|
+| `background` | The map's background, where no layer is drawn. |
+| `surface`, `parks`, `water`, `roads`, `buildings`, `points`, `polylines`, `polygons` | The layers of each of those types. |
+
+A layer with a `color` is drawn in it instead, and a layer colored by value in its scheme.
+
+```ts
+map: {
+  style: {
+    background: '#0b1a2a', surface: '#13263a', parks: '#1f4d3a', water: '#08121d', roads: '#3a5068',
+    buildings: '#5b7083', points: '#f2c14e', polylines: '#7f97ad', polygons: '#2a3d52',
+  },
+  layerRefs: [{ dataRef: 'downtown_surface' }, { dataRef: 'downtown_roads' }, { dataRef: 'downtown_buildings' }],
+}
+```
+
+### `highlightColor` and `invalidValueColor`
+
+| Key | Effect |
+|---|---|
+| `highlightColor` | The color of the features the map draws as picked: by the user, by a layer's `pickedComps`, by a link, or by a call such as `highlightOnMap`, `#rrggbb`. autk-map's is `#5dade2`. |
+| `invalidValueColor` | The color of the features of a layer colored by value whose value autk-map cannot color: one without a value, or with one that is not on the layer's scale, `#rrggbb`. autk-map's is `#ffffff`. |
+
+autk-map keeps both for each map, unlike autk-plot's mark and highlight colors, which are the page's: each map of a spec draws in its own.
+
+```ts
+map: { highlightColor: '#ff7f0e', invalidValueColor: '#bfbfbf', layerRefs: [{ dataRef: 'parcels', getFnv: 'value', isPick: true }] }
+```
+
+### `showUi`
+
+autk-map puts a menu of the map's layers at the map's top left and a legend at its bottom right. A map with `showUi: false` has neither; its "made with autark" credit stays. Without it, or with `true`, the map shows both.
+
+```ts
+map: { showUi: false, layerRefs: [{ dataRef: 'parcels', getFnv: 'area' }] }
+```
+
 ## Layer styling
 
 Besides `dataRef`, a layer of `map.layerRefs` takes these styling options:
@@ -441,6 +502,8 @@ Besides `dataRef`, a layer of `map.layerRefs` takes these styling options:
 | `colorMapReverse` | On a raster layer, runs the color scale from the highest value to the lowest, or from `colorMapRange`'s high to its low. |
 | `transferFunction` | On a raster layer, how opaque its cells are by value: autk-map's transfer function (`mode`, `opacityMin`, `opacityMax`, `gamma`, `zeroCenter`). `{ opacityMin: 1, opacityMax: 1 }` draws every cell with a value fully opaque. |
 
+On a raster layer, `getFnv` names the band to draw: by its id, such as a GeoTIFF's `band_24`, or by its label, such as `count.noise` for a heatmap's `count_noise`. Without it, the layer draws the first band. A run refuses a `getFnv` that names none of the bands of a raster of several, and a raster of one band draws that band.
+
 After a run, `grammar.mapLayer(dataRef)` finds the layer a map draws for a table: the `AutkMap` and the layer's id in it, the last map's when several maps draw the table. `grammar.mapLayers(dataRef)` lists every layer that draws it, in every map. `highlightOnMap`, `clearHighlightOnMap` and a plot's `mapRef` also name layers by their `dataRef` (see [Interactions](#interactions)).
 
 ```ts
@@ -457,6 +520,64 @@ await grammar.run({
 });
 const { map, layerId } = grammar.mapLayer('routes')!; // layerId is 'Fastest route'
 map.updateRenderInfo(layerId, { opacity: 0.5 });
+```
+
+### `buildingsZeroHeight`
+
+autk-map leaves out a building part that has no height: none of `height`, `building:height`, `levels` and `building:levels`. A buildings layer with `buildingsZeroHeight: true` draws each such part with a random height of 3 to 7 floors of 3.4 m, from 10.2 to 23.8 m, so a city whose map data gives few heights is not left half empty. The heights are drawn again at each run. A part with one of those keys whose height is not above its minimum, such as `height: 0`, is still left out. Other layers ignore it.
+
+```ts
+map: { layerRefs: [{ dataRef: 'downtown_buildings', buildingsZeroHeight: true }] }
+```
+
+### `legend`
+
+A map's legend shows the color scale of one layer: the last layer whose colors autk-map set, about the last layer colored by value. A layer with `legend: true` is the one it shows, and on a raster layer, whose legend autk-map hides without a scale of its own, it shows it. Picking stays as the layers' `isPick` sets it: autk-map's own legend choice, `changeActiveLayer`, would also make the layer the only one of the map that picks.
+
+A run refuses `legend` on two layers of a map, on a layer drawn in one color, and on a map whose `showUi` is `false`, which has no legend.
+
+```ts
+map: { layerRefs: [{ dataRef: 'income', getFnv: 'median', legend: true }, { dataRef: 'schools', getFnv: 'enrollment', isPick: true }] }
+```
+
+### `skippedComps`
+
+A layer's `skippedComps` lists the features it hides, by their positions among those it draws, as `map:picking` events and `highlightOnMap` give them: a filter the map applies as it is drawn. It hides features of every layer of polygons, lines, points or buildings. A run refuses it on a raster layer, and a position that is not a whole number from 0 or is past the last feature the layer draws. With autk-map 4.1.1, a hidden feature of a polygons or buildings layer can still be picked.
+
+```ts
+map: { layerRefs: [{ dataRef: 'parcels', skippedComps: [2, 5] }] }
+```
+
+### `widthBy`
+
+A roads layer draws each line as wide as autk-map draws its kind of road, and `width` gives every line one width. A roads layer's `widthBy` is the dot path to each line's own width, relative to `feature.properties`, in the map's planar units: autk-map's widths by feature. A line without a positive number there keeps the width of its kind of road.
+
+autk-map draws every line of a polylines layer at one width, which wins over widths by feature, so a run refuses `widthBy` on a polylines layer: draw the table as roads, with `layerType: 'roads'`. A run also refuses `widthBy` with `width`, and a path that gives no line of the layer a width.
+
+```ts
+map: { layerRefs: [{ dataRef: 'segments', layerType: 'roads', widthBy: 'compute.width', getFnv: 'traffic' }] }
+```
+
+### `layerType`
+
+A layer draws its table as the table's own type, which its source or compute pass gave it. A layer's `layerType` draws the table as another type of its kind of geometry, in that type's color of the map's style and the way autk-map draws that type:
+
+| Table | `layerType` |
+|---|---|
+| Polygons, and the surface, parks, water and buildings tables | `polygons`, `surface`, `parks`, `water`, or `buildings`, raised by each feature's height |
+| Lines, and the roads tables | `polylines`, or `roads`, each line as wide as its kind of road |
+| Points | `points` |
+| A raster | `raster` |
+
+A run refuses a type of another kind of geometry, for which autk-map would draw nothing. autk-map draws surface, parks, water and roads layers below every other layer, in that order, whatever the order of `layerRefs`.
+
+```ts
+map: {
+  layerRefs: [
+    { dataRef: 'green_space', layerType: 'parks' },          // a polygons table, in the style's parks color
+    { dataRef: 'downtown_buildings', layerType: 'polygons' }, // the footprints, flat
+  ],
+}
 ```
 
 ## Plots and links
@@ -608,6 +729,16 @@ A plot's `selection` lists the rows selected as it is drawn, by their feature id
 plot: { id: 'sizes', dataRef: 'parcels', mark: 'scatter', axis: ['area', 'perimeter'], mapRef: 'parcels', selection: [0, 4] }
 ```
 
+### `pickedComps`
+
+A layer's `pickedComps` lists the features drawn as picked as the map is drawn, in the map's highlight color, as if the user had picked them: their positions among those the layer draws, as `map:picking` events and `highlightOnMap` give them. The run applies it once the plots and their links exist, as `highlightOnMap` does for that one layer: the layer highlights the features, and the plots linked to it select the same rows. No `map:picking` event reports it.
+
+autk-map draws picked features only on the layer of a map that picks, and lets one layer of a map pick: the last that sets `isPick`, unless a link or a plot's `mapRef` makes another layer pick. So a layer with `pickedComps` sets `isPick: true`, and a run refuses `pickedComps` on a layer without it, or on a layer a later layer of its map, a link or a plot's `mapRef` takes picking from. A run also refuses it on a raster layer, on a layer linked to a plot that sets `selection`, and a position that is not a whole number from 0 or is past the last feature the layer draws.
+
+```ts
+map: { layerRefs: [{ dataRef: 'parcels', isPick: true, pickedComps: [0, 4] }] }
+```
+
 ## Page layout
 
 A spec's `layout` says how its maps and plots are arranged on the page. The grammar's run never reads it: the page that hosts the views does, when it makes their canvases and elements, with `arrangeViews(spec)` (see [For hosts](#for-hosts)), so every host arranges a spec's views alike.
@@ -677,6 +808,8 @@ let db: unknown; // the AutkDb the first call creates
 if (spec.workspaces) db = await adapter.resolveWorkspaces(db, spec.workspaces);
 for (const source of spec.data ?? []) db = await adapter.resolveSource(db, source);
 ```
+
+The data adapter of either entry notes the coordinate system of each GeoJSON source it puts in its cache, and the two entries keep their notes in one place on the page. So a host may load a spec's tables with the data adapter of `./data` and run its passes with the compute adapter of the main entry, handing it that cache as `sources`: its passes read the sources' features as the grammar's do.
 
 ### Arranging the views
 

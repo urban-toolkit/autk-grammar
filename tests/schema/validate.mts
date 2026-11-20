@@ -340,6 +340,51 @@ expect('camera motion step amount as a string', cameraWith({ motion: [tourStep({
 expect('camera motion zoom step with a pan', cameraWith({ motion: [tourStep({ pan: 100 })] }), false);
 expect('camera motion bearing step with a pan', cameraWith({ motion: [tourStep({ type: 'bearing', pan: 100 })] }), false);
 expect('camera motion pitch step pan as a string', cameraWith({ motion: [tourStep({ type: 'pitch', pan: '100' })] }), false);
+// Map keys of 5.3.0. Keys the schema does not name are allowed, so each refused form is valid until its key is typed.
+expect('map terrain', { map: { ...layers, terrain: { dataRef: 'dem' } } }, true);
+expect('map terrain from a band', { map: { ...layers, terrain: { dataRef: 'lst', band: 'band_24' } } }, true);
+expect('map terrain as a table name', { map: { ...layers, terrain: 'dem' } }, false);
+expect('map terrain without dataRef', { map: { ...layers, terrain: { band: 'band_1' } } }, false);
+expect('map terrain with an empty dataRef', { map: { ...layers, terrain: { dataRef: '' } } }, false);
+expect('map terrain with an empty band', { map: { ...layers, terrain: { dataRef: 'dem', band: '' } } }, false);
+expect('map terrain with a band as a number', { map: { ...layers, terrain: { dataRef: 'dem', band: 1 } } }, false);
+expect('layer pickedComps on a layer that picks', layer({ isPick: true, pickedComps: [0, 4] }), true);
+expect('layer pickedComps empty', layer({ isPick: true, pickedComps: [] }), true);
+expect('layer pickedComps without isPick', layer({ pickedComps: [1] }), false);
+expect('layer pickedComps with isPick false', layer({ isPick: false, pickedComps: [1] }), false);
+expect('layer pickedComps of a negative position', layer({ isPick: true, pickedComps: [-1] }), false);
+expect('layer pickedComps of a position between two', layer({ isPick: true, pickedComps: [1.5] }), false);
+expect('layer pickedComps as strings', layer({ isPick: true, pickedComps: ['1'] }), false);
+expect('layer pickedComps as a number', layer({ isPick: true, pickedComps: 1 }), false);
+expect('layer buildingsZeroHeight', layer({ buildingsZeroHeight: true }), true);
+expect('layer buildingsZeroHeight as a string', layer({ buildingsZeroHeight: 'yes' }), false);
+expect('layer skippedComps', layer({ skippedComps: [2, 5] }), true);
+expect('layer skippedComps of a negative position', layer({ skippedComps: [-1] }), false);
+expect('layer skippedComps of a position between two', layer({ skippedComps: [0.5] }), false);
+expect('layer skippedComps as a number', layer({ skippedComps: 2 }), false);
+expect('layer shown in the legend', layer({ getFnv: 'v', legend: true }), true);
+expect('layer legend as a string', layer({ legend: 'yes' }), false);
+expect('layer widths by feature', layer({ layerType: 'roads', widthBy: 'compute.width' }), true);
+expect('layer widthBy with width', layer({ widthBy: 'lanes', width: 4 }), false);
+expect('layer widthBy empty', layer({ widthBy: '' }), false);
+expect('layer widthBy as a number', layer({ widthBy: 3 }), false);
+expect('layer drawn as another type', layer({ layerType: 'parks' }), true);
+expect('layer drawn as a type autk-map does not know', layer({ layerType: 'rivers' }), false);
+expect('map without its controls', { map: { ...layers, showUi: false } }, true);
+expect('map showUi as a string', { map: { ...layers, showUi: 'no' } }, false);
+const styleColors = {
+    background: '#102030', surface: '#203040', parks: '#2ca02c', water: '#1f77b4', roads: '#7f7f7f',
+    buildings: '#8c564b', points: '#e377c2', polylines: '#bcbd22', polygons: '#D62728',
+};
+expect('map style by name', { map: { ...layers, style: 'light' } }, true);
+expect('map style of its own colors', { map: { ...layers, style: styleColors } }, true);
+expect('map style without a parks color', { map: { ...layers, style: Object.fromEntries(Object.entries(styleColors).filter(([key]) => key !== 'parks')) } }, false);
+expect('map style with a color by name', { map: { ...layers, style: { ...styleColors, water: 'blue' } } }, false);
+expect('map style with a short hex color', { map: { ...layers, style: { ...styleColors, roads: '#777' } } }, false);
+expect('map style as a number', { map: { ...layers, style: 3 } }, false);
+expect('map highlight and invalid-value colors', { map: { ...layers, highlightColor: '#ff7f0e', invalidValueColor: '#BFBFBF' } }, true);
+expect('map highlightColor by name', { map: { ...layers, highlightColor: 'orange' } }, false);
+expect('map invalidValueColor as short hex', { map: { ...layers, invalidValueColor: '#f0f' } }, false);
 expect('layout with an unknown type', { map: layers, layout: { type: 'diagonal' } }, false);
 expect('layout grid with zero columns', { map: layers, layout: { type: 'grid', columns: 0 } }, false);
 expect('layout grid with columns that are not a whole number', { map: layers, layout: { type: 'grid', columns: 2.5 } }, false);
@@ -472,6 +517,17 @@ const newKeys: Array<[string, string[]]> = [
     ['UrbanSpec', ['plot.axisLabels']],
     ['UrbanSpec', ['plot.selection']],
     ['UrbanSpec', ['plot.markColor', 'plot.highlightColor']],
+    ['UrbanSpec', ['map.terrain', 'map.terrain.dataRef', 'map.terrain.band']],
+    ['TerrainSpec', ['']],
+    ['MapLayerSpec', ['pickedComps', 'isPick']],
+    ['MapLayerSpec', ['buildingsZeroHeight']],
+    ['MapLayerSpec', ['layerType']],
+    ['MapLayerSpec', ['skippedComps']],
+    ['MapLayerSpec', ['widthBy']],
+    ['MapLayerSpec', ['legend']],
+    ['UrbanSpec', ['map.showUi']],
+    ['UrbanSpec', ['map.style', 'map.highlightColor', 'map.invalidValueColor']],
+    ['MapStyleColors', ['', 'background', 'surface', 'parks', 'water', 'roads', 'buildings', 'points', 'polylines', 'polygons']],
     ['UrbanSpec', ['map.camera.center']],
     ['UrbanSpec', ['map.camera.motion', 'map.camera.motion.type', 'map.camera.motion.amount', 'map.camera.motion.seconds', 'map.camera.motion.pan']],
     ['CameraMotionStep', ['']],

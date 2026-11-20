@@ -1,11 +1,11 @@
 import type { FeatureCollection } from 'geojson';
-import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec } from '@urban-toolkit/the-urban-grammar';
+import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec, TerrainSpec } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, ComputeCache, ComputeLayerTypes } from '../types';
 import { DrawnLayers, LayerExports, exportKey, exportOf, exportOptions, mapIdOf } from '../drawn';
 import { rowKeys } from '../rows';
 import { AutkMap } from '@urban-toolkit/autk-map';
-import type { LayerRenderInfo } from '@urban-toolkit/autk-map';
+import type { LayerRenderInfo, MapStyleShape } from '@urban-toolkit/autk-map';
 import { ColorMap, ColorMapDomainStrategy, ColorMapInterpolator } from '@urban-toolkit/autk-core';
 import type { ColorHEX, ColorMapConfig, ColorRGB, LayerType, TransferFunction } from '@urban-toolkit/autk-core';
 import { AutkDb } from '@urban-toolkit/autk-db';
@@ -52,14 +52,14 @@ function styleRenderInfo(layerRef: MapLayerSpec, layerId: string): Partial<Layer
 
 /**
  * Whether the layer is colored by value. An explicit `isColorMap` decides. A raster layer is colored by value
- * either way, and this only shows or hides its legend. Otherwise a layer with a `color` is drawn in it, and a
- * layer with a scheme or a `getFnv` value is colored by value.
+ * either way, and this only shows or hides its legend, which a scale of its own or `legend` shows. Otherwise a layer
+ * with a `color` is drawn in it, and a layer with a scheme or a `getFnv` value is colored by value.
  */
 function colorsByValue(layerRef: MapLayerSpec, type: LayerType): boolean {
     if (layerRef.isColorMap != null) return layerRef.isColorMap;
     if (type === 'raster')
         return layerRef.colorMapInterpolator != null || layerRef.colorMapRange != null || layerRef.colorMapCenter != null
-            || layerRef.colorMapReverse === true;
+            || layerRef.colorMapReverse === true || layerRef.legend === true;
     if (layerRef.color != null) return false;
     return layerRef.colorMapInterpolator != null || layerRef.getFnv != null;
 }
@@ -134,6 +134,163 @@ function checkColorMapRange(layerRef: MapLayerSpec): void {
         throw refuse(`colorMapCenter (${center}) must lie within colorMapRange [${low}, ${high}].`);
 }
 
+/** The colors a style of the spec's own gives, all of which autk-map's `setCustomStyle` takes. */
+const STYLE_COLORS = ['background', 'surface', 'parks', 'water', 'roads', 'buildings', 'points', 'polylines', 'polygons'] as const;
+
+/**
+ * Refuses a `style` that is neither a name nor the nine colors of a style, each `#rrggbb`, and a `highlightColor` or an
+ * `invalidValueColor` that is not `#rrggbb`. autk-map would throw at the first color a style lacks.
+ */
+function checkMapColors(spec: MapSpec, index: number): void {
+    const refuse = (message: string) => new Error(`Map ${index}: ${message}`);
+    const style: unknown = spec.style;
+    if (style !== undefined && typeof style !== 'string') {
+        if (style === null || typeof style !== 'object' || Array.isArray(style))
+            throw refuse(`style must be the name of one of autk-map's styles or the colors of a style, not ${JSON.stringify(style)}.`);
+        const missing = STYLE_COLORS.filter((key) => !(key in style));
+        if (missing.length > 0)
+            throw refuse(`style gives no color for ${missing.join(', ')}: a style of the spec's own gives each of ${STYLE_COLORS.join(', ')}.`);
+        for (const key of STYLE_COLORS) {
+            const color = (style as Record<string, unknown>)[key];
+            if (typeof color !== 'string' || !HEX_COLOR.test(color))
+                throw refuse(`style.${key} must be a color written #rrggbb, not ${JSON.stringify(color)}.`);
+        }
+    }
+    for (const key of ['highlightColor', 'invalidValueColor'] as const) {
+        const color: unknown = spec[key];
+        if (color !== undefined && (typeof color !== 'string' || !HEX_COLOR.test(color)))
+            throw refuse(`${key} must be a color written #rrggbb, not ${JSON.stringify(color)}.`);
+    }
+}
+
+/** Sets a map's style, and its highlight and invalid-value colors, which autk-map keeps for each map. */
+function applyMapColors(map: AutkMap, spec: MapSpec): void {
+    if (typeof spec.style === 'string')
+        map.style.setPredefinedStyle(spec.style);
+    else if (spec.style)
+        map.style.setCustomStyle(spec.style as MapStyleShape);
+    if (spec.highlightColor !== undefined)
+        map.style.setHighlightColor(spec.highlightColor as ColorHEX);
+    if (spec.invalidValueColor !== undefined)
+        map.style.setInvalidValueColor(spec.invalidValueColor as ColorHEX);
+}
+
+/** Refuses a `widthBy` that is not a path, and one set with `width`, which gives every line one width. */
+function checkWidthBy(layerRef: MapLayerSpec, layerId: string): void {
+    const path: unknown = layerRef.widthBy;
+    if (path === undefined) return;
+    if (typeof path !== 'string' || path === '')
+        throw new Error(`Layer "${layerId}": widthBy must be the dot path to each line's width, not ${JSON.stringify(path)}.`);
+    if (layerRef.width !== undefined)
+        throw new Error(`Layer "${layerId}": set width or widthBy, not both: width gives every line one width.`);
+}
+
+/**
+ * Sets the width of each line of a roads layer from the property `widthBy` names, as autk-map's widths by feature
+ * (`polylinesWidthByComponent`): a line without a positive number there keeps the width autk-map gave its kind of road.
+ * autk-map gives every polylines layer one width, which wins over widths by feature and which a layer cannot clear, so
+ * only a roads layer takes it.
+ */
+function applyWidthBy(map: AutkMap, layerId: string, path: string, type: LayerType, data: FeatureCollection): void {
+    if (type !== 'roads')
+        throw new Error(`Layer "${layerId}": widthBy sets the width of each line of a roads layer, and the layer is drawn as ${type}: draw a table of lines as roads with layerType: 'roads'.`);
+    const layer = map.layerManager.searchByLayerId(layerId) as unknown as
+        { components?: Array<{ featureIndex?: number }>; layerRenderInfo: LayerRenderInfo } | null;
+    const components = layer?.components ?? [];
+    const widths = new Float32Array(components.length);
+    widths.set(layer?.layerRenderInfo.polylinesWidthByComponent?.subarray(0, components.length) ?? []);
+    const relative = path.startsWith('properties.') ? path.slice('properties.'.length) : path;
+    let given = 0;
+    components.forEach((component, position) => {
+        const feature = data.features[component.featureIndex ?? position];
+        const width = Number(valueAtPath(feature?.properties, relative));
+        if (Number.isFinite(width) && width > 0) {
+            widths[position] = width;
+            given++;
+        }
+    });
+    if (given === 0)
+        throw new Error(`Layer "${layerId}": widthBy "${path}" gives no line of the layer a width: none has a positive number there.`);
+    map.updateRenderInfo(layerId, { polylinesWidthByComponent: widths });
+}
+
+/** Refuses `legend` on two layers of a map, which shows one legend, and on a map whose `showUi` hides its legend. */
+function checkLegend(spec: MapSpec, index: number): void {
+    const legends = spec.layerRefs.filter((layerRef) => layerRef.legend === true).map(layerIdOf);
+    if (legends.length > 1)
+        throw new Error(`Map ${index}: layers ${legends.map((id) => `"${id}"`).join(' and ')} each set legend: a map shows one legend.`);
+    if (legends.length === 1 && spec.showUi === false)
+        throw new Error(`Layer "${legends[0]}": legend shows the layer in the map's legend, and the map's showUi is false, which hides the legend.`);
+}
+
+/**
+ * Shows the color scale of the layer that sets `legend` in the map's legend, which otherwise shows the last layer whose
+ * colors autk-map set. It sets the legend's layer alone, through the map UI's `activeLayer`: autk-map's
+ * `changeActiveLayer` would also make that layer the only one of the map that picks. It refuses a layer drawn in one color.
+ */
+function showLegendOf(map: AutkMap, spec: MapSpec): void {
+    const layerRef = spec.layerRefs.find((candidate) => candidate.legend === true);
+    if (!layerRef) return;
+    const layerId = layerIdOf(layerRef);
+    const layer = map.layerManager.searchByLayerId(layerId);
+    if (!layer?.layerRenderInfo.isColorMap)
+        throw new Error(`Layer "${layerId}": legend shows the color scale of a layer colored by value, and the layer is drawn in one color.`);
+    map.ui.activeLayer = layer;
+    map.ui.refreshLegend(null);
+}
+
+/** The layer types that draw each kind of geometry, and how a refusal says so. */
+const LAYER_KINDS: ReadonlyArray<{ types: readonly LayerType[]; drawn: string }> = [
+    { types: ['points'], drawn: 'a table of points is drawn as points' },
+    { types: ['polylines', 'roads'], drawn: 'a table of lines is drawn as polylines or roads' },
+    { types: ['polygons', 'surface', 'parks', 'water', 'buildings'], drawn: 'a table of polygons is drawn as polygons, surface, parks, water or buildings' },
+    { types: ['raster'], drawn: 'a raster table is drawn as raster' },
+];
+
+/**
+ * The type the map draws a layer's table as: its `layerType`, which is refused when it is not of the table's kind of
+ * geometry, else the table's own type.
+ */
+function drawnType(layerRef: MapLayerSpec, tableType: LayerType | undefined, layerId: string): LayerType {
+    const wanted = layerRef.layerType;
+    if (wanted === undefined || tableType === undefined) return (wanted ?? tableType) as LayerType;
+    const kind = LAYER_KINDS.find((candidate) => candidate.types.includes(tableType));
+    if (!kind || kind.types.includes(wanted)) return wanted;
+    throw new Error(`Layer "${layerId}": layerType "${wanted}" cannot draw the table "${layerRef.dataRef}", a ${tableType} table: ${kind.drawn}.`);
+}
+
+/** Refuses a list of feature positions that is not whole numbers from 0, as `key` of a layer. */
+function checkPositions(positions: unknown, key: string, layerId: string): void {
+    if (!Array.isArray(positions) || !positions.every((position) => Number.isInteger(position) && position >= 0))
+        throw new Error(`Layer "${layerId}": ${key} must list the positions of features the layer draws, whole numbers from 0, not ${JSON.stringify(positions)}.`);
+}
+
+/** Refuses positions on a raster layer, which draws no features, and positions past the last feature a layer draws. */
+function checkDrawnPositions(positions: readonly number[], key: string, layerId: string, type: LayerType, count: number): void {
+    if (type === 'raster')
+        throw new Error(`Layer "${layerId}": ${key} names features, and a raster layer has none.`);
+    const past = positions.find((position) => position >= count);
+    if (past !== undefined)
+        throw new Error(`Layer "${layerId}": ${key} names position ${past}, past the ${count} features the layer draws.`);
+}
+
+/**
+ * Refuses a layer's `pickedComps` when the layer does not set `isPick`, or when a later layer of its map sets it: autk-map
+ * draws picked features only on the layer that picks, and lets one layer of a map pick, the last that asks.
+ */
+function checkPickedComps(spec: MapSpec): void {
+    spec.layerRefs.forEach((layerRef, at) => {
+        if (layerRef.pickedComps === undefined) return;
+        const layerId = layerIdOf(layerRef);
+        checkPositions(layerRef.pickedComps, 'pickedComps', layerId);
+        if (layerRef.isPick !== true)
+            throw new Error(`Layer "${layerId}": pickedComps draws features as picked, which autk-map does only on the layer that picks: set isPick: true.`);
+        const later = spec.layerRefs.slice(at + 1).find((other) => other.isPick === true);
+        if (later)
+            throw new Error(`Layer "${layerId}": pickedComps draws features as picked on the layer that picks, but layer "${layerIdOf(later)}", after it, picks too: autk-map lets one layer of a map pick, the last.`);
+    });
+}
+
 function valueAtPath(obj: unknown, path: string): unknown {
     return path.split('.').reduce<unknown>((acc, key) => {
         if (acc == null || typeof acc !== 'object') return undefined;
@@ -154,14 +311,22 @@ function setValueAtPath(obj: Record<string, unknown>, path: string, value: unkno
 }
 
 /**
- * Resolves a grammar value path such as `count.noise` to the raster band that holds it.
- * autk-db stores heatmap values in bands (`band_1`, ...) labelled `<aggregateFn>_<table>`.
+ * Resolves a grammar value path such as `count.noise` to the raster band that holds it, by the band's id (`band_1`, ...)
+ * or its label: autk-db labels a heatmap's bands `<aggregateFn>_<table>`. Without a path, the first band. A raster of
+ * one band is read whatever the path names; on a raster of several, a path that names none of them is refused, since
+ * another band would show other values. `refuse` makes the error from the sentence that says so.
  */
-function rasterBand(collection: { features?: { properties?: unknown }[] }, getFnv?: string): string {
+function rasterBand(collection: { features?: { properties?: unknown }[] }, path: string | undefined, refuse: (message: string) => Error): string {
     const props = collection.features?.[0]?.properties as { bands?: { id: string; label?: string }[] } | undefined;
     const bands = props?.bands ?? [];
-    const band = bands.find((b) => b.id === getFnv || b.label === getFnv?.replace(/\./g, '_'));
-    return band?.id ?? bands[0]?.id ?? getFnv ?? '';
+    if (path === undefined) return bands[0]?.id ?? '';
+    const band = bands.find((b) => b.id === path || b.label === path.replace(/\./g, '_'));
+    if (band) return band.id;
+    if (bands.length > 1) {
+        const names = bands.map((b) => (b.label && b.label !== b.id ? `${b.id} (${b.label})` : b.id));
+        throw refuse(`"${path}" names none of its ${bands.length} bands: ${names.join(', ')}.`);
+    }
+    return bands[0]?.id ?? path;
 }
 
 /**
@@ -213,6 +378,27 @@ export function applyCamera(map: AutkMap, camera: CameraSpec): void {
 }
 
 /**
+ * Raises the map's ground to the heights of a raster band, through autk-map's `enableTerrainMode`, once its layers are
+ * loaded. autk-map drapes the flat layers over the ground the raster covers and fits the view to it. It refuses a
+ * `dataRef` that names no raster table of the map's workspace, and a `band` that names none of several bands.
+ */
+async function loadTerrain(map: AutkMap, context: AutkDb, terrain: TerrainSpec, index: number): Promise<void> {
+    const refuse = (message: string) => new Error(`Map ${index}: terrain ${message}`);
+    const table = context.getTablesMetadata().find((candidate) => candidate.name === terrain.dataRef);
+    if (!table)
+        throw refuse(`dataRef "${terrain.dataRef}" names no table of the map's workspace.`);
+    if (table.type !== 'raster')
+        throw refuse(`dataRef "${terrain.dataRef}" names a ${table.type ?? 'plain'} table, and a terrain takes its heights from a raster table, such as a geotiff source's.`);
+    const collection = await context.getRaster(terrain.dataRef) as unknown as FeatureCollection;
+    const band = rasterBand(collection, terrain.band, (message) => refuse(`band ${message}`));
+    try {
+        map.enableTerrainMode(collection, band);
+    } catch (error) {
+        throw refuse(`"${terrain.dataRef}": ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+
+/**
  * The key of the row a vector layer draws at each of its positions. autk-map draws each feature it is handed as one
  * component, in order, and none for a feature with nothing to draw; a component names its feature by its index among
  * those handed (`featureIndex`). `kept` gives the table row of each feature handed, and `keys` each table row's key.
@@ -246,7 +432,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
             const name     = layerRef.dataRef;
             const layerId  = layerIdOf(layerRef);
             const key      = tableKey(spec.workspace, name);
-            const type     = (computeTypes?.get(key) ?? tableToTypeMap[name]) as LayerType;
+            const type     = drawnType(layerRef, (computeTypes?.get(key) ?? tableToTypeMap[name]) as LayerType | undefined, layerId);
             const getFnv   = layerRef.getFnv;
 
             const rawData = computeCache?.get(key) ?? (type === 'raster'
@@ -257,12 +443,16 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
             const rows = rawData.features ?? [];
             const kept = type === 'raster' ? [] : rows.flatMap((feature, row) => (feature?.geometry != null ? [row] : []));
             const data = type === 'raster' ? rawData : { ...rawData, features: kept.map((row) => rows[row]) };
-            const band = type === 'raster' ? rasterBand(data, getFnv) : '';
+            const band = type === 'raster'
+                ? rasterBand(data, getFnv, (message) => new Error(`Layer "${layerId}": getFnv ${message}`))
+                : '';
 
             if(type === 'raster') {
                 map.loadCollection(layerId, { collection: data, type: 'raster', property: band });
             } else {
-                map.loadCollection(layerId, { collection: data, type });
+                // autk-map leaves out a building part without a height, unless it is told to give each a random one.
+                const zeroHeight = type === 'buildings' && layerRef.buildingsZeroHeight === true;
+                map.loadCollection(layerId, { collection: data, type, ...(zeroHeight ? { loadConfig: { buildingsZeroHeight: true } } : {}) });
             }
 
             if(layerRef.opacity != null)
@@ -271,6 +461,9 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
             const style = styleRenderInfo(layerRef, layerId);
             if(Object.keys(style).length > 0)
                 map.updateRenderInfo(layerId, style);
+
+            if(layerRef.widthBy !== undefined)
+                applyWidthBy(map, layerId, layerRef.widthBy, type, data);
 
             // pointSize is in meters on the ground, and autk-map's in planar units, which Mercator stretches away
             // from the equator: the layer's points are sized at the middle of its extent.
@@ -355,7 +548,17 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 map.updateThematic(layerId, { collection: thematicData, property });
             }
 
-            drawn.push(type === 'raster' ? [] : drawnRowKeys(map, layerId, rowKeys(rows), kept));
+            const drawnRows = type === 'raster' ? [] : drawnRowKeys(map, layerId, rowKeys(rows), kept);
+            // The run highlights pickedComps once the plots and links exist (see AutkGrammar).
+            if(layerRef.pickedComps)
+                checkDrawnPositions(layerRef.pickedComps, 'pickedComps', layerId, type, drawnRows.length);
+            if(layerRef.skippedComps) {
+                checkDrawnPositions(layerRef.skippedComps, 'skippedComps', layerId, type, drawnRows.length);
+                // AutkMap.setSkippedIds passes over a points layer, which hides features of its own: the layer's own call
+                // hides them on every type of layer.
+                map.layerManager.searchByLayerId(layerId)?.setSkippedIds(layerRef.skippedComps);
+            }
+            drawn.push(drawnRows);
         }
         return drawn;
     }
@@ -368,7 +571,13 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 for(const layerRef of spec.layerRefs) {
                     checkColorMapRange(layerRef);
                     checkPointSize(layerRef.pointSize, layerIdOf(layerRef));
+                    if(layerRef.skippedComps !== undefined)
+                        checkPositions(layerRef.skippedComps, 'skippedComps', layerIdOf(layerRef));
+                    checkWidthBy(layerRef, layerIdOf(layerRef));
                 }
+                checkPickedComps(spec);
+                checkMapColors(spec, index);
+                checkLegend(spec, index);
                 // Refused before the map is made, so a refused camera leaves nothing on the page.
                 const refusedCamera = spec.camera && cameraRefusal(spec.camera);
                 if(refusedCamera)
@@ -388,18 +597,21 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 if(!(canvas instanceof HTMLCanvasElement))
                     throw new Error("Target for map is not a canvas: "+targets.map);
 
-                const map = new AutkMap(canvas);
+                // autk-map builds its floating menu and legend as the map starts, unless it is told not to.
+                const map = spec.showUi === false ? new AutkMap(canvas, false) : new AutkMap(canvas);
 
                 // A map is known to the grammar, which destroys it, once its layers are loaded. One that fails before
                 // is destroyed here, so its controls, event handlers and GPU buffers do not outlive the failed run.
                 let drawn: string[][];
                 try {
-                    if(spec.style)
-                        map.style.setPredefinedStyle(spec.style)
+                    applyMapColors(map, spec);
 
                     await map.init();
                     await enterWorkspace(context, spec.workspace);
                     drawn = await loadLayers(map, context, spec);
+                    if(spec.terrain)
+                        await loadTerrain(map, context, spec.terrain, index);
+                    showLegendOf(map, spec);
                     // The point the camera looks at, in the CRS of the map's workspace, which is current here.
                     if(spec.camera?.center)
                         await resolveCameraCenter(context, map, spec.camera.center)

@@ -490,8 +490,8 @@ export type RasterTransferFunction = {
 
 /**
  * One layer drawn by a map.
- * @if { "required": ["colorMapRange"] }
- * @then { "not": { "required": ["colorMapDomain"] } }
+ * @if { "type": "object" }
+ * @then { "allOf": [{ "if": { "required": ["colorMapRange"] }, "then": { "not": { "required": ["colorMapDomain"] } } }, { "if": { "required": ["pickedComps"] }, "then": { "required": ["isPick"], "not": { "properties": { "isPick": { "const": false } } } } }, { "if": { "required": ["widthBy"] }, "then": { "not": { "required": ["width"] } } }] }
  */
 export type MapLayerSpec = {
     /** Name of the table to draw, as produced by a data source or a compute pass. */
@@ -518,10 +518,20 @@ export type MapLayerSpec = {
     stroke?: HexColor | false,
     /**
      * Width of the lines of a polylines or roads layer, in the map's planar units (about meters). It replaces
-     * the widths a roads layer gives each kind of road. Read by the Autark adapter; the deck.gl adapter ignores it.
+     * the widths a roads layer gives each kind of road. Not with `widthBy`. Read by the Autark adapter; the deck.gl
+     * adapter ignores it.
      * @exclusiveMinimum 0
      */
     width?: number,
+    /**
+     * Dot path to the width of each line of a roads layer, relative to `feature.properties`, in the map's planar units
+     * (about meters), as `width` gives every line one: autk-map's widths by feature. A line without a positive number there
+     * keeps the width of its kind of road. autk-map draws every line of a polylines layer at one width, so a table of lines
+     * takes it drawn as roads, with `layerType: 'roads'`. Not with `width`. Read by the Autark adapter; the deck.gl adapter
+     * ignores it.
+     * @minLength 1
+     */
+    widthBy?: string,
     /**
      * Radius of each point of a points layer, in meters on the ground. The Autark adapter converts it to the
      * workspace's planar units at the middle of the layer's extent, where World Mercator, the default, stretches a
@@ -532,6 +542,13 @@ export type MapLayerSpec = {
     pointSize?: number,
     /** Color the layer by the value read with `getFnv`. */
     isColorMap?: boolean,
+    /**
+     * Show this layer's color scale in the map's legend, which otherwise shows the last layer whose colors autk-map set,
+     * about the last layer colored by value. One layer of a map at most; a layer colored by value, or a raster, whose
+     * legend it shows; and a map that shows its controls. The layers pick as their `isPick` says. Read by the Autark
+     * adapter; the deck.gl adapter ignores it.
+     */
+    legend?: boolean,
     /** Color scheme used when `isColorMap` is set. */
     colorMapInterpolator?: ColorMapInterpolator,
     /**
@@ -563,15 +580,46 @@ export type MapLayerSpec = {
      * raster layers; other layers and the deck.gl adapter ignore it.
      */
     transferFunction?: RasterTransferFunction,
-    /** Legend labels. Read by the deck.gl adapter; the Autark adapter ignores it. */
+    /** Legend labels. Neither adapter reads it. */
     colorMapLabels?: string[],
-    /** Feature ids drawn as picked. Read by the deck.gl adapter; the Autark adapter ignores it. */
-    pickedComps?: number[],
+    /**
+     * Features drawn as picked from the start, in the map's highlight color, as if the user had picked them: their
+     * positions among the features the layer draws, as `map:picking` events give them. autk-map draws picked features
+     * only on the layer of a map that picks, so the layer sets `isPick: true`, and no later layer of its map sets it, nor
+     * does a link or a plot's `mapRef` make another layer of its map pick. The plots linked to the layer select the same
+     * rows. Read by the Autark adapter; the deck.gl adapter ignores it.
+     */
+    pickedComps?: RowPosition[],
+    /**
+     * Features the layer hides, by their positions among the features it draws, as `map:picking` events give them. A
+     * hidden feature of a polygons or buildings layer can still be picked with autk-map 4.1.1. Read by the Autark adapter;
+     * the deck.gl adapter ignores it.
+     */
+    skippedComps?: RowPosition[],
     /** How values are rescaled before coloring. */
     normalization?: { mode: NormalizationMode; lowerPercentile?: number; upperPercentile?: number },
+    /**
+     * How the map draws the layer's table, in place of the table's own type, among the types of its kind of geometry: a
+     * table of polygons as `polygons`, `surface`, `parks`, `water` or `buildings` (raised by its heights), a table of lines
+     * as `polylines` or `roads`, a table of points as `points`, and a raster as `raster`. autk-map draws surface, parks,
+     * water and roads layers below the others, in that order, whatever the order of `layerRefs`. Read by the Autark
+     * adapter; the deck.gl adapter ignores it.
+     */
+    layerType?: LayerType,
+    /**
+     * Draw the parts of a buildings layer that have no height, each with a random height of 3 to 7 floors of 3.4 m (10.2
+     * to 23.8 m), rather than leave them out: autk-map's `buildingsZeroHeight`. A part has no height when it has none of
+     * `height`, `building:height`, `levels` and `building:levels`; a part with one of them whose height is not above its
+     * minimum, such as `0`, is still left out. The heights change at each run. Read by the Autark adapter for buildings
+     * layers; other layers and the deck.gl adapter ignore it.
+     */
+    buildingsZeroHeight?: boolean,
     /** Load the layer without drawing it. */
     isSkip?: boolean,
-    /** Allow picking features on this layer. */
+    /**
+     * Allow picking features on this layer. autk-map lets one layer of a map pick: the last layer that sets it, unless a
+     * link or a plot's `mapRef` makes another layer of the map pick.
+     */
     isPick?: boolean,
     /**
      * Columns whose values name the rows a pick on this layer selects, so an app can link
@@ -587,7 +635,11 @@ export type MapLayerSpec = {
      * update changed are drawn row by row, as without it. Read by the Autark adapter only.
      */
     osmElements?: boolean,
-    /** Dot path to the thematic value, relative to `feature.properties` (for example `tags.highway` or `compute.result`). */
+    /**
+     * Dot path to the thematic value, relative to `feature.properties` (for example `tags.highway` or `compute.result`).
+     * On a raster layer, the band to draw, by its id (`band_1`, ...) or its label (`count.noise` for a heatmap band labeled
+     * `count_noise`), the first band without it; on a raster of several bands, one that names none of them is refused.
+     */
     getFnv?: string,
     /** `categorical` reads the value as a string for discrete palettes; `quantitative` reads it as a number for continuous scales. Read by the deck.gl adapter; the Autark adapter ignores it. */
     getFnvType?: 'categorical' | 'quantitative',
@@ -662,6 +714,52 @@ export type CameraMotionStep = {
 }
 
 /**
+ * The ground of a map in 3D, raised to the heights a raster band gives. Read by the Autark adapter; the deck.gl adapter
+ * ignores it.
+ */
+export type TerrainSpec = {
+    /**
+     * Name of the raster table whose band gives the ground's height in each of its cells, in the workspace's units, such
+     * as a `geotiff` source of an elevation model in meters. It is a table of the map's workspace. A cell without a value
+     * lies at height 0.
+     * @minLength 1
+     */
+    dataRef: string,
+    /**
+     * The band of heights, by its id (`band_1`, ...) or its label, as a raster layer's `getFnv` names one. Defaults to the
+     * first band. On a raster of several bands, a band that names none of them is refused.
+     * @minLength 1
+     */
+    band?: string,
+}
+
+/**
+ * The colors of a map style of the spec's own, each `#rrggbb`: the background, and the color of each kind of layer
+ * drawn in one color. autk-map takes a style only whole, so each of the nine is given. Read by the Autark adapter; the
+ * deck.gl adapter ignores it.
+ */
+export type MapStyleColors = {
+    /** The map's background, where no layer is drawn. */
+    background: HexColor,
+    /** Surface layers: the ground of an area. */
+    surface: HexColor,
+    /** Parks layers. */
+    parks: HexColor,
+    /** Water layers. */
+    water: HexColor,
+    /** Roads layers. */
+    roads: HexColor,
+    /** Buildings layers. */
+    buildings: HexColor,
+    /** Points layers. */
+    points: HexColor,
+    /** Polylines layers. */
+    polylines: HexColor,
+    /** Polygons layers. */
+    polygons: HexColor,
+}
+
+/**
  * A map view.
  */
 export type MapSpec = {
@@ -672,10 +770,38 @@ export type MapSpec = {
     id?: string,
     /** Workspace the map reads its layers' tables from. */
     workspace?: WorkspaceName,
-    /** Map style. */
-    style?: string,
+    /**
+     * Map style: the name of one of autk-map's styles, such as `apple`, its default, or `light` (a name autk-map does not
+     * know draws in `apple`), or the colors of a style of the spec's own. A layer with a `color` is drawn in it instead,
+     * and a layer colored by value in its scheme. Read by the Autark adapter; the deck.gl adapter ignores it.
+     */
+    style?: string | MapStyleColors,
+    /**
+     * The color of the features the map draws as picked, by the user, a layer's `pickedComps`, a link or a call such as
+     * `highlightOnMap`, `#rrggbb`. Each map has its own; autk-map's is `#5dade2`. Read by the Autark adapter; the deck.gl
+     * adapter ignores it.
+     */
+    highlightColor?: HexColor,
+    /**
+     * The color of the features of a layer colored by value whose value autk-map cannot color: one without a value, or
+     * with one that is not on the layer's scale, `#rrggbb`. Each map has its own; autk-map's is `#ffffff`. Read by the
+     * Autark adapter; the deck.gl adapter ignores it.
+     */
+    invalidValueColor?: HexColor,
+    /**
+     * Whether autk-map shows its floating controls on the map: the menu of its layers and the legend. `false` hides them,
+     * and the "made with autark" credit stays. Defaults to `true`. Read by the Autark adapter; the deck.gl adapter ignores
+     * it.
+     */
+    showUi?: boolean,
     /** Where the map looks from. */
     camera?: CameraSpec,
+    /**
+     * A 3D ground from an elevation raster: autk-map raises the ground the raster covers to its heights, drapes the map's
+     * flat layers over it, stands its buildings on it, and fits the view to it, from which `camera` moves. Read by the
+     * Autark adapter; the deck.gl adapter ignores it.
+     */
+    terrain?: TerrainSpec,
     /** Layers to draw, bottom first. Each names a table with `dataRef`. */
     layerRefs: MapLayerSpec[]
 }
