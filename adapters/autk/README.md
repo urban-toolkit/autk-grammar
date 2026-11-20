@@ -382,7 +382,7 @@ await grammar.run({
     {
       type: 'sql',
       outputTableName: 'largest_blocks',
-      query: "SELECT CAST(properties->'compute'->>'block' AS INTEGER) AS block, count(*) AS buildings FROM fidi_blocks GROUP BY block ORDER BY buildings DESC, block LIMIT 10",
+      query: "SELECT CAST(properties->'compute'->>'block' AS INTEGER) AS block, CAST(count(*) AS INTEGER) AS buildings FROM fidi_blocks GROUP BY block ORDER BY buildings DESC, block LIMIT 10",
       after: 'compute',
     },
   ],

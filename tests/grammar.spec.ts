@@ -2015,7 +2015,7 @@ test('queries a table a pass wrote back with a sql source after compute, and plo
         data: [area, fourSquares, {
             type: 'sql',
             outputTableName: 'sizes',
-            query: "SELECT CAST(properties->'compute'->>'block' AS INTEGER) AS block, count(*) AS squares FROM blocks GROUP BY block ORDER BY block",
+            query: "SELECT CAST(properties->'compute'->>'block' AS INTEGER) AS block, CAST(count(*) AS INTEGER) AS squares FROM blocks GROUP BY block ORDER BY block",
             after: 'compute',
         }],
         compute: [{ type: 'clusters', dataRef: 'squares', outputColumnName: 'block', outputTableName: 'blocks', writeBack: true }],
@@ -2786,6 +2786,25 @@ test('colors the buildings of building-clusters by the block of touching buildin
     expect(sourceBlocks, 'buildings with a block column').toBe(0);
     // The new table is drawn as its buildings are, colored by block.
     expect((await layerById(page))['Buildings that share walls']).toMatchObject({ type: 'buildings', isColorMap: true, interpolator: 'interpolateTurbo' });
+    await expectDrawn(page, 'map0');
+});
+
+test('charts the ten largest blocks of largest-blocks, counted in autk-db after its clusters pass, and maps every block', async ({ page }) => {
+    await run(page, 'largest-blocks');
+    // The ten largest blocks of the pass's result, as the grammar keeps it, most buildings first, then by block.
+    const blocks = await page.evaluate(async () => (await window.grammar.data.fidi_blocks).features.map((feature) => feature.properties?.compute?.block as number));
+    const sizes = new Map<number, number>();
+    for (const block of blocks) sizes.set(block, (sizes.get(block) ?? 0) + 1);
+    const largest = [...sizes].sort(([a, n], [b, m]) => m - n || a - b).slice(0, 10).map(([block, n]) => `block ${block} ${n}`);
+    expect(largest).toHaveLength(10);
+    expect(sizes.get(Number(largest[0].split(' ')[1])), 'a block of several buildings').toBeGreaterThan(1);
+    // The chart draws the rows the sql source counted in autk-db's copy of that result: the same ten.
+    const bars = await page.evaluate(() => [...document.querySelectorAll('#plot rect.autkMark')]
+        .map((bar) => (bar as Element & { __data__?: { block?: string; buildings?: number } }).__data__)
+        .map((datum) => `${datum?.block} ${datum?.buildings}`));
+    expect(bars.sort()).toEqual([...largest].sort());
+    expect(await page.evaluate(() => window.plotAxisTitles())).toEqual(['Block', 'Buildings']);
+    expect((await layerById(page))['Blocks of touching buildings']).toMatchObject({ type: 'buildings', isColorMap: true });
     await expectDrawn(page, 'map0');
 });
 
