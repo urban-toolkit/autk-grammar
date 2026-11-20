@@ -1,4 +1,5 @@
 import type { MapSpec } from '@urban-toolkit/the-urban-grammar';
+import type { AutkDb } from '@urban-toolkit/autk-db';
 import type { AutkMap } from '@urban-toolkit/autk-map';
 import type { FeatureCollection } from 'geojson';
 import type { MapId } from './types';
@@ -54,6 +55,22 @@ export function exportOf(exports: LayerExports | undefined, key: string, load: (
         exports.set(key, collection);
     }
     return collection;
+}
+
+/**
+ * autk-db's export of the OpenStreetMap layer table `name` one feature per element, which a map layer or a plot with
+ * `osmElements` reads when a compute pass changed that table in place, or `undefined` when autk-db gives no elements.
+ * Maps and plots read a pass's result from the compute adapter's cache first, while autk-db keeps the elements the table
+ * was built from, which the pass leaves as they were. autk-db exports an OSM table row by row once an update cleared
+ * its element records, an in-place `writeBack` among them, and holds no table only a pass wrote: such a table is read
+ * as without `osmElements`, the pass's rows.
+ */
+export async function osmElementsOf(db: AutkDb, name: string, key: string, exports?: LayerExports): Promise<FeatureCollection | undefined> {
+    if (db.getTablesMetadata().find((table) => table.name === name)?.source !== 'osm') return undefined;
+    const collection = await exportOf(exports, exportKey(key, true), () => db.getLayer(name, exportOptions(true)));
+    // An element carries its osm_id, which no row of autk-db's export row by row does.
+    const features = collection.features ?? [];
+    return features.length > 0 && features.every((feature) => feature?.properties != null && 'osm_id' in feature.properties) ? collection : undefined;
 }
 
 /** A map's {@link MapId}: its `id`, else its index in the spec's `map` list, which `arrangeViews` gives its pane as its `key`. */

@@ -1541,8 +1541,8 @@ test('centers and reverses a raster color scale within its colorMapRange, and dr
 });
 
 test('loads a GeoTIFF as a raster layer', async ({ page }) => {
-    // Like heatmaps, rasters are drawn on the map but not listed in the summary's tables. A raster does not frame
-    // the map, so a vector layer over the same area does.
+    // Like heatmaps, rasters are drawn on the map but not listed in the summary's tables. A vector layer over the
+    // same area comes first, so it sets the map's origin; a raster loaded first sets it at its own middle.
     const area = { type: 'Polygon' as const, coordinates: [[[-43.2, -22.95], [-43.0, -22.95], [-43.0, -22.8], [-43.2, -22.8], [-43.2, -22.95]]] };
     await runSpec(page, {
         data: [
@@ -1555,6 +1555,27 @@ test('loads a GeoTIFF as a raster layer', async ({ page }) => {
     expect(layers.map((layer) => layer.type)).toEqual(['polygons', 'raster']);
     expect(layers[1].domain).toEqual([expect.any(Number), expect.any(Number)]);
     await expectDrawn(page, 'map0');
+});
+
+test('draws a map whose only layer is a raster, from the middle of the raster, where autk-map 4.1.1 put its origin at [0, 0]', async ({ page }) => {
+    // autk-map draws every layer of a map from one origin, the middle of the geometries of the first collection it loads.
+    // A raster's one feature has no geometry, so autk-map before urban-toolkit/autark#125 put the origin at [0, 0], some
+    // 9,600 km from a raster of Manhattan, and drew an empty canvas.
+    await runSpec(page, { ...heatmapGeojson, map: { layerRefs: [{ dataRef: 'heatmap', getFnv: 'count.noise' }] } });
+    await expectDrawn(page, 'map0');
+    const [west, south, east, north] = await page.evaluate(() => window.handedBbox('map0', 'heatmap'));
+    expect(await page.evaluate(() => window.mapOrigin('map0'))).toEqual([(west + east) * 0.5, (south + north) * 0.5]);
+});
+
+test("keeps a map's origin where its first vector layer puts it, with a raster after it", async ({ page }) => {
+    // The origin comes from the first collection autk-map loads, so a raster after a vector layer leaves it there.
+    await runSpec(page, { ...heatmapGeojson, map: { layerRefs: [{ dataRef: 'noise' }] } });
+    const fromPoints = await page.evaluate(() => window.mapOrigin('map0'));
+    await runSpec(page, { ...heatmapGeojson, map: { layerRefs: [{ dataRef: 'noise' }, { dataRef: 'heatmap', getFnv: 'count.noise' }] } });
+    expect(await page.evaluate(() => window.mapOrigin('map0'))).toEqual(fromPoints);
+    // The raster's middle lies elsewhere, so the origin is the points' and not the raster's.
+    const [west, south, east, north] = await page.evaluate(() => window.handedBbox('map0', 'heatmap'));
+    expect(fromPoints).not.toEqual([(west + east) * 0.5, (south + north) * 0.5]);
 });
 
 test('draws the band of a raster that getFnv names, refuses one that names none of several, and draws a raster of one band', async ({ page }) => {
@@ -1967,6 +1988,63 @@ test('writes a pass back in place into an OSM table, which keeps its buildings, 
     expect(written.map((row) => row.block)).toEqual(cached);
     // autk-db clears the records of the OSM elements on any update, so osmElements then exports the rows.
     expect(await exported(true)).toEqual(written);
+});
+
+test('draws and plots the OSM elements of a table a pass changed in place with osmElements, as autk-db holds them', async ({ page }) => {
+    // A pass in place keeps its result in the grammar's cache, which maps and plots read first, and leaves autk-db's
+    // records of the table's elements as they were. osmElements read the pass's rows: a plot of the elements refused
+    // its osm_type axis, and the layer drew the buildings by their blocks.
+    await runSpec(page, {
+        ...boxSpec({ bbox: BOX }),
+        compute: [{ type: 'clusters', dataRef: 'box_buildings', outputColumnName: 'block' }],
+        map: { layerRefs: [{ dataRef: 'box_buildings', title: 'Building parts', osmElements: true }] },
+        plot: { dataRef: 'box_buildings', mark: 'table', axis: ['osm_type', 'osm_id'], osmElements: true },
+    });
+    // The pass ran: the grammar's copy of the table gives each building its block.
+    const blocks = await page.evaluate(async () => (await window.grammar.data.box_buildings).features.map((feature) => feature.properties?.compute?.block));
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(blocks.filter((block) => !Number.isInteger(block))).toEqual([]);
+    // Each part the layer draws is an element that names its building, without a block.
+    const parts = await page.evaluate(() => window.drawnRows('map0', 'Building parts'));
+    expect(parts.length).toBeGreaterThan(0);
+    expect(parts.filter((row) => !['way', 'relation'].includes(String(row?.osm_type)) || row?.building_id == null || row?.compute !== undefined)).toEqual([]);
+    // The plot lists every element autk-db exports, more than the table's rows.
+    const elements = await page.evaluate(async () => (await window.dbLayer('box_buildings', true)).features.map((feature) => feature.properties?.osm_id));
+    expect(elements.length).toBeGreaterThan(blocks.length);
+    const plotted = await page.evaluate(() => [...document.querySelectorAll('#plot tr.autkMark')]
+        .map((row) => (row as Element & { __data__?: { osm_id?: number } }).__data__?.osm_id));
+    const ascending = (ids: unknown[]) => ids.map(Number).sort((a, b) => a - b);
+    expect(ascending(plotted)).toEqual(ascending(elements));
+    await expectDrawn(page, 'map0');
+});
+
+test('reads a table a pass changed in place as without osmElements where autk-db gives no elements: after a write-back, a GeoJSON table, a table only a pass wrote', async ({ page }) => {
+    // autk-db exports such a table row by row (a write-back in place clears its element records, as any update does),
+    // or holds no table of its name, so the layer draws the pass's rows, as it does without osmElements.
+    const drawn = (layerId: string, column: string) => page.evaluate(([id, key]) => window.drawnRows('map0', id)
+        .map((row) => ({ value: (row?.compute as Record<string, unknown> | undefined)?.[key], element: row?.osm_id !== undefined })), [layerId, column] as const);
+    const passRows = (rows: Array<{ value: unknown; element: boolean }>) => rows.length > 0 && rows.every(({ value, element }) => Number.isInteger(value) && !element);
+
+    await runSpec(page, {
+        ...boxSpec({ bbox: BOX }),
+        compute: [{ type: 'clusters', dataRef: 'box_buildings', outputColumnName: 'block', writeBack: true }],
+        map: { layerRefs: [{ dataRef: 'box_buildings', title: 'Buildings', osmElements: true }] },
+    });
+    expect(passRows(await drawn('Buildings', 'block')), 'an OSM table written back in place').toBe(true);
+
+    await runSpec(page, {
+        data: [area, fourSquares],
+        compute: [{ type: 'clusters', dataRef: 'squares', outputColumnName: 'cluster' }],
+        map: { layerRefs: [{ dataRef: 'squares', osmElements: true }] },
+    });
+    expect(passRows(await drawn('squares', 'cluster')), 'a GeoJSON table changed in place').toBe(true);
+
+    await runSpec(page, {
+        data: [area, fourSquares],
+        compute: [{ type: 'clusters', dataRef: 'squares', outputColumnName: 'cluster', outputTableName: 'blocks' }],
+        map: { layerRefs: [{ dataRef: 'blocks', osmElements: true }] },
+    });
+    expect(passRows(await drawn('blocks', 'cluster')), 'a table only a pass wrote').toBe(true);
 });
 
 // Sources with after: 'compute' run once every pass has run, and read what passes kept in autk-db with writeBack.
@@ -2861,6 +2939,11 @@ test('charts the ten largest blocks of largest-blocks, counted in autk-db after 
     expect(await page.evaluate(() => window.plotAxisTitles())).toEqual(['Block', 'Buildings']);
     expect((await layerById(page))['Blocks of touching buildings']).toMatchObject({ type: 'buildings', isColorMap: true });
     await expectDrawn(page, 'map0');
+    // Its y axis counts buildings, so its tick labels read as plain numbers, where autk-plot's default, SI prefixes, wrote
+    // 0.5 as "500m". d3 ticks the axis at halves, so at least one tick falls between whole numbers.
+    const [yTicks] = await page.evaluate(() => window.plotTicks('plot', '#axisY'));
+    expect(yTicks.some(([value]) => !Number.isInteger(value)), 'a tick between whole numbers').toBe(true);
+    for (const [value, text] of yTicks) expect(text).toBe(String(value));
 });
 
 test('links the plot of linked-views to its map by their ids: a click in the plot highlights the layer, a pick selects in the plot', async ({ page }) => {
@@ -2958,7 +3041,7 @@ test('draws band 24 of geotiff-raster on its scheme, in at most maxRasterCells c
     const [source, ...others] = spec.data!;
     const { maxRasterCells, resampleMethod, ...wholeFile } = source as GeoTiffDataSourceSpec;
 
-    // The polygon of the raster's extent frames the map, which a raster does not.
+    // The example draws the raster's extent as a polygon, its first layer, under the raster.
     await run(page, 'geotiff-raster');
     const layers = await mapLayers(page);
     expect(layers.map((layer) => [layer.id, layer.type])).toEqual([['Raster extent', 'polygons'], [layerId, 'raster']]);

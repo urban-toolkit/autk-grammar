@@ -97,6 +97,8 @@ declare global {
         tourEnded?: boolean;
         rasterCells: (canvasId: string, layerId: string) => { values: number[]; rgba: number[] };
         handedBand: (canvasId: string, layerId: string, band: string) => number[];
+        handedBbox: (canvasId: string, layerId: string) => number[];
+        mapOrigin: (canvasId: string) => number[];
         terrain: (canvasId: string) => TerrainState | null;
         buildingTops: (canvasId: string, layerId: string) => Array<number | null>;
         mapUi: (canvasId: string) => { menu: boolean; legend: boolean; credit: boolean };
@@ -419,6 +421,16 @@ window.handedBand = (canvasId: string, layerId: string, band: string) => {
     if (!values) throw new Error(`#${canvasId} was handed no band ${band} for ${layerId}`);
     return Array.from(values as ArrayLike<number>);
 };
+
+/** The `bbox` of the collection autk-map was handed for a layer of the map on #canvasId, such as a raster's extent. */
+window.handedBbox = (canvasId: string, layerId: string) => {
+    const bbox = handed.get(mapOn(canvasId))?.get(layerId)?.bbox;
+    if (!bbox) throw new Error(`#${canvasId} was handed no bbox for ${layerId}`);
+    return [...bbox];
+};
+
+/** The origin of the map on #canvasId, from which autk-map draws every layer: the middle of the first collection it loaded. */
+window.mapOrigin = (canvasId: string) => [...mapOn(canvasId).layerManager.origin];
 
 /**
  * The top of each building a buildings layer of the map on #canvasId draws, one per feature it was handed, at its
