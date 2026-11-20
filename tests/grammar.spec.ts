@@ -2097,6 +2097,23 @@ test('refuses collect in a heatmap groupBy, naming the heatmap, and builds the h
     expect((await mapLayers(page)).map((layer) => [layer.id, layer.type])).toEqual([['heat', 'raster']]);
 });
 
+test('refuses a heatmap groupBy entry with no aggregateFn, naming the heatmap and its column, which autk-db 4.1.1 drew as 0', async ({ page }) => {
+    // A cell holds one value, and nothing combines the rows near it without an aggregate. The schema takes such an
+    // entry, as a join's groupBy does, and the adapter passed it on to autk-db, which lists the column's values near
+    // each cell for it: on 4.1.1 its band read 0 in every cell, with no error.
+    const heatmap = (groupBy: HeatmapSourceSpec['groupBy']): DataSourceSpec => ({
+        type: 'heatmap', outputTableName: 'heat', joinDataRef: 'spots', near: { distance: 10000 }, grid: { rows: 2, columns: 2 }, groupBy,
+    });
+    const refusal = 'Heatmap "heat": the groupBy entry for column "id" has no aggregateFn to combine the rows near a cell, and a cell holds one value; use sum, avg, count, min, max or weighted.';
+    await expect(runSpec(page, { data: [area, spots, heatmap([{ column: 'id' }])] })).rejects.toThrow(refusal);
+    // Behind an entry that has one, it is still the entry named. A JSON spec's null is no aggregateFn, as autk-db reads it.
+    await expect(runSpec(page, { data: [area, spots, heatmap([{ column: '*', aggregateFn: 'count' }, { column: 'id' }])] })).rejects.toThrow(refusal);
+    await expect(runSpec(page, { data: [area, spots, heatmap([{ column: 'id', aggregateFn: null as never }])] })).rejects.toThrow(refusal);
+    // With an aggregateFn, the same entry builds the heatmap: each of the four cells is within 10 km of all nine spots.
+    await runSpec(page, { data: [area, spots, heatmap([{ column: 'id', aggregateFn: 'count' }])], map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'heat' }] } });
+    expect(await page.evaluate(() => window.handedBand('map0', 'heat', 'band_1'))).toEqual([9, 9, 9, 9]);
+});
+
 test('counts the rows near each cell of a heatmap without groupBy, as with a count, which autk-db 4.1.1 drew as 0', async ({ page }) => {
     // Each of the four cells is within 10 km of all nine spots.
     const heatmap = (fields: object): DataSourceSpec => ({
