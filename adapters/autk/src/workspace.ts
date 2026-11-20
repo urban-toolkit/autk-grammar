@@ -23,8 +23,15 @@ export function tableKey(workspace: string | undefined, name: string): string {
     return workspace === undefined || workspace === DEFAULT_WORKSPACE_NAME ? name : `${workspace}/${name}`;
 }
 
-/** The CRS of the coordinates of each collection a GeoJSON source put in a cache: the source's own. */
-const sourceCrs = new WeakMap<FeatureCollection, string>();
+/**
+ * The CRS of the coordinates of each collection a GeoJSON source put in a cache: the source's own. The package's two
+ * entries, the main one and `./data`, are built apart, each with a copy of this module, so the notes live in one map
+ * that both copies find on the page under one global key: a compute adapter from one entry reads the notes of a data
+ * adapter from the other.
+ */
+const SOURCE_CRS = Symbol.for('@urban-toolkit/autk-grammar:source-crs');
+const pageWide = globalThis as unknown as Record<symbol, WeakMap<FeatureCollection, string> | undefined>;
+const sourceCrs = (pageWide[SOURCE_CRS] ??= new WeakMap<FeatureCollection, string>());
 
 /**
  * Notes that a GeoJSON source put `collection` in a cache as it gave it, with its coordinates in `crs`, its
