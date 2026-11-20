@@ -113,7 +113,10 @@ export interface HeatmapSourceSpec extends TableSourceBase {
     /** Aggregate the rows near each cell, one raster band per entry. Without it, one band counts the rows near each cell. */
     groupBy?: Array<{
         column: string;
-        /** How the rows combine into the cell's value: any aggregate but `collect`, which lists rows, while a cell holds one value. */
+        /**
+         * How the rows combine into the cell's value: any aggregate but `collect`, which lists rows, while a cell
+         * holds one value. An entry without it is refused, as nothing would combine the rows.
+         */
         aggregateFn?: HeatmapAggregateFunction;
         /**
          * Rescale the band's values from 0 to 1 across the grid's cells. It needs an autk-db with
