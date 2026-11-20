@@ -2,7 +2,7 @@ import type { FeatureCollection } from 'geojson';
 import { MapAdapter, MapLayerSpec, MapSpec, CameraSpec, TerrainSpec } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, ComputeCache, ComputeLayerTypes } from '../types';
-import { DrawnLayers, LayerExports, exportKey, exportOf, exportOptions, mapIdOf } from '../drawn';
+import { DrawnLayers, LayerExports, exportKey, exportOf, exportOptions, mapIdOf, osmElementsOf } from '../drawn';
 import { rowKeys } from '../rows';
 import { AutkMap } from '@urban-toolkit/autk-map';
 import type { LayerRenderInfo, MapStyleShape } from '@urban-toolkit/autk-map';
@@ -426,10 +426,12 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
             const name     = layerRef.dataRef;
             const layerId  = layerIdOf(layerRef);
             const key      = tableKey(spec.workspace, name);
-            const type     = drawnType(layerRef, (computeTypes?.get(key) ?? tableToTypeMap[name]) as LayerType | undefined, layerId);
+            // With osmElements, a table a pass changed in place is drawn from autk-db's elements, as autk-db types it.
+            const elements = layerRef.osmElements === true && computeCache?.has(key) ? await osmElementsOf(context, name, key, exports) : undefined;
+            const type     = drawnType(layerRef, ((elements ? undefined : computeTypes?.get(key)) ?? tableToTypeMap[name]) as LayerType | undefined, layerId);
             const getFnv   = layerRef.getFnv;
 
-            const rawData = computeCache?.get(key) ?? (type === 'raster'
+            const rawData = elements ?? computeCache?.get(key) ?? (type === 'raster'
                 ? await context.getRaster(name) as unknown as FeatureCollection
                 : await exportOf(exports, exportKey(key, layerRef.osmElements), () => context.getLayer(name, exportOptions(layerRef.osmElements))));
             // Raster tables (e.g. heatmaps) are a single feature with no geometry, so keep them as-is. A vector layer

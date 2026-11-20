@@ -1,7 +1,7 @@
 import { PlotAdapter, PlotSpec, PlotMark } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, PlotRegistry, GeoJsonCache, ComputeCache } from '../types';
-import { addPlotLink, exportKey, exportOf, exportOptions } from '../drawn';
+import { addPlotLink, exportKey, exportOf, exportOptions, osmElementsOf } from '../drawn';
 import type { DrawnLayer, DrawnLayers, LayerExports, PlotLinks, PlotRows } from '../drawn';
 import { rowKeys, translateIds } from '../rows';
 import { checkPlotSelection, plotKey, plotOptions } from '../plot-options';
@@ -105,9 +105,11 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
 
             await enterWorkspace(db, spec.workspace);
             const key = tableKey(spec.workspace, spec.dataRef);
-            // The rows of a GeoJSON source or a join are a row per feature, so a plot of OSM elements reads autk-db's.
+            // The rows of a GeoJSON source or a join are a row per feature, so a plot of OSM elements reads autk-db's. So
+            // does a plot of the elements of a table a pass changed in place, which the pass leaves as they were.
+            const elements = spec.osmElements === true && computeCache?.has(key) ? await osmElementsOf(db, spec.dataRef, key, exports) : undefined;
             const cached = spec.osmElements === true ? undefined : cache?.get(key);
-            const geojson: FeatureCollection = computeCache?.get(key) ?? cached ?? await tableRows(db, spec.dataRef, key, exports, spec.osmElements);
+            const geojson: FeatureCollection = elements ?? computeCache?.get(key) ?? cached ?? await tableRows(db, spec.dataRef, key, exports, spec.osmElements);
             // Refused before the plot is made, so a refused selection leaves no plot on the page.
             checkPlotSelection(spec, geojson.features?.length ?? 0);
 
