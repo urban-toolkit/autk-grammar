@@ -201,6 +201,7 @@ export class AutkGrammar {
         // Leave the database in the default workspace, whose tables `data` lists.
         if (db) await enterWorkspace(db);
         this._wireLinks(spec);
+        this._pickFromTheStart(spec);
         this._selectFromTheStart(spec);
         this._rewireInteractions(spec);
 
@@ -342,6 +343,35 @@ export class AutkGrammar {
             linkPlotToLayer(plot, this._plotRows.get(link.source) ?? [], (plotSpec.events ?? []) as unknown as PlotEvent[], layer);
             addPlotLink(this._plotLinks, link.source, layer);
         }
+    }
+
+    /**
+     * Draws each layer's `pickedComps` as picked once the maps, the plots and their links exist, as `highlightOnMap` does
+     * for that one layer: the layer highlights the features, and the plots linked to it select the same rows. autk-map
+     * draws picked features only on the layer of a map that picks, and lets one layer of a map pick, so a layer that no
+     * longer picks, since a link or a plot's `mapRef` made another layer of its map pick, is refused. So is one linked to a
+     * plot that sets `selection`, which sets what both show too.
+     */
+    private _pickFromTheStart(spec: UrbanSpec): void {
+        const plots = asList(spec.plot);
+        asList(spec.map).forEach((mapSpec, mapIndex) => {
+            for (const layerRef of mapSpec.layerRefs) {
+                if (!layerRef.pickedComps) continue;
+                const layerId = layerIdOf(layerRef);
+                const layer = this._layers.find((drawn) => drawn.mapIndex === mapIndex && drawn.layerId === layerId);
+                if (!layer) continue;
+                const picking = layer.map.activePickingLayer?.layerInfo.id;
+                if (picking !== layerId)
+                    throw new Error(`Layer "${layerId}": pickedComps draws features as picked on the layer that picks, but ${picking === undefined ? 'no layer of its map picks' : `a link or a plot's mapRef made layer "${picking}" of its map pick`}: autk-map lets one layer of a map pick.`);
+                for (const [plotId, linked] of this._plotLinks) {
+                    const plot = plots.find((candidate) => plotKey(candidate) === plotId);
+                    if (linked.includes(layer) && (plot?.selection?.length ?? 0) > 0)
+                        throw new Error(`Layer "${layerId}": pickedComps and the selection of plot "${plotId}", which is linked to it, both set what the two show: set one of them.`);
+                }
+                layer.map.setHighlightedIds(layerId, layerRef.pickedComps);
+                this._selectInLinkedPlots([layer], layerRef.pickedComps);
+            }
+        });
     }
 
     /**

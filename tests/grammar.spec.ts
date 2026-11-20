@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
 import type {
     CameraSpec, ColorMapInterpolator, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec, MapSpec, PlotSpec,
-    RenderComputeSpec, UrbanSpec,
+    RenderComputeSpec, TerrainSpec, UrbanSpec,
 } from '@urban-toolkit/the-urban-grammar';
 import type { DrawnMark, LayerState, PaneBox, RunSummary } from './app/main';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
@@ -895,12 +895,12 @@ function worldMercatorScale(lat: number): number {
 }
 
 /**
- * How many pixels of the map on #map0 are drawn in `color`, `#rrggbb`, give or take 8 in each channel. The image is
- * attached to the test as `<name>.png`.
+ * How many pixels of the map on #map0, or on #canvasId, are drawn in `color`, `#rrggbb`, give or take 8 in each
+ * channel. The image is attached to the test as `<name>.png`.
  */
-async function pixelsIn(page: Page, color: string, name: string): Promise<number> {
+async function pixelsIn(page: Page, color: string, name: string, canvasId = 'map0'): Promise<number> {
     await page.waitForTimeout(1500);
-    const dataUrl = await page.evaluate(() => window.readMap('map0'));
+    const dataUrl = await page.evaluate((id) => window.readMap(id), canvasId);
     const image = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
     await test.info().attach(`${name}.png`, { body: image, contentType: 'image/png' });
     const png = PNG.sync.read(image);
@@ -910,6 +910,31 @@ async function pixelsIn(page: Page, color: string, name: string): Promise<number
         if (Math.abs(png.data[i] - r) <= 8 && Math.abs(png.data[i + 1] - g) <= 8 && Math.abs(png.data[i + 2] - b) <= 8) count++;
     }
     return count;
+}
+
+/**
+ * How many pixels of the map on #map0, or on #canvasId, differ by more than 8 in some channel from the color most of
+ * them have, the map's background: the pixels its features are drawn in. A map that drew nothing has none. The image is
+ * attached to the test as `<name>.png`.
+ */
+async function drawnPixels(page: Page, name: string, canvasId = 'map0'): Promise<number> {
+    await page.waitForTimeout(1500);
+    const dataUrl = await page.evaluate((id) => window.readMap(id), canvasId);
+    const image = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
+    await test.info().attach(`${name}.png`, { body: image, contentType: 'image/png' });
+    const png = PNG.sync.read(image);
+    const counts = new Map<number, number>();
+    for (let i = 0; i < png.data.length; i += 4) {
+        const color = (png.data[i] << 16) | (png.data[i + 1] << 8) | png.data[i + 2];
+        counts.set(color, (counts.get(color) ?? 0) + 1);
+    }
+    const [background] = [...counts].reduce((most, entry) => (entry[1] > most[1] ? entry : most));
+    const [r, g, b] = [background >> 16, (background >> 8) & 255, background & 255];
+    let drawn = 0;
+    for (let i = 0; i < png.data.length; i += 4) {
+        if (Math.abs(png.data[i] - r) > 8 || Math.abs(png.data[i + 1] - g) > 8 || Math.abs(png.data[i + 2] - b) > 8) drawn++;
+    }
+    return drawn;
 }
 
 test('draws the points of a points layer with a pointSize radius in meters on the ground', async ({ page }) => {
@@ -953,6 +978,257 @@ test('refuses a pointSize that is not a number of meters greater than 0, on any 
     await refused('spots', { pointSize: -2 }, 'pointSize must be a number of meters greater than 0, not -2.');
     await refused('spots', { pointSize: '2' }, 'pointSize must be a number of meters greater than 0, not "2".');
     await refused('zones', { pointSize: 0 }, 'pointSize must be a number of meters greater than 0, not 0.');
+});
+
+test('draws the buildings that have no height with buildingsZeroHeight, each 3 to 7 floors tall, and leaves them out without it', async ({ page }) => {
+    // Six footprints in a row: three 30 m tall, and three with none of height, building:height, levels and building:levels.
+    const footprint = (i: number) => {
+        const x = -73.99 + i * 0.004;
+        return { type: 'Polygon' as const, coordinates: [[[x, 40.75], [x + 0.002, 40.75], [x + 0.002, 40.752], [x, 40.752], [x, 40.75]]] };
+    };
+    const footprints: DataSourceSpec = {
+        type: 'geojson', outputTableName: 'footprints', layerType: 'buildings',
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [0, 1, 2, 3, 4, 5].map((i) => ({ type: 'Feature' as const, properties: i % 2 === 0 ? { id: i, height: 30 } : { id: i }, geometry: footprint(i) })),
+        },
+    };
+    // The map looks straight down on the row from about 2.9 km, so each roof is about 56 by 74 pixels.
+    const buildingsWith = (options: Partial<MapLayerSpec>): UrbanSpec => ({
+        data: [area, footprints],
+        map: { camera: { zoom: 11.8 }, layerRefs: [{ dataRef: 'footprints', title: 'Footprints', ...options }] },
+    });
+    const tops = () => page.evaluate(() => window.buildingTops('map0', 'Footprints'));
+    const tall = (heights: Array<number | null>) => heights.filter((top) => top !== null && Math.abs(top - 30) < 1e-3);
+
+    // Without it, autk-map draws the three that have a height and leaves out the others.
+    await runSpec(page, buildingsWith({}));
+    const without = await tops();
+    expect(without).toHaveLength(6);
+    expect(tall(without)).toHaveLength(3);
+    expect(without.filter((top) => top === null)).toHaveLength(3);
+    const threeRoofs = await drawnPixels(page, 'three buildings with a height');
+    expect(threeRoofs, 'pixels of the three roofs').toBeGreaterThan(5000);
+
+    // With it, the others stand too, each at a random height of 3 to 7 floors of 3.4 m: only that range is checked.
+    await runSpec(page, buildingsWith({ buildingsZeroHeight: true }));
+    const withIt = await tops();
+    expect(tall(withIt)).toHaveLength(3);
+    const fallback = withIt.filter((top) => top === null || Math.abs(top - 30) >= 1e-3);
+    expect(fallback).toHaveLength(3);
+    for (const top of fallback) {
+        expect(top).not.toBeNull();
+        expect(top!).toBeGreaterThanOrEqual(10.2 - 1e-3);
+        expect(top!).toBeLessThanOrEqual(23.8 + 1e-3);
+    }
+    // The canvas shows them: six roofs of one size cover about twice the pixels of three.
+    const sixRoofs = await drawnPixels(page, 'all six buildings');
+    expect(sixRoofs, `six roofs cover ${sixRoofs} pixels, three ${threeRoofs}`).toBeGreaterThan(threeRoofs * 1.6);
+});
+
+test('draws a map in the colors of its style, and its picked features and the values it cannot color in its own colors', async ({ page }) => {
+    // Four squares whose layer is colored by v, the third without one.
+    const square = (i: number) => {
+        const x = -73.99 + i * 0.004;
+        return { type: 'Polygon' as const, coordinates: [[[x, 40.75], [x + 0.003, 40.75], [x + 0.003, 40.753], [x, 40.753], [x, 40.75]]] };
+    };
+    const gaps: DataSourceSpec = {
+        type: 'geojson', outputTableName: 'gaps',
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [0, 1, 2, 3].map((i) => ({ type: 'Feature' as const, properties: i === 2 ? { id: i } : { id: i, v: i * 10 }, geometry: square(i) })),
+        },
+    };
+    const colors = {
+        background: '#102030', surface: '#203040', parks: '#2ca02c', water: '#1f77b4', roads: '#7f7f7f',
+        buildings: '#8c564b', points: '#e377c2', polylines: '#bcbd22', polygons: '#d62728',
+    };
+
+    // A style of the spec's own: the background, and a layer without a color in the style's polygons color.
+    await runSpec(page, { data: [area, zones], map: { style: colors, layerRefs: [{ dataRef: 'zones' }] } });
+    expect(await pixelsIn(page, '#d62728', 'zones in the style')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, '#102030', 'background of the style')).toBeGreaterThan(10000);
+    // A style by its name draws in that style's colors, not these.
+    await runSpec(page, { data: [area, zones], map: { style: 'light', layerRefs: [{ dataRef: 'zones' }] } });
+    expect(await pixelsIn(page, '#d62728', 'zones in light')).toBe(0);
+
+    // highlightColor: the picked zones in orange rather than autk-map's blue.
+    const picked = (highlightColor?: string): MapSpec => ({
+        ...(highlightColor && { highlightColor }),
+        layerRefs: [{ dataRef: 'zones', title: 'Zones', color: '#d9d9d9', isPick: true, pickedComps: [0, 2] }],
+    });
+    await runSpec(page, { data: [area, zones], map: picked('#ff7f0e') });
+    expect(await pixelsIn(page, '#ff7f0e', 'picked in orange')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, '#5dade2', 'picked in orange, no blue')).toBe(0);
+    // autk-map keeps one highlight color for each map, so two maps of one spec draw theirs.
+    await runSpec(page, { data: [area, zones], map: [picked('#ff7f0e'), picked('#9467bd')] });
+    expect(await pixelsIn(page, '#ff7f0e', 'orange on the first map')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, '#9467bd', 'no purple on the first map')).toBe(0);
+    expect(await pixelsIn(page, '#9467bd', 'purple on the second map', 'map1')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, '#ff7f0e', 'no orange on the second map', 'map1')).toBe(0);
+
+    // invalidValueColor: the square without a v in magenta, rather than autk-map's white.
+    const byValue = (invalidValueColor?: string): UrbanSpec => ({
+        data: [area, gaps],
+        map: { ...(invalidValueColor && { invalidValueColor }), layerRefs: [{ dataRef: 'gaps', getFnv: 'v' }] },
+    });
+    await runSpec(page, byValue());
+    expect(await pixelsIn(page, '#ff00ff', 'no value in white')).toBe(0);
+    await runSpec(page, byValue('#ff00ff'));
+    expect(await pixelsIn(page, '#ff00ff', 'no value in magenta')).toBeGreaterThan(400);
+
+    // Refused before the map is made: a style that lacks a color or gives one autk-map cannot read, and colors not #rrggbb.
+    const withoutParks = Object.fromEntries(Object.entries(colors).filter(([key]) => key !== 'parks'));
+    await expect(runSpec(page, { data: [area, zones], map: { style: withoutParks as never, layerRefs: [{ dataRef: 'zones' }] } }))
+        .rejects.toThrow(`Map 0: style gives no color for parks: a style of the spec's own gives each of background, surface, parks, water, roads, buildings, points, polylines, polygons.`);
+    await expect(runSpec(page, { data: [area, zones], map: { style: { ...colors, water: 'blue' }, layerRefs: [{ dataRef: 'zones' }] } }))
+        .rejects.toThrow('Map 0: style.water must be a color written #rrggbb, not "blue".');
+    await expect(runSpec(page, { data: [area, zones], map: { ...picked('orange') } }))
+        .rejects.toThrow('Map 0: highlightColor must be a color written #rrggbb, not "orange".');
+    await expect(runSpec(page, byValue('#f0f')))
+        .rejects.toThrow('Map 0: invalidValueColor must be a color written #rrggbb, not "#f0f".');
+    expect(await page.evaluate(() => window.grammar.maps.length)).toBe(0);
+});
+
+test('hides the floating menu and legend of a map with showUi false, and keeps its credit', async ({ page }) => {
+    const zonesWith = (showUi?: boolean): UrbanSpec => ({
+        data: [area, zones],
+        map: { ...(showUi !== undefined && { showUi }), layerRefs: [{ dataRef: 'zones', title: 'Zones', getFnv: 'v' }] },
+    });
+    const ui = () => page.evaluate(() => window.mapUi('map0'));
+
+    // By default autk-map shows its menu, and the legend of the layer colored by value.
+    await runSpec(page, zonesWith());
+    expect(await ui()).toEqual({ menu: true, legend: true, credit: true });
+    expect((await page.evaluate(() => window.legend()))?.visible).toBe(true);
+
+    await runSpec(page, zonesWith(false));
+    expect(await ui()).toEqual({ menu: false, legend: false, credit: true });
+    expect(await page.evaluate(() => window.legend())).toBeNull();
+    await expectDrawn(page, 'map0');
+
+    await runSpec(page, zonesWith(true));
+    expect(await ui()).toEqual({ menu: true, legend: true, credit: true });
+});
+
+test("shows the color scale of the layer that sets legend in the map's legend, and leaves picking as the layers set it", async ({ page }) => {
+    // Zones valued 0 to 30 and lots valued 0 to 60, both colored by value; the lots pick.
+    const twoScales = (zonesOptions: Partial<MapLayerSpec> = {}, lotsOptions: Partial<MapLayerSpec> = {}, mapOptions: Partial<MapSpec> = {}): UrbanSpec => ({
+        data: [area, zones, lots],
+        map: {
+            ...mapOptions,
+            layerRefs: [
+                { dataRef: 'zones', title: 'Zones', getFnv: 'v', ...zonesOptions },
+                { dataRef: 'lots', title: 'Lots', getFnv: 'v', isPick: true, ...lotsOptions },
+            ],
+        },
+    });
+    const legend = () => page.evaluate(() => window.legend());
+
+    // By default the legend shows the last layer colored by value.
+    await runSpec(page, twoScales());
+    expect(await legend()).toMatchObject({ title: 'Lots', visible: true });
+
+    // With legend on the zones: their scale, 0 to 30, while the lots still pick and the zones do not.
+    await runSpec(page, twoScales({ legend: true }));
+    expect(await legend()).toEqual({ title: 'Zones', labels: await page.evaluate((domain) => window.domainLabels(domain), [0, 30]), visible: true });
+    const layers = await layerById(page);
+    expect(layers.Lots.isPick).toBe(true);
+    expect(layers.Zones.isPick).toBeFalsy();
+
+    // A raster colored without a scheme of its own hides its legend, and shows it with legend.
+    await runSpec(page, heatmapWith({}));
+    expect((await legend())?.visible).toBe(false);
+    await runSpec(page, heatmapWith({ legend: true }));
+    expect(await legend()).toMatchObject({ title: 'heatmap', visible: true });
+
+    // Refused: two legends in a map, a legend the map's showUi hides, and a layer drawn in one color.
+    await expect(runSpec(page, twoScales({ legend: true }, { legend: true })))
+        .rejects.toThrow('Map 0: layers "Zones" and "Lots" each set legend: a map shows one legend.');
+    await expect(runSpec(page, twoScales({ legend: true }, {}, { showUi: false })))
+        .rejects.toThrow(`Layer "Zones": legend shows the layer in the map's legend, and the map's showUi is false, which hides the legend.`);
+    await expect(runSpec(page, twoScales({ legend: true, color: '#1f77b4' })))
+        .rejects.toThrow('Layer "Zones": legend shows the color scale of a layer colored by value, and the layer is drawn in one color.');
+});
+
+test('hides the features skippedComps names, on a layer of polygons, of lines or of points', async ({ page }) => {
+    const red = '#d62728';
+    const drawnIn = async (dataRef: string, options: Partial<MapLayerSpec>, name: string) => {
+        await runSpec(page, { data: [area, zones, paths, spots], map: { layerRefs: [{ dataRef, title: 'Hidden', color: red, ...options }] } });
+        return pixelsIn(page, red, name);
+    };
+
+    // Two of the four zones hidden: about half of the red is left.
+    const zonesShown = await drawnIn('zones', {}, 'every zone');
+    const zonesLeft = await drawnIn('zones', { skippedComps: [0, 2] }, 'zones 0 and 2 hidden');
+    expect((await layerById(page)).Hidden.skippedIds).toEqual([0, 2]);
+    expect(zonesLeft).toBeGreaterThan(zonesShown * 0.3);
+    expect(zonesLeft).toBeLessThan(zonesShown * 0.7);
+
+    // Every line hidden, and every point, which AutkMap.setSkippedIds passes over.
+    expect(await drawnIn('paths', { width: 40 }, 'every path')).toBeGreaterThan(100);
+    expect(await drawnIn('paths', { width: 40, skippedComps: [0, 1, 2] }, 'no path')).toBe(0);
+    expect(await drawnIn('spots', {}, 'every spot')).toBeGreaterThan(100);
+    expect(await drawnIn('spots', { skippedComps: [0, 1, 2, 3, 4, 5, 6, 7, 8] }, 'no spot')).toBe(0);
+    expect((await layerById(page)).Hidden.skippedIds).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+
+    // Refused: positions that are not features the layer draws, and a raster.
+    await expect(drawnIn('zones', { skippedComps: [-1] }, 'refused'))
+        .rejects.toThrow('Layer "Hidden": skippedComps must list the positions of features the layer draws, whole numbers from 0, not [-1].');
+    await expect(drawnIn('zones', { skippedComps: [4] }, 'refused'))
+        .rejects.toThrow('Layer "Hidden": skippedComps names position 4, past the 4 features the layer draws.');
+    await expect(runSpec(page, heatmapWith({ skippedComps: [0] })))
+        .rejects.toThrow('Layer "heatmap": skippedComps names features, and a raster layer has none.');
+});
+
+test('draws each line of a roads layer as wide as widthBy says, and a line without a width as wide as its kind of road', async ({ page }) => {
+    // Four east-west lines of one length: three with a width w, the fourth without one.
+    const lanes = (widths: number[]): DataSourceSpec => ({
+        type: 'geojson', outputTableName: 'lanes',
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [0, 1, 2, 3].map((i) => ({
+                type: 'Feature' as const,
+                properties: i < 3 ? { id: i, w: widths[i] } : { id: i },
+                geometry: { type: 'LineString' as const, coordinates: [[-73.99, 40.748 - i * 0.003], [-73.975, 40.748 - i * 0.003]] },
+            })),
+        },
+    });
+    const red = '#d62728';
+    const lanesWith = (widths: number[], options: Partial<MapLayerSpec>): UrbanSpec => ({
+        data: [area, lanes(widths)],
+        map: { layerRefs: [{ dataRef: 'lanes', title: 'Lanes', layerType: 'roads', color: red, ...options }] },
+    });
+    /** The width autk-map holds for each line, by its id. */
+    const widthsById = async () => {
+        const drawn = await page.evaluate(() => window.drawnRows('map0', 'Lanes'));
+        const widths = (await layerById(page)).Lanes.polylinesWidthByComponent ?? [];
+        return Object.fromEntries(drawn.map((row, position) => [String(row?.id), widths[position]]));
+    };
+
+    // Without widthBy, each line as wide as autk-map draws its kind of road.
+    await runSpec(page, lanesWith([40, 120, 240], {}));
+    const byKind = await widthsById();
+    expect(Object.keys(byKind).sort()).toEqual(['0', '1', '2', '3']);
+
+    // With it, the three widths, and the fourth line keeps its kind's.
+    await runSpec(page, lanesWith([40, 120, 240], { widthBy: 'w' }));
+    expect(await widthsById()).toEqual({ 0: 40, 1: 120, 2: 240, 3: byKind[3] });
+    const varied = await pixelsIn(page, red, 'lines 40, 120 and 240 wide');
+    // The same lines, 40 each: the varied ones cover over twice as many pixels, (40 + 120 + 240) / 120 being 3.3.
+    await runSpec(page, lanesWith([40, 40, 40], { widthBy: 'properties.w' }));
+    expect(await widthsById()).toEqual({ 0: 40, 1: 40, 2: 40, 3: byKind[3] });
+    const even = await pixelsIn(page, red, 'lines 40 wide');
+    expect(even).toBeGreaterThan(0);
+    expect(varied).toBeGreaterThan(even * 2);
+
+    // Refused: a polylines layer, whose lines autk-map draws at one width, widthBy with width, and a path to no width.
+    await expect(runSpec(page, lanesWith([40, 120, 240], { layerType: undefined, widthBy: 'w' })))
+        .rejects.toThrow(`Layer "Lanes": widthBy sets the width of each line of a roads layer, and the layer is drawn as polylines: draw a table of lines as roads with layerType: 'roads'.`);
+    await expect(runSpec(page, lanesWith([40, 120, 240], { widthBy: 'w', width: 30 })))
+        .rejects.toThrow('Layer "Lanes": set width or widthBy, not both: width gives every line one width.');
+    await expect(runSpec(page, lanesWith([40, 120, 240], { widthBy: 'lanes' })))
+        .rejects.toThrow('Layer "Lanes": widthBy "lanes" gives no line of the layer a width: none has a positive number there.');
 });
 
 test('colors two vector layers with different value ranges over one colorMapRange', async ({ page }) => {
@@ -1249,6 +1525,33 @@ test('loads a GeoTIFF as a raster layer', async ({ page }) => {
     await expectDrawn(page, 'map0');
 });
 
+test('draws the band of a raster that getFnv names, refuses one that names none of several, and draws a raster of one band', async ({ page }) => {
+    // The temperature GeoTIFF holds 24 bands, one a year from 2001 to 2024. A name that matched no band drew band_1,
+    // 2001's, without a word.
+    const area = { type: 'Polygon' as const, coordinates: [[[-43.2, -22.95], [-43.0, -22.95], [-43.0, -22.8], [-43.2, -22.8], [-43.2, -22.95]]] };
+    const temperatureBy = (getFnv: string): UrbanSpec => ({
+        data: [
+            { type: 'geotiff', outputTableName: 'lst', geotiffFileUrl: '/data/niteroi_lst_verao_2001_2024.tif' },
+            { type: 'geojson', outputTableName: 'area', geojsonObject: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: area, properties: {} }] } },
+        ],
+        map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'lst', title: 'Temperature', getFnv }] },
+    });
+    const bands = Array.from({ length: 24 }, (_, i) => `band_${i + 1}`).join(', ');
+    await expect(runSpec(page, temperatureBy('band_25')))
+        .rejects.toThrow(`Layer "Temperature": getFnv "band_25" names none of its 24 bands: ${bands}.`);
+    await expect(runSpec(page, temperatureBy('temperature.2024'))).rejects.toThrow('getFnv "temperature.2024" names none of its 24 bands');
+
+    // A band by its id: the layer draws 2024's values, not 2001's.
+    await runSpec(page, temperatureBy('band_24'));
+    const drawn = await page.evaluate(() => window.rasterCells('map0', 'Temperature').values);
+    expect(drawn).toEqual(await page.evaluate(() => window.handedBand('map0', 'Temperature', 'band_24')));
+    expect(drawn).not.toEqual(await page.evaluate(() => window.handedBand('map0', 'Temperature', 'band_1')));
+
+    // A heatmap of one band draws it, whatever getFnv names: autk-db labels it count_noise.
+    await runSpec(page, heatmapWith({ getFnv: 'sum.noise' }));
+    await heatmapLayer(page);
+});
+
 test('draws a GeoJSON polygon layer as parks when layerType says so', async ({ page }) => {
     const square = { type: 'Polygon' as const, coordinates: [[[-74.01, 40.70], [-74.0, 40.70], [-74.0, 40.71], [-74.01, 40.71], [-74.01, 40.70]]] };
     await runSpec(page, {
@@ -1259,6 +1562,67 @@ test('draws a GeoJSON polygon layer as parks when layerType says so', async ({ p
         map: { layerRefs: [{ dataRef: 'g' }] },
     });
     expect((await page.evaluate(() => window.mapLayers('map0'))).map((layer) => layer.type)).toEqual(['parks']);
+});
+
+test("draws a layer's table as another type of its kind of geometry with layerType, and refuses a type of another kind", async ({ page }) => {
+    // A style in which each type has a color of its own, so each layer shows in the color of the type it is drawn as.
+    const palette = {
+        background: '#ffffff', surface: '#ff0000', parks: '#00ff00', water: '#0000ff', roads: '#ff00ff',
+        buildings: '#00ffff', points: '#808000', polylines: '#800080', polygons: '#008080',
+    };
+    // A row of footprints loaded as a buildings table, and a row of squares 50 m tall loaded as polygons.
+    const row = (name: string, y: number, properties: Record<string, unknown>, layerType?: 'buildings'): DataSourceSpec => ({
+        type: 'geojson', outputTableName: name, ...(layerType && { layerType }),
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [0, 1, 2].map((i) => {
+                const x = -73.99 + i * 0.004;
+                return {
+                    type: 'Feature' as const, properties: { id: i, ...properties },
+                    geometry: { type: 'Polygon' as const, coordinates: [[[x, y], [x + 0.002, y], [x + 0.002, y + 0.002], [x, y + 0.002], [x, y]]] },
+                };
+            }),
+        },
+    });
+    const footprints = row('footprints', 40.768, { height: 20 }, 'buildings');
+    const towers = row('towers', 40.739, { height: 50 });
+    await runSpec(page, {
+        data: [area, zones, blocks, lots, paths, footprints, towers],
+        map: {
+            style: palette,
+            layerRefs: [
+                { dataRef: 'zones', layerType: 'parks' },
+                { dataRef: 'blocks', layerType: 'water' },
+                { dataRef: 'lots', layerType: 'surface' },
+                { dataRef: 'paths', layerType: 'roads', width: 60 },
+                { dataRef: 'footprints', layerType: 'polygons' },
+                { dataRef: 'towers', layerType: 'buildings' },
+            ],
+        },
+    });
+    const types = Object.fromEntries((await mapLayers(page)).map((layer) => [layer.id, layer.type]));
+    expect(types).toEqual({ zones: 'parks', blocks: 'water', lots: 'surface', paths: 'roads', footprints: 'polygons', towers: 'buildings' });
+    expect(await pixelsIn(page, palette.parks, 'polygons as parks')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, palette.water, 'polygons as water')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, palette.surface, 'polygons as surface')).toBeGreaterThan(400);
+    expect(await pixelsIn(page, palette.roads, 'lines as roads')).toBeGreaterThan(100);
+    expect(await pixelsIn(page, palette.polygons, 'buildings flat as polygons')).toBeGreaterThan(100);
+    expect(await pixelsIn(page, palette.polylines, 'no line drawn as polylines')).toBe(0);
+    // The polygons drawn as buildings rise to their heights.
+    expect(await page.evaluate(() => window.buildingTops('map0', 'towers'))).toEqual([50, 50, 50]);
+
+    // A type of another kind of geometry is refused before autk-map draws nothing for it.
+    const refused = (layerRef: MapLayerSpec, message: string) => expect(runSpec(page, {
+        data: [area, zones, paths, spots], map: { layerRefs: [layerRef] },
+    })).rejects.toThrow(message);
+    await refused({ dataRef: 'zones', layerType: 'points' },
+        'Layer "zones": layerType "points" cannot draw the table "zones", a polygons table: a table of polygons is drawn as polygons, surface, parks, water or buildings.');
+    await refused({ dataRef: 'paths', layerType: 'parks' },
+        'Layer "paths": layerType "parks" cannot draw the table "paths", a polylines table: a table of lines is drawn as polylines or roads.');
+    await refused({ dataRef: 'spots', layerType: 'polygons' },
+        'Layer "spots": layerType "polygons" cannot draw the table "spots", a points table: a table of points is drawn as points.');
+    await expect(runSpec(page, heatmapWith({ layerType: 'polygons' })))
+        .rejects.toThrow('Layer "heatmap": layerType "polygons" cannot draw the table "heatmap", a raster table: a raster table is drawn as raster.');
 });
 
 test('writes a compute pass into a new table and leaves its source alone', async ({ page }) => {
@@ -1512,6 +1876,62 @@ test("keeps the camera's up direction across its line of sight at any pitch belo
     // At 90 the eye would sit on the ground, edge-on to the flat layers, and the map could not pan.
     await expect(runSpec(page, spec({ zoom: 12, pitch: 90 })))
         .rejects.toThrow('Map 0: camera.pitch must be at least 0 and less than 90 degrees, not 90');
+});
+
+test('raises a map on the heights of the raster band its terrain names, and refuses a terrain that is not a raster band', async ({ page }) => {
+    // The 24 yearly bands of the Niteroi temperature GeoTIFF, from 2001 to 2024, as heights: each band is another ground.
+    // 2024's temperatures are draped over it in viridis, so the frame shows the ground the raster covers, cell by cell.
+    const area = { type: 'Polygon' as const, coordinates: [[[-43.2, -22.95], [-43.0, -22.95], [-43.0, -22.8], [-43.2, -22.8], [-43.2, -22.95]]] };
+    const withTerrain = (terrain?: TerrainSpec): UrbanSpec => ({
+        data: [
+            { type: 'geojson', outputTableName: 'area', geojsonObject: { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: area, properties: {} }] } },
+            { type: 'geotiff', outputTableName: 'lst', geotiffFileUrl: '/data/niteroi_lst_verao_2001_2024.tif' },
+        ],
+        map: {
+            layerRefs: [
+                { dataRef: 'area' },
+                {
+                    dataRef: 'lst', title: 'Temperature 2024', getFnv: 'band_24', colorMapInterpolator: scheme('interpolateViridis'),
+                    transferFunction: { opacityMin: 1, opacityMax: 1 },
+                },
+            ],
+            ...(terrain && { terrain }),
+        },
+    });
+    const terrainOf = () => page.evaluate(() => window.terrain('map0'));
+
+    // Without a terrain the map is flat.
+    await runSpec(page, withTerrain());
+    expect(await terrainOf()).toBeNull();
+
+    // The first band by default: the ground's heights run over that band's values.
+    await runSpec(page, withTerrain({ dataRef: 'lst' }));
+    const first = await terrainOf();
+    expect(first).toMatchObject({ band: 'band_1', width: 22, height: 15 });
+    expect(first!.minHeight).toBeCloseTo(first!.bandMin, 4);
+    expect(first!.maxHeight).toBeCloseTo(first!.bandMax, 4);
+    // autk-map fits the view to the ground: it looks at the middle of the raster.
+    const [minX, minY, maxX, maxY] = first!.bounds;
+    const { lookAt } = await page.evaluate(() => window.cameraState('map0'));
+    expect(lookAt[0]).toBeCloseTo((minX + maxX) / 2, 0);
+    expect(lookAt[1]).toBeCloseTo((minY + maxY) / 2, 0);
+    await expectDrawn(page, 'map0');
+
+    // A band by its id: 2024's ground, not 2001's.
+    await runSpec(page, withTerrain({ dataRef: 'lst', band: 'band_24' }));
+    const last = await terrainOf();
+    expect(last).toMatchObject({ band: 'band_24' });
+    expect(last!.minHeight).toBeCloseTo(last!.bandMin, 4);
+    expect(last!.maxHeight).toBeCloseTo(last!.bandMax, 4);
+    expect(last!.maxHeight).not.toBeCloseTo(first!.maxHeight, 1);
+
+    // A band that names none of the 24, a table that is not a raster, and a name that is no table.
+    await expect(runSpec(page, withTerrain({ dataRef: 'lst', band: 'band_25' })))
+        .rejects.toThrow('Map 0: terrain band "band_25" names none of its 24 bands: band_1, band_2,');
+    await expect(runSpec(page, withTerrain({ dataRef: 'area' })))
+        .rejects.toThrow('Map 0: terrain dataRef "area" names a polygons table, and a terrain takes its heights from a raster table');
+    await expect(runSpec(page, withTerrain({ dataRef: 'elevation' })))
+        .rejects.toThrow(`Map 0: terrain dataRef "elevation" names no table of the map's workspace.`);
 });
 
 test('draws the second run of a reused grammar from its own table, though the first run loaded a GeoJSON table of that name', async ({ page }) => {
@@ -1809,6 +2229,22 @@ test('places views in a grid by its columns and gap, and stacks them without a l
     // Without a layout the panes stack, with no gap.
     const stacked = await page.evaluate((s) => window.runInPanes(s, 400, 600), views);
     expect(places(stacked.panes)).toEqual([['map-0', null, 0, 0, 400, 200], ['map-1', 'right', 0, 200, 400, 200], ['plot-0', 'sc', 0, 400, 400, 200]]);
+});
+
+test("draws a plot's axis titles in the gallery hub, in the color of its text", async ({ page }) => {
+    // autk-plot puts each axis title inside its axis group, which d3 gives fill="none", and leaves the title's fill to
+    // the page: without a rule of the hub's own, the titles of plot-colors were drawn with no fill.
+    const spec = await exampleSpec(page, 'plot-colors');
+    await page.evaluate((s) => window.runInPanes(s, 1212, 500, 'hub'), spec);
+    const titles = await page.evaluate(() => Array.from(document.querySelectorAll('#plot-0 .axis-label'), (title) => {
+        const style = getComputedStyle(title);
+        return { text: title.textContent, fill: style.fill, color: style.color };
+    }));
+    expect(titles.map((title) => title.text)).toEqual(['Neighborhood', 'Noise complaints']);
+    for (const title of titles) {
+        expect(title.fill, title.text ?? '').not.toBe('none');
+        expect(title.fill, title.text ?? '').toBe(title.color);
+    }
 });
 
 test('draws band 24 of geotiff-raster on its scheme, in at most maxRasterCells cells, each one a cell of the file', async ({ page }) => {
@@ -2219,6 +2655,60 @@ test('selects the rows a plot names in selection as it is drawn, and highlights 
         .rejects.toThrow('Plot "p": selection names row 4, but the plot draws 4 rows.');
 });
 
+test('draws the features pickedComps names as picked on the layer that picks, and selects them in the plots linked to it', async ({ page }) => {
+    // The zones in one gray, so the picked ones show in autk-map's highlight color, #5dade2.
+    const zonesWith = (options: Partial<MapLayerSpec>, rest: Partial<UrbanSpec> = {}): UrbanSpec => ({
+        data: [area, zones, blocks],
+        map: { id: 'm', layerRefs: [{ dataRef: 'zones', title: 'Zones', color: '#d9d9d9', isPick: true, ...options }, { dataRef: 'blocks' }] },
+        ...rest,
+    });
+    const litZones = async () => {
+        const drawn = await page.evaluate(() => window.drawnRows('map0', 'Zones'));
+        return ((await layerById(page)).Zones.highlightedIds ?? []).map((position) => drawn[position]?.id).sort();
+    };
+
+    // Without pickedComps nothing is picked.
+    await runSpec(page, zonesWith({}));
+    expect((await layerById(page)).Zones).toMatchObject({ isPick: true, highlightedIds: [] });
+    expect(await pixelsIn(page, '#5dade2', 'no zone picked')).toBe(0);
+
+    // Two zones, by their positions among those the layer draws: the layer picks them as it is drawn.
+    await runSpec(page, zonesWith({ pickedComps: [1, 3] }));
+    expect((await layerById(page)).Zones).toMatchObject({ isPick: true, highlightedIds: [1, 3] });
+    expect(await pixelsIn(page, '#5dade2', 'two zones picked')).toBeGreaterThan(400);
+
+    // A plot linked to the layer selects the same zones, though it draws its rows in their own order.
+    await runSpec(page, zonesWith({ pickedComps: [2] }, {
+        plot: plotOf({ id: 'p', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'] }),
+        links: [{ source: 'p', target: 'm', layer: 'Zones' }],
+    }));
+    const [zone] = await litZones();
+    expect((await plotMarks(page)).filter(({ fill }) => fill === highlightBlue).map(({ datum }) => datum?.id)).toEqual([zone]);
+
+    // Refused: a layer that does not pick, positions that are not features the layer draws, a raster, and a layer that
+    // another of its map takes picking from, by isPick, a link or a plot's mapRef.
+    await expect(runSpec(page, zonesWith({ isPick: undefined, pickedComps: [1] })))
+        .rejects.toThrow('Layer "Zones": pickedComps draws features as picked, which autk-map does only on the layer that picks: set isPick: true.');
+    await expect(runSpec(page, zonesWith({ pickedComps: [1.5] })))
+        .rejects.toThrow('Layer "Zones": pickedComps must list the positions of features the layer draws, whole numbers from 0, not [1.5].');
+    await expect(runSpec(page, zonesWith({ pickedComps: [4] })))
+        .rejects.toThrow('Layer "Zones": pickedComps names position 4, past the 4 features the layer draws.');
+    await expect(runSpec(page, heatmapWith({ title: 'Heat', isPick: true, pickedComps: [0] })))
+        .rejects.toThrow('Layer "Heat": pickedComps names features, and a raster layer has none.');
+    await expect(runSpec(page, {
+        data: [area, zones, blocks],
+        map: { layerRefs: [{ dataRef: 'zones', title: 'Zones', isPick: true, pickedComps: [1] }, { dataRef: 'blocks', isPick: true }] },
+    })).rejects.toThrow('Layer "Zones": pickedComps draws features as picked on the layer that picks, but layer "blocks", after it, picks too: autk-map lets one layer of a map pick, the last.');
+    await expect(runSpec(page, zonesWith({ pickedComps: [1] }, {
+        plot: plotOf({ id: 'p', dataRef: 'blocks', mark: 'scatter', axis: ['id', 'v'] }),
+        links: [{ source: 'p', target: 'm' }],
+    }))).rejects.toThrow(`Layer "Zones": pickedComps draws features as picked on the layer that picks, but a link or a plot's mapRef made layer "blocks" of its map pick: autk-map lets one layer of a map pick.`);
+    await expect(runSpec(page, zonesWith({ pickedComps: [1] }, {
+        plot: plotOf({ id: 'p', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], selection: [0] }),
+        links: [{ source: 'p', target: 'm', layer: 'Zones' }],
+    }))).rejects.toThrow('Layer "Zones": pickedComps and the selection of plot "p", which is linked to it, both set what the two show: set one of them.');
+});
+
 test('draws the marks of every plot of the page in one markColor, and the selected ones in one highlightColor', async ({ page }) => {
     const green = 'rgb(44, 160, 44)'; // #2ca02c
     const red = 'rgb(214, 39, 40)'; // #d62728
@@ -2333,4 +2823,28 @@ test("reads each building part's outline in a pass's fromFeature table, as a Geo
     const widths = await page.evaluate(() => Promise.all([0, 1, 2, 3].map((i) => window.valueAt('spots', i, 'compute.width'))));
     expect(widths).toHaveLength(4);
     for (const width of widths) expect(width as number).toBeCloseTo(60, 3);
+});
+
+test('draws the Financial District of map-style in the colors of its night style, without the floating menu and legend', async ({ page }) => {
+    const { tables } = await run(page, 'map-style');
+    expect(tables.fidi_buildings.features).toBeGreaterThan(50);
+    expect((await mapLayers(page)).map((layer) => layer.type)).toEqual(expect.arrayContaining(['surface', 'roads', 'buildings']));
+    expect(await page.evaluate(() => window.mapUi('map0'))).toEqual({ menu: false, legend: false, credit: true });
+    // The ground and the roads in the style's colors, which no preset of autk-map has.
+    expect(await pixelsIn(page, '#13263a', 'surface at night')).toBeGreaterThan(5000);
+    expect(await pixelsIn(page, '#4a6584', 'roads at night')).toBeGreaterThan(100);
+    await expectDrawn(page, 'map0');
+});
+
+test('raises Manhattan in map-terrain to the heights of its elevation model, under its neighborhoods and elevation colors', async ({ page }) => {
+    await run(page, 'map-terrain');
+    const terrain = await page.evaluate(() => window.terrain('map0'));
+    expect(terrain).toMatchObject({ band: 'band_1' });
+    expect(terrain!.minHeight).toBeCloseTo(terrain!.bandMin, 3);
+    expect(terrain!.maxHeight).toBeCloseTo(terrain!.bandMax, 3);
+    // The model's 30 m cells: the island rises to about 80 m in Inwood.
+    expect(terrain!.width * terrain!.height).toBeGreaterThan(400_000);
+    expect(terrain!.maxHeight).toBeGreaterThan(60);
+    expect((await mapLayers(page)).map((layer) => [layer.id, layer.type])).toEqual([['Neighborhoods', 'polygons'], ['Elevation (m)', 'raster']]);
+    await expectDrawn(page, 'map0');
 });

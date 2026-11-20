@@ -54,7 +54,7 @@ Keys the schema does not name are allowed, and its descriptions are the comments
 
 Browse the examples online, with a live editable spec for each one, at [autarkjs.org/grammar/examples](https://autarkjs.org/grammar/examples/).
 
-To run them locally, use [`gallery/`](gallery/). It runs the 59 example specs in this repository and lets you pick which adapter renders each one. Between them they cover OSM and PBF loading, CSV and GeoJSON, SQL queries, GPU compute, colormaps, plots, and two-way interaction between a map and a plot:
+To run them locally, use [`gallery/`](gallery/). It runs the 61 example specs in this repository and lets you pick which adapter renders each one. Between them they cover OSM and PBF loading, CSV and GeoJSON, SQL queries, GPU compute, colormaps, plots, and two-way interaction between a map and a plot:
 
 ```sh
 npm run dev --prefix gallery

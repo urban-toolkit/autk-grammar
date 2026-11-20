@@ -27,6 +27,24 @@ export type LayerState = {
     domain?: Array<number | string>;
     labels?: string[];
     highlightedIds?: number[];
+    skippedIds?: number[];
+    polylinesWidthByComponent?: number[];
+};
+
+/**
+ * A map's terrain: the band autk-map was handed for it, the lowest and highest finite values of that band, and the
+ * heightfield autk-map built from it: its cells across and down, its lowest and highest heights, and its bounds
+ * `[minX, minY, maxX, maxY]` around the map's origin.
+ */
+export type TerrainState = {
+    band: string;
+    bandMin: number;
+    bandMax: number;
+    width: number;
+    height: number;
+    minHeight: number;
+    maxHeight: number;
+    bounds: number[];
 };
 
 /** A map's legend as the page shows it: its heading, its labels left to right, and whether it shows. */
@@ -51,7 +69,7 @@ declare global {
         runSpec: (spec: UrbanSpec, plotTargets?: 'one' | 'each') => Promise<RunSummary>;
         runBeside: (spec: UrbanSpec) => Promise<void>;
         plotStyle: () => { markColor: string; highlightColor: string };
-        runInPanes: (spec: UrbanSpec, width: number, height: number) => Promise<{ targets: Record<string, unknown>; panes: PaneBox[] }>;
+        runInPanes: (spec: UrbanSpec, width: number, height: number, styles?: 'hub') => Promise<{ targets: Record<string, unknown>; panes: PaneBox[] }>;
         runAgain: (spec: UrbanSpec) => Promise<void>;
         runExample: (name: string) => Promise<RunSummary>;
         exampleSpec: (name: string) => Promise<UrbanSpec>;
@@ -62,6 +80,10 @@ declare global {
         drawnRows: (canvasId: string, layerId: string) => Array<Record<string, unknown> | null>;
         cameraState: (canvasId: string) => { eye: number[]; lookAt: number[] };
         rasterCells: (canvasId: string, layerId: string) => { values: number[]; rgba: number[] };
+        handedBand: (canvasId: string, layerId: string, band: string) => number[];
+        terrain: (canvasId: string) => TerrainState | null;
+        buildingTops: (canvasId: string, layerId: string) => Array<number | null>;
+        mapUi: (canvasId: string) => { menu: boolean; legend: boolean; credit: boolean };
         legend: () => LegendState | null;
         plotMarks: (target?: string) => DrawnMark[];
         plotTicks: (target: string, selector: string) => Array<Array<[unknown, string]>>;
@@ -88,6 +110,15 @@ AutkMap.prototype.loadCollection = function (this: AutkMap, ...args: Parameters<
     if (!handed.has(this)) handed.set(this, new Map());
     handed.get(this)!.set(layerId, collection as FeatureCollection);
     return loadCollection.apply(this, args);
+};
+
+/** The raster collection and the band's path autk-map was handed for the terrain of each map, recorded as it builds it. */
+const terrains = new WeakMap<AutkMap, { collection: FeatureCollection; property: string }>();
+const enableTerrainMode = AutkMap.prototype.enableTerrainMode;
+AutkMap.prototype.enableTerrainMode = function (this: AutkMap, ...args: Parameters<AutkMap['enableTerrainMode']>) {
+    const [collection, property] = args;
+    terrains.set(this, { collection: collection as FeatureCollection, property });
+    return enableTerrainMode.apply(this, args);
 };
 
 /**
@@ -139,9 +170,11 @@ window.runSpec = async (spec: UrbanSpec, plotTargets: 'one' | 'each' = 'one') =>
 /**
  * Runs a spec in the panes the gallery hub builds for a spec with a layout (gallery/src/views.ts, which places each
  * view as `arrangeViews` says), in a stage of `width` by `height` pixels. Returns the grammar's targets and each pane's
- * box, once the views are drawn. The hub's code is loaded here, so only the tests that ask for it depend on it.
+ * box, once the views are drawn. The hub's code is loaded here, so only the tests that ask for it depend on it. With
+ * `styles: 'hub'` the page also takes the hub's stylesheet, which restyles the page's body and stage, as the hub does.
  */
-window.runInPanes = async (spec: UrbanSpec, width: number, height: number) => {
+window.runInPanes = async (spec: UrbanSpec, width: number, height: number, styles?: 'hub') => {
+    if (styles === 'hub') await import('../../gallery/src/hub.css');
     const { createPanes } = await import('../../gallery/src/views');
     window.grammar?.destroy();
     const stage = document.getElementById('stage')!;
@@ -247,10 +280,28 @@ window.cameraState = (canvasId: string) => {
     return { eye: [...camera.getEye()], lookAt: [...camera.getLookAt()] };
 };
 
+/**
+ * The positions of the features a layer hides, in order, read with autk-map's public getters: a vector layer gives them
+ * (`skippedIds`); a points layer gives which of its point instances are hidden (`skippedVertices`), and each of its
+ * features (`components`) holds the instances up to its running count `nPoints`. Undefined for a layer that hides none
+ * of either kind, a raster.
+ */
+function skippedIdsOf(layer: unknown): number[] | undefined {
+    const { skippedIds, skippedVertices, components } = layer as
+        { skippedIds?: number[]; skippedVertices?: Float32Array; components?: Array<{ nPoints: number }> };
+    if (Array.isArray(skippedIds)) return [...skippedIds].sort((a, b) => a - b);
+    if (!skippedVertices || !Array.isArray(components)) return undefined;
+    return components.flatMap((component, position) => {
+        const first = position > 0 ? components[position - 1].nPoints : 0;
+        return first < component.nPoints && skippedVertices[first] > 0 ? [position] : [];
+    });
+}
+
 /** The render state autk-map holds for each layer of the map on #canvasId, in its layer order. */
 window.mapLayers = (canvasId: string) => mapOn(canvasId).layerManager.layers.map((layer) => {
     const info = layer.layerRenderInfo;
     const highlighted = (layer as unknown as { highlightedIds?: number[] }).highlightedIds;
+    const skipped = skippedIdsOf(layer);
     return {
         id: layer.layerInfo.id,
         type: layer.layerInfo.typeLayer,
@@ -265,6 +316,8 @@ window.mapLayers = (canvasId: string) => mapOn(canvasId).layerManager.layers.map
         domain: info.colormap.computedDomain ? [...info.colormap.computedDomain] : undefined,
         labels: info.colormap.computedLabels ? [...info.colormap.computedLabels] : undefined,
         highlightedIds: highlighted ? [...highlighted] : undefined,
+        skippedIds: skipped,
+        polylinesWidthByComponent: info.polylinesWidthByComponent ? [...info.polylinesWidthByComponent] : undefined,
     };
 });
 
@@ -287,6 +340,67 @@ window.rasterCells = (canvasId: string, layerId: string) => {
         { rasterValues?: Float32Array; rasterData?: Float32Array } | null;
     if (!layer?.rasterValues || !layer.rasterData) throw new Error(`#${canvasId} has no raster layer ${layerId}`);
     return { values: Array.from(layer.rasterValues), rgba: Array.from(layer.rasterData) };
+};
+
+/** The values of a band of the raster collection autk-map was handed for a layer of the map on #canvasId. */
+window.handedBand = (canvasId: string, layerId: string, band: string) => {
+    const collection = handed.get(mapOn(canvasId))?.get(layerId);
+    const values = (collection?.features[0]?.properties as Record<string, unknown> | null | undefined)?.[band];
+    if (!values) throw new Error(`#${canvasId} was handed no band ${band} for ${layerId}`);
+    return Array.from(values as ArrayLike<number>);
+};
+
+/**
+ * The top of each building a buildings layer of the map on #canvasId draws, one per feature it was handed, at its
+ * positions: the highest height of the feature's vertices, or null when autk-map draws none of its parts.
+ */
+window.buildingTops = (canvasId: string, layerId: string) => {
+    const layer = mapOn(canvasId).layerManager.searchByLayerId(layerId) as unknown as
+        { position?: Float32Array; components?: Array<{ nPoints: number }> } | null;
+    const position = layer?.position;
+    if (!position || !layer.components) throw new Error(`#${canvasId} draws no buildings layer ${layerId}`);
+    let first = 0;
+    return layer.components.map(({ nPoints }) => {
+        // A component's nPoints counts the vertices up to its own last, x, y and height each.
+        let top: number | null = null;
+        for (let vertex = first; vertex < nPoints; vertex++) top = Math.max(top ?? -Infinity, position[vertex * 3 + 2]);
+        first = nPoints;
+        return top;
+    });
+};
+
+/**
+ * Which of autk-map's floating elements the map on #canvasId put next to its canvas: its menu, its legend and its
+ * "made with autark" credit. autk-map adds them to the canvas's parent, which every map of this page shares.
+ */
+window.mapUi = (canvasId: string) => {
+    const parent = mapOn(canvasId).canvas.parentElement;
+    return {
+        menu: parent?.querySelector('#autkMapUi') != null,
+        legend: parent?.querySelector('#autkMapLegend') != null,
+        credit: parent?.querySelector('.autk-map-branding') != null,
+    };
+};
+
+/**
+ * The terrain of the map on #canvasId, or null when it draws none (see `TerrainState`). autk-map 4.1.1 gives no public
+ * getter for a terrain's heightfield, so this reads the one its terrain render path keeps (`_terrainRenderPath`).
+ */
+window.terrain = (canvasId: string) => {
+    const map = mapOn(canvasId);
+    const path = (map as unknown as { _terrainRenderPath?: { heightfield?: Omit<TerrainState, 'band' | 'bandMin' | 'bandMax'> } | null })._terrainRenderPath;
+    const handedTerrain = terrains.get(map);
+    if (!path?.heightfield || !handedTerrain) return null;
+    const values = (handedTerrain.collection.features[0]?.properties as Record<string, ArrayLike<number>> | null)?.[handedTerrain.property] ?? [];
+    let bandMin = Infinity;
+    let bandMax = -Infinity;
+    for (let i = 0; i < values.length; i++) {
+        if (!Number.isFinite(values[i])) continue;
+        bandMin = Math.min(bandMin, values[i]);
+        bandMax = Math.max(bandMax, values[i]);
+    }
+    const { width, height, minHeight, maxHeight, bounds } = path.heightfield;
+    return { band: handedTerrain.property, bandMin, bandMax, width, height, minHeight, maxHeight, bounds: [...bounds] };
 };
 
 /** The legend of the page's map. */

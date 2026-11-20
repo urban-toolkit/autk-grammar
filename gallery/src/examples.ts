@@ -374,4 +374,16 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         supportedAdapters: ['autk'],
         load: () => import('./examples/plot-colors'),
     },
+    'map-terrain': {
+        title: 'Terrain: Manhattan on Its Elevation',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/map-terrain'),
+    },
+    'map-style': {
+        title: 'Style: the Financial District at Night',
+        layout: 'map',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/map-style'),
+    },
 };
