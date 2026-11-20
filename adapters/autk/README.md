@@ -81,6 +81,12 @@ await grammar.run({
 });
 ```
 
+### Heatmap bands
+
+- **Without `groupBy`,** a heatmap's one band counts the rows near each cell, as `[{ column: '*', aggregateFn: 'count' }]` does: the grammar hands autk-db that count, where autk-db 4.1.1 left to itself drew 0 in every cell.
+- **`count` and `weighted` bands** are right on every autk-db release.
+- **`avg`, `sum`, `min` and `max` bands read 0 in every cell on npm's autk-db 4.1.1,** for any column. Autark's next autk-db release fixes it (our urban-toolkit/autark#132), and Curio's vendored autk-db already carries the fix.
+
 ### Heatmap `normalize`
 
 An entry of a heatmap's `groupBy` with `normalize: true` asks for its band's values rescaled from 0 to 1 across the grid's cells, as a join's `normalize` rescales a value across the features. It needs an autk-db with urban-toolkit/autark#132, which also adds `_norm` to the band's label, so a layer names it as `<aggregateFn>.<joinDataRef>_norm`. autk-db 4.1.1 builds the band from the values as they are, under the label it would have without `normalize`. A layer can also name a band by its id, `band_1`, `band_2` and so on, one per entry of `groupBy`, in order.

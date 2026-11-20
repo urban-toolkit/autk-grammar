@@ -358,12 +358,14 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache, compu
                     // The schema refuses collect in a heatmap, but a spec that was not checked against it reaches here.
                     if (hm.groupBy?.some((group) => (group.aggregateFn as string | undefined) === 'collect'))
                         throw new Error(`Heatmap "${hm.outputTableName}": aggregateFn "collect" lists the rows near a cell, and a cell holds one value; use sum, avg, count, min, max or weighted.`);
+                    // Without groupBy, one band counts the rows near each cell. autk-db labels that band, but joins the rows
+                    // with no aggregate, so on 4.1.1 every cell read 0: the count is handed to autk-db as an entry of its own.
                     await db.buildHeatmap({
                         tableJoinName: hm.joinDataRef,
                         near: hm.near,
                         outputTableName: hm.outputTableName,
                         grid: hm.grid,
-                        ...(hm.groupBy && { groupBy: hm.groupBy }),
+                        groupBy: hm.groupBy?.length ? hm.groupBy : [{ column: '*', aggregateFn: 'count' }],
                     });
                     print(db, targets);
                     return db;

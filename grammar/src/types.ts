@@ -110,7 +110,7 @@ export interface HeatmapSourceSpec extends TableSourceBase {
          */
         useCentroid?: boolean;
     };
-    /** Aggregate the rows near each cell, one raster band per entry. */
+    /** Aggregate the rows near each cell, one raster band per entry. Without it, one band counts the rows near each cell. */
     groupBy?: Array<{
         column: string;
         /** How the rows combine into the cell's value: any aggregate but `collect`, which lists rows, while a cell holds one value. */
