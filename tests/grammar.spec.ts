@@ -1541,8 +1541,8 @@ test('centers and reverses a raster color scale within its colorMapRange, and dr
 });
 
 test('loads a GeoTIFF as a raster layer', async ({ page }) => {
-    // Like heatmaps, rasters are drawn on the map but not listed in the summary's tables. A raster does not frame
-    // the map, so a vector layer over the same area does.
+    // Like heatmaps, rasters are drawn on the map but not listed in the summary's tables. A vector layer over the
+    // same area comes first, so it sets the map's origin; a raster loaded first sets it at its own middle.
     const area = { type: 'Polygon' as const, coordinates: [[[-43.2, -22.95], [-43.0, -22.95], [-43.0, -22.8], [-43.2, -22.8], [-43.2, -22.95]]] };
     await runSpec(page, {
         data: [
@@ -3041,7 +3041,7 @@ test('draws band 24 of geotiff-raster on its scheme, in at most maxRasterCells c
     const [source, ...others] = spec.data!;
     const { maxRasterCells, resampleMethod, ...wholeFile } = source as GeoTiffDataSourceSpec;
 
-    // The polygon of the raster's extent frames the map, which a raster does not.
+    // The example draws the raster's extent as a polygon, its first layer, under the raster.
     await run(page, 'geotiff-raster');
     const layers = await mapLayers(page);
     expect(layers.map((layer) => [layer.id, layer.type])).toEqual([['Raster extent', 'polygons'], [layerId, 'raster']]);
