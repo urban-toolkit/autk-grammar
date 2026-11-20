@@ -355,9 +355,16 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache, compu
                     return db;
                 case 'heatmap': {
                     const hm = rest_spec as HeatmapSourceSpec;
-                    // The schema refuses collect in a heatmap, but a spec that was not checked against it reaches here.
+                    // A cell holds one value, so each entry of groupBy needs an aggregate that gives one. The schema refuses
+                    // collect in a heatmap, but a spec that was not checked against it reaches here. The schema takes an
+                    // entry without aggregateFn, as a join's: autk-db then lists the column's values near each cell, which
+                    // no band reads, so on 4.1.1 its band read 0 in every cell, with no error. A null aggregateFn, which a
+                    // JSON spec can carry, is none, as autk-db reads it.
                     if (hm.groupBy?.some((group) => (group.aggregateFn as string | undefined) === 'collect'))
                         throw new Error(`Heatmap "${hm.outputTableName}": aggregateFn "collect" lists the rows near a cell, and a cell holds one value; use sum, avg, count, min, max or weighted.`);
+                    const unaggregated = hm.groupBy?.find((group) => !group.aggregateFn);
+                    if (unaggregated)
+                        throw new Error(`Heatmap "${hm.outputTableName}": the groupBy entry for column "${unaggregated.column}" has no aggregateFn to combine the rows near a cell, and a cell holds one value; use sum, avg, count, min, max or weighted.`);
                     // Without groupBy, one band counts the rows near each cell. autk-db labels that band, but joins the rows
                     // with no aggregate, so on 4.1.1 every cell read 0: the count is handed to autk-db as an entry of its own.
                     await db.buildHeatmap({
