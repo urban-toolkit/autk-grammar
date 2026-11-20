@@ -35,8 +35,18 @@ jobs:
       - name: Build and typecheck
         run: make build
 
+      # Before-run only (never merged): every check runs, and each unit file on its own, so each failure shows.
       - name: Validate gallery specs against the JSON Schema
+        if: always()
         run: npm run test:schema
 
       - name: Unit tests
-        run: npm run test:unit
+        if: always()
+        run: |
+          status=0
+          for file in tests/unit/*.mts; do
+            echo "::group::$file"
+            npx tsx "$file" || { echo "FAILED: $file"; status=1; }
+            echo "::endgroup::"
+          done
+          exit $status
