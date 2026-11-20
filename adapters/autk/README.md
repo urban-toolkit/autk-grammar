@@ -258,7 +258,7 @@ plot: { dataRef: 'downtown_roads', mark: 'table', axis: ['osm_id', 'highway', 'n
 
 ## Compute
 
-Each entry of `compute` runs in order, once the data is loaded. Its `type` is `gpgpu`, the default, or `render`, which run on the GPU with autk-compute, or `windows` or `clusters`, which run on the CPU through autk-core. A run refuses a pass of any other `type`.
+Each entry of `compute` runs in order, once the sources without [`after`](#after) are loaded. Its `type` is `gpgpu`, the default, or `render`, which run on the GPU with autk-compute, or `windows` or `clusters`, which run on the CPU through autk-core. A run refuses a pass of any other `type`.
 
 A GPGPU pass runs a WGSL function once per feature of a table:
 
@@ -365,6 +365,30 @@ A run refuses `writeBack` on a raster, and on a new table whose layer type it ca
 
 ```ts
 compute: [{ type: 'clusters', dataRef: 'fidi_buildings', outputColumnName: 'block', outputTableName: 'fidi_blocks', writeBack: true }],
+```
+
+### `after`
+
+A source with `after: 'compute'` runs once every compute pass has run, instead of before them, so it reads what passes kept in autk-db with `writeBack`: a join or a heatmap over a pass's result, a `sql` source that queries it, an update or a drop. Every type of source takes it. The sources with it run in the order of `data`, after all those without it, wherever they stand in `data`; the maps and plots are drawn once they have run.
+
+- **A source after compute that reads a table a pass writes without `writeBack` is refused,** naming both, since autk-db holds that table without the pass's result. A `sql` source's query is not checked.
+- **A source that writes a table a pass wrote,** such as a join into it, an update, a `sql` source saved under its name or a drop, changes autk-db's table, and the maps, plots and `grammar.data` then read that table: the pass's columns and the source's together.
+- **A join's or a heatmap's `groupBy` reads a compute column by its path,** `compute.<column>`. A join writes an aggregate of it under the key `<joinDataRef>.<column>`, which a layer's `getFnv` reads as a path: `sjoin.max.squares.compute.cluster`.
+
+```ts
+await grammar.run({
+  data: [
+    { type: 'osm', outputTableName: 'fidi', pbfFileUrl: '/data/lower_mnt.osm.pbf', queryArea: { bbox: [-74.0132, 40.7032, -74.0072, 40.7088] }, autoLoadLayers: { layers: ['buildings'] } },
+    {
+      type: 'sql',
+      outputTableName: 'largest_blocks',
+      query: "SELECT CAST(properties->'compute'->>'block' AS INTEGER) AS block, count(*) AS buildings FROM fidi_blocks GROUP BY block ORDER BY buildings DESC, block LIMIT 10",
+      after: 'compute',
+    },
+  ],
+  compute: [{ type: 'clusters', dataRef: 'fidi_buildings', outputColumnName: 'block', outputTableName: 'fidi_blocks', writeBack: true }],
+  plot: { dataRef: 'largest_blocks', mark: 'bar', axis: ['block', 'buildings'] },
+});
 ```
 
 ## Maps
@@ -807,8 +831,9 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 
 | Export | Effect |
 |---|---|
-| `createDataAdapter(targets?, cache?)` | The data adapter. Its `resolveWorkspaces(db, workspaces)` sets up a spec's `workspaces` before the first source loads, and its `resolveSource(db, source)` loads one `data` entry. Each takes an autk-db database, a new one when `db` is undefined, and returns it. `cache` receives each GeoJSON table and each table a join or an update wrote. |
-| `createComputeAdapter(cache?, types?, sources?)` | The compute adapter. Its `resolveCompute(db, pass)` runs one `compute` entry, on the GPU or, for a windows or clusters pass, on the CPU. The results are kept only in `cache`, and `types` receives the layer type of each table a pass wrote under its own `outputTableName`. `sources` is the cache `createDataAdapter` fills, from which a pass reads a `fromFeature` table a GeoJSON source loaded in its workspace's CRS. |
+| `createDataAdapter(targets?, cache?, computeCache?, computeTypes?)` | The data adapter. Its `resolveWorkspaces(db, workspaces)` sets up a spec's `workspaces` before the first source loads, and its `resolveSource(db, source)` loads one `data` entry. Each takes an autk-db database, a new one when `db` is undefined, and returns it. `cache` receives each GeoJSON table and each table a join or an update wrote. `computeCache` and `computeTypes` are the compute adapter's `cache` and `types`: each table a source writes leaves them, so the maps and plots read what a source after compute wrote. |
+| `createComputeAdapter(cache?, types?, sources?)` | The compute adapter. Its `resolveCompute(db, pass)` runs one `compute` entry, on the GPU or, for a windows or clusters pass, on the CPU. The results are kept in `cache`, and in autk-db too for a pass with `writeBack`; `types` receives the layer type of each table a pass wrote under its own `outputTableName`. `sources` is the cache `createDataAdapter` fills, from which a pass reads a `fromFeature` table a GeoJSON source loaded in its workspace's CRS. |
+| `dataPhases(spec)` | The entries of a spec's `data` in the order the grammar runs them: `before`, the sources it runs before the compute passes, and `after`, those it runs after them (see [`after`](#after)). It refuses an `after` other than `'compute'`, and a source after compute that reads a table a pass writes without `writeBack`. A host that loads the data on a server and runs the passes in a browser loads `before` on the server, and runs `after` in the browser once the passes have run, with the compute adapter's caches handed to the data adapter. |
 | `enterWorkspace(db, workspace?)` | Makes an entry's workspace (the default one without a name) the one autk-db works in, and switches only when another is current. Every adapter calls it before it reads or writes an entry's tables. |
 | `tableKey(workspace, name)` | The key of a table in those caches: its name in the default workspace, `<workspace>/<name>` in another. |
 | `applyCamera(map, camera)` | Moves an `AutkMap`'s camera as a map's `camera` says, from the view that fits its layers, and refuses a `pitch` that is not at least 0 and less than 90. The map adapter calls it once the layers are loaded, before the map's first `draw()`. It looks at a `center` that `resolveCameraCenter` put on the map, and refuses any other, so a host's later turns of a map the grammar drew keep its center. |
@@ -816,15 +841,16 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 | `playCameraMotion(map, motion)` | Plays a camera tour on an `AutkMap` from the view its camera has now, and returns it as `{ done, stop() }` without waiting for it. A tour played on a map stops the one it was playing, and a drag, a scroll or a key on the map stops it. It refuses a tour as a run does, from the map's own tilt and bank. The map adapter calls it once a map is drawn; a host that frames a map itself and turns it with `applyCamera` calls it after that turn, so the tour starts from the host's view. |
 | `arrangeViews(spec)` | Where each view of a spec goes on the page, as its `layout` says: a grid of panes, one per view (see [Arranging the views](#arranging-the-views)). It refuses a `layout` it cannot arrange, with a sentence that names the value. |
 
-`@urban-toolkit/autk-grammar/data` exports `createDataAdapter`, `enterWorkspace` and `tableKey` with their types, as an ES module and a CommonJS one. Its code imports `@urban-toolkit/autk-db` alone, never autk-map, autk-plot, autk-compute or autk-core, so it loads where they cannot, such as Node:
+`@urban-toolkit/autk-grammar/data` exports `createDataAdapter`, `dataPhases`, `enterWorkspace` and `tableKey` with their types, as an ES module and a CommonJS one. Its code imports `@urban-toolkit/autk-db` alone, never autk-map, autk-plot, autk-compute or autk-core, so it loads where they cannot, such as Node:
 
 ```ts
-import { createDataAdapter } from '@urban-toolkit/autk-grammar/data';
+import { createDataAdapter, dataPhases } from '@urban-toolkit/autk-grammar/data';
 
 const adapter = createDataAdapter();
 let db: unknown; // the AutkDb the first call creates
 if (spec.workspaces) db = await adapter.resolveWorkspaces(db, spec.workspaces);
-for (const source of spec.data ?? []) db = await adapter.resolveSource(db, source);
+// The sources after compute run where the passes run, once they have.
+for (const source of dataPhases(spec).before) db = await adapter.resolveSource(db, source);
 ```
 
 The data adapter of either entry notes the coordinate system of each GeoJSON source it puts in its cache, and the two entries keep their notes in one place on the page. So a host may load a spec's tables with the data adapter of `./data` and run its passes with the compute adapter of the main entry, handing it that cache as `sources`: its passes read the sources' features as the grammar's do.

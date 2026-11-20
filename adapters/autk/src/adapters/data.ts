@@ -2,7 +2,7 @@ import { CsvDataSourceSpec, CustomDataSourceSpec, DataAdapter, DataSourceSpec, D
 import { AutkDb, DEFAULT_WORKSPACE_NAME, isRenderableTable, isVectorTable } from '@urban-toolkit/autk-db';
 import type { LoadGeojsonParams, Table } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Geometry } from 'geojson';
-import { Targets, GeoJsonCache } from '../types';
+import { Targets, GeoJsonCache, ComputeCache, ComputeLayerTypes } from '../types';
 import { enterWorkspace, noteSourceCrs, tableKey } from '../workspace';
 import { featureIds } from '../rows';
 
@@ -160,6 +160,35 @@ export function extentOf(collection: FeatureCollection): [number, number, number
     return minX <= maxX ? [minX, minY, maxX, maxY] : undefined;
 }
 
+/** A copy of a source without the fields only the grammar reads, `workspace` and `after`, which autk-db would take for its own. */
+function withoutGrammarFields(spec: DataSourceSpec): DataSourceSpec {
+    const fields = { ...spec };
+    delete fields.workspace;
+    delete fields.after;
+    return fields;
+}
+
+/**
+ * The tables a source writes: those it creates or replaces (an OSM source's layer and tag set tables among them, named
+ * `<outputTableName>_<layer>` and `<outputTableName>_<name>_<type>`), or the one it changes or drops.
+ */
+function tablesWritten(spec: DataSourceSpec): string[] {
+    switch (spec.type) {
+        case 'osm':
+            return [
+                spec.outputTableName,
+                ...(spec.autoLoadLayers?.layers ?? []).map((layer) => `${spec.outputTableName}_${layer}`),
+                ...(spec.tagSets ?? []).map((set) => `${spec.outputTableName}_${set.name}_${set.type}`),
+            ];
+        case 'join':
+        case 'update':
+        case 'drop':
+            return [spec.dataRef];
+        default:
+            return [spec.outputTableName];
+    }
+}
+
 /**
  * The data adapter `AutkGrammar` runs. Its `resolveSource(db, source)` loads one entry of a spec's `data` into the
  * autk-db database `db` (a new one when `db` is undefined), in the entry's workspace, which it leaves current, and
@@ -169,9 +198,12 @@ export function extentOf(collection: FeatureCollection): [number, number, number
  * A host calls it to load a spec's tables exactly as the grammar does, for example on a server without a map: the
  * `./data` entry exports it with autk-db as its only import. `targets.db` names an element that lists the tables
  * after each load. `cache`, when given, receives each GeoJSON table and each table a join or an update wrote, under
- * {@link tableKey}, and loses each table a `sql` source replaces or a `drop` source drops.
+ * {@link tableKey}, and loses each table a `sql` source replaces or a `drop` source drops. `computeCache` and
+ * `computeTypes` are the caches a compute adapter fills (see `createComputeAdapter`): each table a source writes leaves
+ * them, so maps, plots and `AutkGrammar.data`, which read them first, read what a source after compute wrote in autk-db.
+ * A host that runs sources after compute (see `dataPhases`) passes them in, as the grammar does.
  */
-export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Required<DataAdapter> {
+export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache, computeCache?: ComputeCache, computeTypes?: ComputeLayerTypes): Required<DataAdapter> {
 
     function print(db: AutkDb, targets?: Targets): void {
         if(!targets || !targets.db)
@@ -203,7 +235,7 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Requ
         else cache.delete(key);
     }
 
-    return {
+    const loader = {
         async resolveWorkspaces(context: AutkDb | undefined, workspaces: WorkspaceSpec[]): Promise<AutkDb> {
             const db = await database(context);
             const named = new Set<string>();
@@ -225,14 +257,16 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Requ
             return db;
         },
 
-        async resolveSource(context: AutkDb | undefined, spec: DataSourceSpec): Promise<AutkDb> {
+        /** Loads one entry of `data` into `context`, else a new database, in the entry's workspace. */
+        async loadSource(context: AutkDb | undefined, spec: DataSourceSpec): Promise<AutkDb> {
 
             const db = await database(context);
 
             const { workspace } = spec as { workspace?: string };
             await enterWorkspace(db, workspace);
 
-            let {type, workspace: _workspace, ...rest_spec} = spec as DataSourceSpec & { workspace?: string };
+            // autk-db reads each field but `type` and the grammar's own `workspace` and `after`.
+            const {type, ...rest_spec} = withoutGrammarFields(spec);
 
             switch (type) {
                 case 'osm':
@@ -419,5 +453,21 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache): Requ
                     throw new Error(`Unknown data source type "${String(type)}".`);
             }
         }
-    }
+    };
+
+    return {
+        resolveWorkspaces: loader.resolveWorkspaces,
+
+        async resolveSource(context: AutkDb | undefined, spec: DataSourceSpec): Promise<AutkDb> {
+            const db = await loader.loadSource(context, spec);
+            // A table a source writes is autk-db's from then on. Maps, plots and `grammar.data` read the compute
+            // adapter's caches first, so a pass's result there, which a source after compute changed, goes.
+            const { workspace } = spec as { workspace?: string };
+            for (const name of tablesWritten(spec)) {
+                computeCache?.delete(tableKey(workspace, name));
+                computeTypes?.delete(tableKey(workspace, name));
+            }
+            return db;
+        },
+    };
 }

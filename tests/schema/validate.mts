@@ -222,6 +222,20 @@ expect('update without dataRef', { data: [{ type: 'update', strategy: 'replace',
 expect('update with no rows in jsonObject', { data: [{ ...rows, jsonObject: [] }] }, false);
 expect('update with an empty id column', { data: [{ ...rows, strategy: 'update', idColumn: '' }] }, false);
 expect('update with a FeatureCollection of no features', { data: [{ type: 'update', dataRef: 'g', strategy: 'replace', geojsonObject: { type: 'FeatureCollection', features: [] } }] }, false);
+// after: 'compute' runs a source after the compute passes. Keys the schema does not name are allowed, so each refused
+// form is valid until the key is typed.
+const afterSources: Array<[string, Record<string, unknown>]> = [
+    ['osm', osm], ['csv', csv], ['json', { type: 'json', outputTableName: 'j', jsonFileUrl: 'rows.json' }],
+    ['geojson', { type: 'geojson', outputTableName: 'g', geojsonFileUrl: 'g.json' }],
+    ['geotiff', { type: 'geotiff', outputTableName: 'r', geotiffFileUrl: 'r.tif' }],
+    ['heatmap', heat], ['join', { type: 'join', dataRef: 't', joinDataRef: 'n' }], ['sql', sql],
+    ['update', rows], ['drop', { type: 'drop', dataRef: 'c' }],
+];
+for (const [kind, source] of afterSources) {
+    expect(`${kind} source after compute`, { data: [{ ...source, after: 'compute' }] }, true);
+    expect(`${kind} source after the map`, { data: [{ ...source, after: 'map' }] }, false);
+    expect(`${kind} source with after as a boolean`, { data: [{ ...source, after: true }] }, false);
+}
 expect('drop', { data: [csv, { type: 'drop', dataRef: 'c' }] }, true);
 expect('drop in a workspace', { data: [{ type: 'drop', dataRef: 'c', workspace: 'west' }] }, true);
 expect('drop without dataRef', { data: [{ type: 'drop' }] }, false);
@@ -546,6 +560,9 @@ const newKeys: Array<[string, string[]]> = [
     ['RenderComputeSpec', ['writeBack']],
     ['WindowsComputeSpec', ['writeBack']],
     ['ClustersComputeSpec', ['writeBack']],
+    ['SourcePhase', ['']],
+    ...['OsmDataSourceSpec', 'CsvDataSourceSpec', 'JsonDataSourceSpec', 'CustomDataSourceSpec', 'GeoTiffDataSourceSpec', 'HeatmapSourceSpec',
+        'JoinSourceSpec', 'SqlSourceSpec', 'UpdateSourceSpec', 'DropSourceSpec'].map((definition): [string, string[]] => [definition, ['after']]),
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

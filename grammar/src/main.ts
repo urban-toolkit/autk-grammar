@@ -1,4 +1,5 @@
 import { IEngine } from "./interfaces";
+import { dataPhases } from "./phases";
 import { UrbanSpec, EngineOptions } from "./types";
 
 export function createEngine(options: EngineOptions): IEngine{
@@ -10,20 +11,26 @@ export function createEngine(options: EngineOptions): IEngine{
 
     async function run() {
         let context: unknown;
+        // The sources of each phase, refused before anything runs.
+        const { before, after } = dataPhases(spec);
 
         // A workspace's CRS and grid are set before any table is loaded into it.
         if(spec.workspaces?.length && adapters.db.resolveWorkspaces)
             context = await adapters.db.resolveWorkspaces(context, spec.workspaces);
 
-        if(spec.data)
-            for(const source of spec.data) {
-                context = await adapters.db.resolveSource(context, source);
-            }
+        for(const source of before) {
+            context = await adapters.db.resolveSource(context, source);
+        }
 
         if(spec.compute)
             for(const compute of spec.compute) {
                 context = await adapters.compute.resolveCompute(context, compute);
             }
+
+        // The sources after compute read what the passes kept in the database.
+        for(const source of after) {
+            context = await adapters.db.resolveSource(context, source);
+        }
 
         if(spec.map){
             if(Array.isArray(spec.map))
