@@ -1963,10 +1963,10 @@ const pins: DataSourceSpec = {
 test("joins after compute into a table a pass wrote back, and from one by a compute column, and draws what the joins wrote", async ({ page }) => {
     await runSpec(page, {
         data: [
-            area, zones, fourSquares, pins,
-            // Listed before the passes and the sources they need, they run after all of them.
+            // Listed before the sources they read, the joins run after them and after the pass, in this order.
             { type: 'join', dataRef: 'squares', joinDataRef: 'pins', groupBy: [{ column: '*', aggregateFn: 'count' }], after: 'compute' },
             { type: 'join', dataRef: 'zones', joinDataRef: 'squares', groupBy: [{ column: 'compute.cluster', aggregateFn: 'max' }], after: 'compute' },
+            area, zones, fourSquares, pins,
         ],
         compute: [{ type: 'clusters', dataRef: 'squares', outputColumnName: 'cluster', writeBack: true }],
         map: [

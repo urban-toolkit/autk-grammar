@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import type { ComputeSpec, DataSourceSpec, UrbanSpec } from '../../grammar/src/types.ts';
 import { dataPhases } from '../../grammar/src/phases.ts';
 import { createEngine } from '../../grammar/src/main.ts';
+import { createDataAdapter as createDeckGlDataAdapter } from '../../adapters/deckgl/src/adapters/data.ts';
 
 const csv = (name: string, fields: object = {}) => ({ type: 'csv', outputTableName: name, csvFileUrl: `${name}.csv`, ...fields }) as DataSourceSpec;
 const join = (dataRef: string, joinDataRef: string, fields: object = {}) => ({ type: 'join', dataRef, joinDataRef, ...fields }) as DataSourceSpec;
@@ -100,6 +101,12 @@ test('the engine runs the sources before compute, then the passes, then the sour
     });
     await assert.rejects(refused.run(), /Data source 0 \(join\) runs after compute and reads "blocks"/);
     assert.deepEqual(calls, []);
+});
+
+test('the deck.gl adapter refuses a source after compute, since it runs no compute pass', async () => {
+    await assert.rejects(createDeckGlDataAdapter().resolveSource(undefined, csv('a', after)), {
+        message: 'csv data source: after is read by the Autark adapter only; the deck.gl adapter runs no compute pass for a source to come after.',
+    });
 });
 
 let failed = 0;
