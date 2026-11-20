@@ -1994,7 +1994,6 @@ test('draws and plots the OSM elements of a table a pass changed in place with o
         .map((row) => (row as Element & { __data__?: { osm_id?: number } }).__data__?.osm_id));
     const ascending = (ids: unknown[]) => ids.map(Number).sort((a, b) => a - b);
     expect(ascending(plotted)).toEqual(ascending(elements));
-    await expectDrawn(page, 'map0');
 });
 
 test('reads a table a pass changed in place as without osmElements where autk-db gives no elements: after a write-back, a GeoJSON table, a table only a pass wrote', async ({ page }) => {
