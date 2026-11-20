@@ -3,6 +3,7 @@ import type { CameraTour } from '@urban-toolkit/autk-grammar';
 import type { CameraMotionStep, CameraSpec, UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import { ColorMap } from '@urban-toolkit/autk-core';
 import type { ColorMapInterpolator, ColorRGB } from '@urban-toolkit/autk-core';
+import type { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkMap } from '@urban-toolkit/autk-map';
 import { PlotStyle } from '@urban-toolkit/autk-plot';
 import type { FeatureCollection, Geometry } from 'geojson';
@@ -83,6 +84,8 @@ declare global {
         exampleSpec: (name: string) => Promise<UrbanSpec>;
         valueAt: (table: string, index: number, path: string) => Promise<unknown>;
         featureExtents: (table: string) => Promise<number[][]>;
+        dbRows: (query: string) => Promise<Array<Record<string, unknown>>>;
+        dbLayer: (table: string, osmElements?: boolean) => Promise<FeatureCollection>;
         readMap: (canvasId: string) => Promise<string>;
         mapLayers: (canvasId: string) => LayerState[];
         drawnRows: (canvasId: string, layerId: string) => Array<Record<string, unknown> | null>;
@@ -272,6 +275,25 @@ window.featureExtents = async (table: string) => {
         return extent;
     });
 };
+
+/**
+ * The autk-db database of the last run. The grammar keeps it as its engine's context and does not expose it, so a test
+ * reads autk-db's own tables, apart from the grammar's caches, through it.
+ */
+function lastDb(): AutkDb {
+    const db = (window.grammar as unknown as { grammarEngine?: { context?: AutkDb } }).grammarEngine?.context;
+    if (!db) throw new Error('The last run made no database.');
+    return db;
+}
+
+/** The rows a SELECT over the last run's tables gives in autk-db, in the default workspace, with counts as numbers. */
+window.dbRows = async (query: string) => {
+    const rows = await lastDb().rawQuery({ query, output: { type: 'RETURN_OBJECT' } }) as Array<Record<string, unknown>>;
+    return rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, typeof value === 'bigint' ? Number(value) : value])));
+};
+
+/** A table as autk-db exports it, not as the grammar's caches hold it; with `osmElements`, one feature per OSM element. */
+window.dbLayer = (table: string, osmElements?: boolean) => lastDb().getLayer(table, osmElements ? { osmElements: true } : undefined);
 
 /**
  * Reads a map canvas as a PNG data URL, in the animation frame that draws the map.

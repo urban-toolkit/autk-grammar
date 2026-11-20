@@ -164,6 +164,15 @@ expect('clusters pass without outputColumnName', { compute: [(({ outputColumnNam
 expect('clusters pass without dataRef', { compute: [(({ dataRef, ...rest }) => rest)(clustersPass)] }, false);
 expect('clusters pass with outputColumnName as a number', { compute: [{ ...clustersPass, outputColumnName: 3 }] }, false);
 expect('clusters pass with an unknown layer type', { compute: [{ ...clustersPass, outputTableName: 'blocks', layerType: 'blocks' }] }, false);
+// writeBack keeps a pass's result in autk-db. Keys the schema does not name are allowed, so each refused form is valid
+// until the key is typed.
+for (const [kind, pass] of [['gpgpu', gpgpu], ['render', render], ['windows', windowsPass], ['clusters', clustersPass]] as const) {
+    expect(`${kind} pass with writeBack`, { compute: [{ ...pass, writeBack: true }] }, true);
+    expect(`${kind} pass with writeBack false`, { compute: [{ ...pass, writeBack: false }] }, true);
+    expect(`${kind} pass with writeBack as a string`, { compute: [{ ...pass, writeBack: 'yes' }] }, false);
+    expect(`${kind} pass with writeBack as a number`, { compute: [{ ...pass, writeBack: 1 }] }, false);
+}
+expect('clusters pass into a new table with writeBack', { compute: [{ ...clustersPass, outputTableName: 'blocks', writeBack: true }] }, true);
 const heat = { type: 'heatmap', outputTableName: 'h', joinDataRef: 'n', near: { distance: 500 }, grid: { rows: 10, columns: 10 } };
 expect('heatmap with useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: false } }] }, true);
 expect('heatmap with a non-boolean useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: 'no' } }] }, false);
@@ -533,6 +542,10 @@ const newKeys: Array<[string, string[]]> = [
     ['CameraMotionStep', ['']],
     ['WindowsComputeSpec', ['', 'type', 'workspace', 'dataRef', 'floors', 'outputTableName', 'layerType']],
     ['ClustersComputeSpec', ['', 'type', 'workspace', 'dataRef', 'outputColumnName', 'outputTableName', 'layerType']],
+    ['GpgpuComputeSpec', ['writeBack']],
+    ['RenderComputeSpec', ['writeBack']],
+    ['WindowsComputeSpec', ['writeBack']],
+    ['ClustersComputeSpec', ['writeBack']],
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {

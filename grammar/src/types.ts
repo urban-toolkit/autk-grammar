@@ -1049,8 +1049,8 @@ type GpgpuComputeBase = {
 }
 
 /**
- * Where a GPGPU or clusters pass writes its result. A render or windows pass declares its own `outputTableName` and
- * `layerType`.
+ * Where a GPGPU or clusters pass writes its result. A render or windows pass declares its own `outputTableName`,
+ * `layerType` and `writeBack`.
  */
 type ComputeOutput = {
     /**
@@ -1063,6 +1063,13 @@ type ComputeOutput = {
      * `outputTableName`.
      */
     layerType?: LayerType,
+    /**
+     * Also keep the result in autk-db, in the pass's workspace: as the table `outputTableName`, else in place of the
+     * `dataRef` table. autk-db keeps every row, each coordinate on the workspace's precision grid, so the sources that
+     * run after compute (`after: 'compute'`), such as a join, a heatmap, a `sql` source or an update, read the result
+     * there. Later passes, maps and plots read the result as they do without it. Read by the Autark adapter only.
+     */
+    writeBack?: boolean,
 }
 
 /**
@@ -1122,6 +1129,13 @@ export type RenderComputeSpec = {
      * `building-windows` strategy, whose result holds one point per window.
      */
     layerType?: LayerType,
+    /**
+     * Also keep the result in autk-db as the table `outputTableName`, in the pass's workspace. autk-db keeps every row,
+     * each coordinate on the workspace's precision grid, so the sources that run after compute (`after: 'compute'`),
+     * such as a join, a heatmap, a `sql` source or an update, read the result there. Later passes, maps and plots read
+     * the result as they do without it. Read by the Autark adapter only.
+     */
+    writeBack?: boolean,
     /**
      * Layers to render.
      * @minItems 1
@@ -1212,6 +1226,13 @@ export type WindowsComputeSpec = {
     outputTableName: string,
     /** How the map draws the new table. Defaults to `points`. */
     layerType?: LayerType,
+    /**
+     * Also keep the windows in autk-db as the table `outputTableName`, in the pass's workspace. autk-db keeps every
+     * window, each position on the workspace's precision grid, so the sources that run after compute
+     * (`after: 'compute'`), such as a join, a heatmap, a `sql` source or an update, read them there. Later passes, maps
+     * and plots read the windows as they do without it. Read by the Autark adapter only.
+     */
+    writeBack?: boolean,
 }
 
 /**

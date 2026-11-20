@@ -270,6 +270,7 @@ A GPGPU pass runs a WGSL function once per feature of a table:
 | `outputColumnName`, `outputColumns` | The column the function's result is written to, under `feature.properties.compute`, or the columns of a result of several values. |
 | `outputTableName` | A new table that receives the result, so `dataRef` stays as it is and later passes, maps and plots can read both. Without it, the pass writes into `dataRef`. |
 | `layerType` | How a map draws the new table. Defaults to the type of `dataRef`. Only used with `outputTableName`. |
+| `writeBack` | Also keep the result in autk-db (see [`writeBack`](#writeback)). |
 
 `attributeArrays` and `attributeMatrices` pass more of each feature's values, and `uniforms`, `uniformArrays` and `uniformMatrices` pass values every invocation shares. `uniforms` and `uniformMatrices` can read theirs from a feature of a table (see [Compute helpers](#compute-helpers)).
 
@@ -288,6 +289,7 @@ A render pass renders tables on the GPU from each viewpoint, in several directio
 | `aggregation` | `{ type: 'classes' }` writes the share of each feature's frame pixels that each layer type covers, from 0 to 1. `includeBackground: true` also counts the pixels no layer covers, such as the sky, as one more class, `backgroundLayerType` (`background` by default). `{ type: 'objects' }` writes, for each object seen, the share of the feature's frames that show it. |
 | `camera` | The lens of the frames: `fov`, the field of view of each square frame in degrees (90 by default), and `clip: { near, far }`, the nearest and farthest distances drawn, in workspace units (1 and 5000 by default). Unlike a map's `camera`, it sets no position or direction: `viewpoints` does. |
 | `tileSize` | The size of each frame in pixels, a multiple of 8. Defaults to 64. |
+| `writeBack` | Also keep the result in autk-db (see [`writeBack`](#writeback)). |
 
 ```ts
 await grammar.run({
@@ -313,6 +315,7 @@ A windows pass places the windows of a buildings table in a new table, one point
 | `floors` | The rows of windows on each facade, spread evenly up each building's height, as `viewpoints.strategy.floors` places them. autk-core rounds it down and places at least one row. |
 | `outputTableName` | The new table. Required. |
 | `layerType` | How a map draws it. Defaults to `points`. |
+| `writeBack` | Also keep the windows in autk-db (see [`writeBack`](#writeback)). |
 
 The windows are about 6 workspace units apart along each facade, one row a floor, each at the middle of its window: a point `[x, y, z]`, `z` its height above the ground. A building without a height is taken as 20 units high. Each window is a feature whose id is the window's, `windowId`, with these properties:
 
@@ -341,12 +344,27 @@ A clusters pass gives each row of a table the id of its cluster: rows whose geom
 | `outputColumnName` | The column the cluster ids are written to, under `feature.properties.compute`, as a GPGPU pass writes its result. |
 | `outputTableName` | A new table that receives the rows with their ids, so `dataRef` stays as it is. Without it, the pass writes into `dataRef`. |
 | `layerType` | How a map draws the new table. Defaults to the type of `dataRef`. Only used with `outputTableName`. |
+| `writeBack` | Also keep the result in autk-db (see [`writeBack`](#writeback)). |
 
 The ids are whole numbers from 0: the first row's cluster is 0, and each other cluster takes the next number in the order of its first row. A row without a geometry, or with an empty one, as a GeoJSON source loads a row whose geometry is null, is in no cluster: its id is `null`. Rows are told apart by their place in the table, not by their feature ids.
 
 ```ts
 compute: [{ type: 'clusters', dataRef: 'fidi_buildings', outputColumnName: 'block', outputTableName: 'fidi_blocks' }],
 map: { layerRefs: [{ dataRef: 'fidi_blocks', getFnv: 'compute.block', colorMapInterpolator: ColorMapInterpolator.CAT_TABLEAU10 }] },
+```
+
+### `writeBack`
+
+A pass of any type with `writeBack: true` also keeps its result in autk-db, in the pass's workspace, so that autk-db's own operations read it: a source that runs after compute, such as a join, a heatmap, a `sql` source or an update, and a host that reads autk-db after the run. Later passes, maps and plots read the result as they do without it.
+
+- **A new table**, a pass's `outputTableName` (a render or windows pass always has one): autk-db holds every row of the result, with its feature id and its properties, as a layer of the type a map draws it as. autk-db cuts a source it loads to the workspace's extent and crop layer, but not a result written back, so the windows of a building that reaches past the crop layer stay.
+- **In place**, a GPGPU or clusters pass without `outputTableName`: each row of autk-db's table takes the result's properties, matched by its feature id. The table keeps its other columns, and each building its parts. autk-db clears its records of an OSM table's elements, as it does on any update, so `osmElements` on that table then gives its rows.
+- autk-db puts each coordinate on the workspace's precision grid, as it does for every table, and keeps a point's height. A polygon's ring may then start at another of its vertices.
+
+A run refuses `writeBack` on a raster, and on a new table whose layer type it cannot tell, naming the pass. It also refuses a result autk-db does not then hold row for row.
+
+```ts
+compute: [{ type: 'clusters', dataRef: 'fidi_buildings', outputColumnName: 'block', outputTableName: 'fidi_blocks', writeBack: true }],
 ```
 
 ## Maps

@@ -1810,6 +1810,143 @@ test('writes the cluster of touching geometries to a column, in place or into a 
     expect(ids[0]).toBe(0);
 });
 
+// writeBack keeps a pass's result in autk-db too. window.dbRows and window.dbLayer read autk-db's own tables, apart from
+// the grammar's caches, which maps, plots and grammar.data read first.
+
+/** A square 0.001 degrees across, its south-west corner at (x, y), named `name`. */
+function squareAt(name: string, x: number, y: number) {
+    return {
+        type: 'Feature' as const,
+        properties: { name },
+        geometry: { type: 'Polygon' as const, coordinates: [[[x, y], [x + 0.001, y], [x + 0.001, y + 0.001], [x, y + 0.001], [x, y]]] },
+    };
+}
+
+/** Four squares inside `area`: a and b share an edge, c stands apart, and d touches c at a corner only. */
+const fourSquares: DataSourceSpec = {
+    type: 'geojson',
+    outputTableName: 'squares',
+    geojsonObject: {
+        type: 'FeatureCollection',
+        features: [squareAt('a', -73.99, 40.75), squareAt('b', -73.989, 40.75), squareAt('c', -73.985, 40.75), squareAt('d', -73.984, 40.751)],
+    },
+};
+
+/** The cluster each square of `table` has in autk-db, in its compute column `column`, by the square's name. */
+function clustersInDb(page: Page, table: string, column: string): Promise<Array<Record<string, unknown>>> {
+    return page.evaluate(([name, key]) => window.dbRows(
+        `SELECT properties->>'name' AS name, CAST(properties->'compute'->>'${key}' AS INTEGER) AS cluster FROM ${name} ORDER BY name`,
+    ), [table, column] as const);
+}
+
+test('keeps a pass\'s result in autk-db with writeBack, in place and as a new table, and only with it', async ({ page }) => {
+    const passes = (writeBack?: boolean): ComputeSpec[] => [
+        { type: 'clusters', dataRef: 'squares', outputColumnName: 'cluster', ...(writeBack !== undefined && { writeBack }) },
+        { type: 'clusters', dataRef: 'squares', outputColumnName: 'group', outputTableName: 'joined', ...(writeBack !== undefined && { writeBack }) },
+    ];
+    const tables = (name: string) => page.evaluate((table) => window.dbRows(`SELECT count(*) AS n FROM information_schema.tables WHERE table_name = '${table}'`), name);
+
+    // Without it, the results are in the grammar's cache alone: autk-db's squares have no cluster, and autk-db holds no
+    // table `joined`.
+    for (const writeBack of [undefined, false]) {
+        await runSpec(page, { data: [area, fourSquares], compute: passes(writeBack) });
+        expect(await valuesOf(page, 'squares', 4, 'compute.cluster')).toEqual([0, 0, 1, 1]);
+        expect(await clustersInDb(page, 'squares', 'cluster')).toEqual(['a', 'b', 'c', 'd'].map((name) => ({ name, cluster: null })));
+        expect(await tables('joined')).toEqual([{ n: 0 }]);
+    }
+
+    // With it, autk-db holds what the cache holds: the squares, each in its cluster, and the new table, which the second
+    // pass computed from the first's result, so it has both columns.
+    await runSpec(page, { data: [area, fourSquares], compute: passes(true) });
+    const clusters = [{ name: 'a', cluster: 0 }, { name: 'b', cluster: 0 }, { name: 'c', cluster: 1 }, { name: 'd', cluster: 1 }];
+    expect(await valuesOf(page, 'squares', 4, 'compute.cluster')).toEqual([0, 0, 1, 1]);
+    expect(await clustersInDb(page, 'squares', 'cluster')).toEqual(clusters);
+    expect(await clustersInDb(page, 'joined', 'group')).toEqual(clusters);
+    expect(await clustersInDb(page, 'joined', 'cluster')).toEqual(clusters);
+    // The squares keep their rows and properties, and the new table is a layer of the squares' type.
+    expect(await page.evaluate(() => window.dbRows("SELECT count(*) AS n, count(DISTINCT properties->>'name') AS names FROM squares"))).toEqual([{ n: 4, names: 4 }]);
+    expect(await page.evaluate(() => window.dbRows("SELECT ST_GeometryType(geometry) AS type, count(*) AS n FROM joined GROUP BY type"))).toEqual([{ type: 'POLYGON', n: 4 }]);
+});
+
+test('writes every window of a windows pass back, each on the workspace grid, though autk-db cuts a loaded table to the workspace', async ({ page }) => {
+    // A 1 m grid in Web Mercator. `site` is the first polygon table, so autk-db cuts each table a source loads after it
+    // to it. The east building reaches past the site's east edge; autk-db keeps a building whole.
+    const site: DataSourceSpec = {
+        type: 'geojson',
+        outputTableName: 'site',
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[-73.99, 40.75], [-73.985, 40.75], [-73.985, 40.753], [-73.99, 40.753], [-73.99, 40.75]]] } }],
+        },
+    };
+    const building = (x: number) => ({
+        type: 'Feature' as const,
+        properties: { height: 12 },
+        geometry: { type: 'Polygon' as const, coordinates: [[[x, 40.751], [x + 0.001, 40.751], [x + 0.001, 40.7515], [x, 40.7515], [x, 40.751]]] },
+    });
+    const buildings: DataSourceSpec = {
+        type: 'geojson',
+        outputTableName: 'buildings',
+        layerType: 'buildings',
+        geojsonObject: { type: 'FeatureCollection', features: [building(-73.989), building(-73.9855)] },
+    };
+    const workspaces = [{ coordinateFormat: 'EPSG:3857', precisionGrid: 1 }];
+    await runSpec(page, {
+        workspaces,
+        data: [site, buildings],
+        compute: [{ type: 'windows', dataRef: 'buildings', floors: 2, outputTableName: 'windows', writeBack: true }],
+    });
+    const windows = await page.evaluate(async () => await window.grammar.data.windows);
+    const positions = windows.features.map((feature) => (feature.geometry as { coordinates: number[] }).coordinates);
+
+    // autk-db holds every window, those outside the site too, each on the 1 m grid, where the pass placed many between.
+    expect(await page.evaluate(() => window.dbRows('SELECT count(*) AS n FROM windows'))).toEqual([{ n: windows.features.length }]);
+    const [{ outside }] = await page.evaluate(() =>
+        window.dbRows('SELECT count(*) AS outside FROM windows WHERE NOT ST_Intersects(geometry, (SELECT ST_Union_Agg(geometry) FROM site))'));
+    expect(outside, 'windows outside the site').toBeGreaterThan(0);
+    expect(positions.some(([x, y]) => !Number.isInteger(x) || !Number.isInteger(y)), 'windows off the grid in the cache').toBe(true);
+    expect(await page.evaluate(() =>
+        window.dbRows('SELECT count(*) AS n FROM windows WHERE ST_X(geometry) <> round(ST_X(geometry)) OR ST_Y(geometry) <> round(ST_Y(geometry))')))
+        .toEqual([{ n: 0 }]);
+
+    // Loaded by a source into the same workspace, the same windows are cut to the site, which writeBack does not do.
+    await runSpec(page, {
+        workspaces,
+        data: [site, buildings, { type: 'geojson', outputTableName: 'loaded', coordinateFormat: 'EPSG:3857', geojsonObject: windows as never }],
+    });
+    const [{ n: loaded }] = await page.evaluate(() => window.dbRows('SELECT count(*) AS n FROM loaded'));
+    expect(loaded, 'windows a source keeps').toBeGreaterThan(0);
+    expect(loaded, 'windows a source keeps').toBeLessThan(windows.features.length);
+});
+
+test('writes a pass back in place into an OSM table, which keeps its buildings, and whose element records autk-db clears', async ({ page }) => {
+    const spec = (writeBack: boolean): UrbanSpec => ({
+        ...boxSpec({ bbox: BOX }),
+        compute: [{ type: 'clusters', dataRef: 'box_buildings', outputColumnName: 'block', writeBack }],
+    });
+    /** The rows autk-db exports, or with osmElements its OSM elements: their ids, and each row's parts and block. */
+    const exported = (osmElements: boolean) => page.evaluate(async (elements) => (await window.dbLayer('box_buildings', elements)).features.map((feature) => ({
+        id: feature.id,
+        parts: feature.geometry?.type === 'GeometryCollection' ? feature.geometry.geometries.length : 1,
+        block: feature.properties?.compute?.block ?? null,
+    })), osmElements);
+
+    // Without writeBack, autk-db's table is the one it loaded: osmElements exports one feature per OSM element.
+    await runSpec(page, spec(false));
+    const rows = await exported(false);
+    expect(rows.every((row) => row.block === null)).toBe(true);
+    expect((await exported(true)).length, 'OSM elements').toBeGreaterThan(rows.length);
+
+    // With it, each building keeps its parts and gains the block the grammar's cache gives it.
+    await runSpec(page, spec(true));
+    const written = await exported(false);
+    const cached = await page.evaluate(async () => (await window.grammar.data.box_buildings).features.map((feature) => feature.properties?.compute?.block));
+    expect(written.map(({ id, parts }) => ({ id, parts }))).toEqual(rows.map(({ id, parts }) => ({ id, parts })));
+    expect(written.map((row) => row.block)).toEqual(cached);
+    // autk-db clears the records of the OSM elements on any update, so osmElements then exports the rows.
+    expect(await exported(true)).toEqual(written);
+});
+
 test('refuses a points layer in a render pass, and names the layer', async ({ page }) => {
     // autk-compute would skip it with only a warning. The schema refuses the type too.
     await expect(runSpec(page, {
