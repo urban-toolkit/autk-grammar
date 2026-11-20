@@ -1557,6 +1557,27 @@ test('loads a GeoTIFF as a raster layer', async ({ page }) => {
     await expectDrawn(page, 'map0');
 });
 
+test('draws a map whose only layer is a raster, from the middle of the raster, where autk-map 4.1.1 put its origin at [0, 0]', async ({ page }) => {
+    // autk-map draws every layer of a map from one origin, the middle of the geometries of the first collection it loads.
+    // A raster's one feature has no geometry, so autk-map before urban-toolkit/autark#125 put the origin at [0, 0], some
+    // 9,600 km from a raster of Manhattan, and drew an empty canvas.
+    await runSpec(page, { ...heatmapGeojson, map: { layerRefs: [{ dataRef: 'heatmap', getFnv: 'count.noise' }] } });
+    await expectDrawn(page, 'map0');
+    const [west, south, east, north] = await page.evaluate(() => window.handedBbox('map0', 'heatmap'));
+    expect(await page.evaluate(() => window.mapOrigin('map0'))).toEqual([(west + east) * 0.5, (south + north) * 0.5]);
+});
+
+test("keeps a map's origin where its first vector layer puts it, with a raster after it", async ({ page }) => {
+    // The origin comes from the first collection autk-map loads, so a raster after a vector layer leaves it there.
+    await runSpec(page, { ...heatmapGeojson, map: { layerRefs: [{ dataRef: 'noise' }] } });
+    const fromPoints = await page.evaluate(() => window.mapOrigin('map0'));
+    await runSpec(page, { ...heatmapGeojson, map: { layerRefs: [{ dataRef: 'noise' }, { dataRef: 'heatmap', getFnv: 'count.noise' }] } });
+    expect(await page.evaluate(() => window.mapOrigin('map0'))).toEqual(fromPoints);
+    // The raster's middle lies elsewhere, so the origin is the points' and not the raster's.
+    const [west, south, east, north] = await page.evaluate(() => window.handedBbox('map0', 'heatmap'));
+    expect(fromPoints).not.toEqual([(west + east) * 0.5, (south + north) * 0.5]);
+});
+
 test('draws the band of a raster that getFnv names, refuses one that names none of several, and draws a raster of one band', async ({ page }) => {
     // The temperature GeoTIFF holds 24 bands, one a year from 2001 to 2024. A name that matched no band drew band_1,
     // 2001's, without a word.
