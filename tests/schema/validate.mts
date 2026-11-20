@@ -164,6 +164,15 @@ expect('clusters pass without outputColumnName', { compute: [(({ outputColumnNam
 expect('clusters pass without dataRef', { compute: [(({ dataRef, ...rest }) => rest)(clustersPass)] }, false);
 expect('clusters pass with outputColumnName as a number', { compute: [{ ...clustersPass, outputColumnName: 3 }] }, false);
 expect('clusters pass with an unknown layer type', { compute: [{ ...clustersPass, outputTableName: 'blocks', layerType: 'blocks' }] }, false);
+// writeBack keeps a pass's result in autk-db. Keys the schema does not name are allowed, so each refused form is valid
+// until the key is typed.
+for (const [kind, pass] of [['gpgpu', gpgpu], ['render', render], ['windows', windowsPass], ['clusters', clustersPass]] as const) {
+    expect(`${kind} pass with writeBack`, { compute: [{ ...pass, writeBack: true }] }, true);
+    expect(`${kind} pass with writeBack false`, { compute: [{ ...pass, writeBack: false }] }, true);
+    expect(`${kind} pass with writeBack as a string`, { compute: [{ ...pass, writeBack: 'yes' }] }, false);
+    expect(`${kind} pass with writeBack as a number`, { compute: [{ ...pass, writeBack: 1 }] }, false);
+}
+expect('clusters pass into a new table with writeBack', { compute: [{ ...clustersPass, outputTableName: 'blocks', writeBack: true }] }, true);
 const heat = { type: 'heatmap', outputTableName: 'h', joinDataRef: 'n', near: { distance: 500 }, grid: { rows: 10, columns: 10 } };
 expect('heatmap with useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: false } }] }, true);
 expect('heatmap with a non-boolean useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: 'no' } }] }, false);
@@ -213,6 +222,20 @@ expect('update without dataRef', { data: [{ type: 'update', strategy: 'replace',
 expect('update with no rows in jsonObject', { data: [{ ...rows, jsonObject: [] }] }, false);
 expect('update with an empty id column', { data: [{ ...rows, strategy: 'update', idColumn: '' }] }, false);
 expect('update with a FeatureCollection of no features', { data: [{ type: 'update', dataRef: 'g', strategy: 'replace', geojsonObject: { type: 'FeatureCollection', features: [] } }] }, false);
+// after: 'compute' runs a source after the compute passes. Keys the schema does not name are allowed, so each refused
+// form is valid until the key is typed.
+const afterSources: Array<[string, Record<string, unknown>]> = [
+    ['osm', osm], ['csv', csv], ['json', { type: 'json', outputTableName: 'j', jsonFileUrl: 'rows.json' }],
+    ['geojson', { type: 'geojson', outputTableName: 'g', geojsonFileUrl: 'g.json' }],
+    ['geotiff', { type: 'geotiff', outputTableName: 'r', geotiffFileUrl: 'r.tif' }],
+    ['heatmap', heat], ['join', { type: 'join', dataRef: 't', joinDataRef: 'n' }], ['sql', sql],
+    ['update', rows], ['drop', { type: 'drop', dataRef: 'c' }],
+];
+for (const [kind, source] of afterSources) {
+    expect(`${kind} source after compute`, { data: [{ ...source, after: 'compute' }] }, true);
+    expect(`${kind} source after the map`, { data: [{ ...source, after: 'map' }] }, false);
+    expect(`${kind} source with after as a boolean`, { data: [{ ...source, after: true }] }, false);
+}
 expect('drop', { data: [csv, { type: 'drop', dataRef: 'c' }] }, true);
 expect('drop in a workspace', { data: [{ type: 'drop', dataRef: 'c', workspace: 'west' }] }, true);
 expect('drop without dataRef', { data: [{ type: 'drop' }] }, false);
@@ -533,6 +556,13 @@ const newKeys: Array<[string, string[]]> = [
     ['CameraMotionStep', ['']],
     ['WindowsComputeSpec', ['', 'type', 'workspace', 'dataRef', 'floors', 'outputTableName', 'layerType']],
     ['ClustersComputeSpec', ['', 'type', 'workspace', 'dataRef', 'outputColumnName', 'outputTableName', 'layerType']],
+    ['GpgpuComputeSpec', ['writeBack']],
+    ['RenderComputeSpec', ['writeBack']],
+    ['WindowsComputeSpec', ['writeBack']],
+    ['ClustersComputeSpec', ['writeBack']],
+    ['SourcePhase', ['']],
+    ...['OsmDataSourceSpec', 'CsvDataSourceSpec', 'JsonDataSourceSpec', 'CustomDataSourceSpec', 'GeoTiffDataSourceSpec', 'HeatmapSourceSpec',
+        'JoinSourceSpec', 'SqlSourceSpec', 'UpdateSourceSpec', 'DropSourceSpec'].map((definition): [string, string[]] => [definition, ['after']]),
 ];
 for (const [definition, paths] of newKeys) {
     for (const path of paths) {
