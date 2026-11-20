@@ -56,6 +56,18 @@ test('fromFeature reads index 0 by default, coerces numbers, and falls back to d
     assert.deepEqual(p.uniforms, { az: 135, second: 90, missing: 7 });
 });
 
+test("fromFeature reads a key with dots in it, as a join writes an aggregate under '<table>.<column>'", () => {
+    const blocks = fc([{ sjoin: { avg: { 'pins.w': 4 }, count: { pins: 3 } } }]);
+    const p = resolveComputeParams({
+        ...base,
+        uniforms: {
+            avg: { fromFeature: { layer: 'blocks', path: 'properties.sjoin.avg.pins.w' } },
+            count: { fromFeature: { layer: 'blocks', path: 'properties.sjoin.count.pins' } },
+        },
+    }, { roads: fc([{}]), blocks });
+    assert.deepEqual(p.uniforms, { avg: 4, count: 3 });
+});
+
 test('fromFeature matrix entry becomes { data, cols }', () => {
     const ring = [[0, 0], [2, 0], [2, 1], [0, 0]];
     const p = resolveComputeParams({

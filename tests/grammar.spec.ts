@@ -1241,6 +1241,28 @@ test('draws each line of a roads layer as wide as widthBy says, and a line witho
         .rejects.toThrow('Layer "Lanes": widthBy "lanes" gives no line of the layer a width: none has a positive number there.');
 });
 
+test("reads widthBy at a key with dots in it, as a join writes an aggregate under '<table>.<column>', as getFnv is read", async ({ page }) => {
+    // Three east-west lines, each with the width a join of pins would give it: sjoin.avg['pins.w'].
+    const joined: DataSourceSpec = {
+        type: 'geojson', outputTableName: 'lanes',
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [40, 120, 240].map((w, i) => ({
+                type: 'Feature' as const,
+                properties: { id: i, sjoin: { avg: { 'pins.w': w } } },
+                geometry: { type: 'LineString' as const, coordinates: [[-73.99, 40.748 - i * 0.003], [-73.975, 40.748 - i * 0.003]] },
+            })),
+        },
+    };
+    await runSpec(page, {
+        data: [area, joined],
+        map: { layerRefs: [{ dataRef: 'lanes', title: 'Lanes', layerType: 'roads', widthBy: 'sjoin.avg.pins.w' }] },
+    });
+    const drawn = await page.evaluate(() => window.drawnRows('map0', 'Lanes'));
+    const widths = (await layerById(page)).Lanes.polylinesWidthByComponent ?? [];
+    expect(Object.fromEntries(drawn.map((row, position) => [String(row?.id), widths[position]]))).toEqual({ 0: 40, 1: 120, 2: 240 });
+});
+
 test('colors two vector layers with different value ranges over one colorMapRange', async ({ page }) => {
     const twoLayers = (options: Partial<MapLayerSpec>): UrbanSpec => ({
         data: [area, zones, lots],
@@ -1810,6 +1832,236 @@ test('writes the cluster of touching geometries to a column, in place or into a 
     expect(ids[0]).toBe(0);
 });
 
+// writeBack keeps a pass's result in autk-db too. window.dbRows and window.dbLayer read autk-db's own tables, apart from
+// the grammar's caches, which maps, plots and grammar.data read first.
+
+/** A square 0.001 degrees across, its south-west corner at (x, y), named `name`. */
+function squareAt(name: string, x: number, y: number) {
+    return {
+        type: 'Feature' as const,
+        properties: { name },
+        geometry: { type: 'Polygon' as const, coordinates: [[[x, y], [x + 0.001, y], [x + 0.001, y + 0.001], [x, y + 0.001], [x, y]]] },
+    };
+}
+
+/** Four squares inside `area`: a and b share an edge, c stands apart, and d touches c at a corner only. */
+const fourSquares: DataSourceSpec = {
+    type: 'geojson',
+    outputTableName: 'squares',
+    geojsonObject: {
+        type: 'FeatureCollection',
+        features: [squareAt('a', -73.99, 40.75), squareAt('b', -73.989, 40.75), squareAt('c', -73.985, 40.75), squareAt('d', -73.984, 40.751)],
+    },
+};
+
+/** The cluster each square of `table` has in autk-db, in its compute column `column`, by the square's name. */
+function clustersInDb(page: Page, table: string, column: string): Promise<Array<Record<string, unknown>>> {
+    return page.evaluate(([name, key]) => window.dbRows(
+        `SELECT properties->>'name' AS name, CAST(properties->'compute'->>'${key}' AS INTEGER) AS cluster FROM ${name} ORDER BY name`,
+    ), [table, column] as const);
+}
+
+test('keeps a pass\'s result in autk-db with writeBack, in place and as a new table, and only with it', async ({ page }) => {
+    const passes = (writeBack?: boolean): ComputeSpec[] => [
+        { type: 'clusters', dataRef: 'squares', outputColumnName: 'cluster', ...(writeBack !== undefined && { writeBack }) },
+        { type: 'clusters', dataRef: 'squares', outputColumnName: 'group', outputTableName: 'joined', ...(writeBack !== undefined && { writeBack }) },
+    ];
+    const tables = (name: string) => page.evaluate((table) => window.dbRows(`SELECT count(*) AS n FROM information_schema.tables WHERE table_name = '${table}'`), name);
+
+    // Without it, the results are in the grammar's cache alone: autk-db's squares have no cluster, and autk-db holds no
+    // table `joined`.
+    for (const writeBack of [undefined, false]) {
+        await runSpec(page, { data: [area, fourSquares], compute: passes(writeBack) });
+        expect(await valuesOf(page, 'squares', 4, 'compute.cluster')).toEqual([0, 0, 1, 1]);
+        expect(await clustersInDb(page, 'squares', 'cluster')).toEqual(['a', 'b', 'c', 'd'].map((name) => ({ name, cluster: null })));
+        expect(await tables('joined')).toEqual([{ n: 0 }]);
+    }
+
+    // With it, autk-db holds what the cache holds: the squares, each in its cluster, and the new table, which the second
+    // pass computed from the first's result, so it has both columns.
+    await runSpec(page, { data: [area, fourSquares], compute: passes(true) });
+    const clusters = [{ name: 'a', cluster: 0 }, { name: 'b', cluster: 0 }, { name: 'c', cluster: 1 }, { name: 'd', cluster: 1 }];
+    expect(await valuesOf(page, 'squares', 4, 'compute.cluster')).toEqual([0, 0, 1, 1]);
+    expect(await clustersInDb(page, 'squares', 'cluster')).toEqual(clusters);
+    expect(await clustersInDb(page, 'joined', 'group')).toEqual(clusters);
+    expect(await clustersInDb(page, 'joined', 'cluster')).toEqual(clusters);
+    // The squares keep their rows and properties, and the new table is a layer of the squares' type.
+    expect(await page.evaluate(() => window.dbRows("SELECT count(*) AS n, count(DISTINCT properties->>'name') AS names FROM squares"))).toEqual([{ n: 4, names: 4 }]);
+    expect(await page.evaluate(() => window.dbRows("SELECT ST_GeometryType(geometry) AS type, count(*) AS n FROM joined GROUP BY type"))).toEqual([{ type: 'POLYGON', n: 4 }]);
+});
+
+test('writes every window of a windows pass back, each on the workspace grid, though autk-db cuts a loaded table to the workspace', async ({ page }) => {
+    // A 1 m grid in Web Mercator. `site` is the first polygon table, so autk-db cuts each table a source loads after it
+    // to it. The east building reaches past the site's east edge; autk-db keeps a building whole.
+    const site: DataSourceSpec = {
+        type: 'geojson',
+        outputTableName: 'site',
+        geojsonObject: {
+            type: 'FeatureCollection',
+            features: [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[[-73.99, 40.75], [-73.985, 40.75], [-73.985, 40.753], [-73.99, 40.753], [-73.99, 40.75]]] } }],
+        },
+    };
+    const building = (x: number) => ({
+        type: 'Feature' as const,
+        properties: { height: 12 },
+        geometry: { type: 'Polygon' as const, coordinates: [[[x, 40.751], [x + 0.001, 40.751], [x + 0.001, 40.7515], [x, 40.7515], [x, 40.751]]] },
+    });
+    const buildings: DataSourceSpec = {
+        type: 'geojson',
+        outputTableName: 'buildings',
+        layerType: 'buildings',
+        geojsonObject: { type: 'FeatureCollection', features: [building(-73.989), building(-73.9855)] },
+    };
+    const workspaces = [{ coordinateFormat: 'EPSG:3857', precisionGrid: 1 }];
+    await runSpec(page, {
+        workspaces,
+        data: [site, buildings],
+        compute: [{ type: 'windows', dataRef: 'buildings', floors: 2, outputTableName: 'windows', writeBack: true }],
+    });
+    const windows = await page.evaluate(async () => await window.grammar.data.windows);
+    const positions = windows.features.map((feature) => (feature.geometry as { coordinates: number[] }).coordinates);
+
+    // autk-db holds every window, those outside the site too, each on the 1 m grid, where the pass placed many between.
+    expect(await page.evaluate(() => window.dbRows('SELECT count(*) AS n FROM windows'))).toEqual([{ n: windows.features.length }]);
+    const [{ outside }] = await page.evaluate(() =>
+        window.dbRows('SELECT count(*) AS outside FROM windows WHERE NOT ST_Intersects(geometry, (SELECT ST_Union_Agg(geometry) FROM site))'));
+    expect(outside, 'windows outside the site').toBeGreaterThan(0);
+    expect(positions.some(([x, y]) => !Number.isInteger(x) || !Number.isInteger(y)), 'windows off the grid in the cache').toBe(true);
+    expect(await page.evaluate(() =>
+        window.dbRows('SELECT count(*) AS n FROM windows WHERE ST_X(geometry) <> round(ST_X(geometry)) OR ST_Y(geometry) <> round(ST_Y(geometry))')))
+        .toEqual([{ n: 0 }]);
+
+    // Loaded by a source into the same workspace, the same windows are cut to the site, which writeBack does not do.
+    await runSpec(page, {
+        workspaces,
+        data: [site, buildings, { type: 'geojson', outputTableName: 'loaded', coordinateFormat: 'EPSG:3857', geojsonObject: windows as never }],
+    });
+    const [{ n: loaded }] = await page.evaluate(() => window.dbRows('SELECT count(*) AS n FROM loaded'));
+    expect(loaded, 'windows a source keeps').toBeGreaterThan(0);
+    expect(loaded, 'windows a source keeps').toBeLessThan(windows.features.length);
+});
+
+test('writes a pass back in place into an OSM table, which keeps its buildings, and whose element records autk-db clears', async ({ page }) => {
+    const spec = (writeBack: boolean): UrbanSpec => ({
+        ...boxSpec({ bbox: BOX }),
+        compute: [{ type: 'clusters', dataRef: 'box_buildings', outputColumnName: 'block', writeBack }],
+    });
+    /** The rows autk-db exports, or with osmElements its OSM elements: their ids, and each row's parts and block. */
+    const exported = (osmElements: boolean) => page.evaluate(async (elements) => (await window.dbLayer('box_buildings', elements)).features.map((feature) => ({
+        id: feature.id,
+        parts: feature.geometry?.type === 'GeometryCollection' ? feature.geometry.geometries.length : 1,
+        block: feature.properties?.compute?.block ?? null,
+    })), osmElements);
+
+    // Without writeBack, autk-db's table is the one it loaded: osmElements exports one feature per OSM element.
+    await runSpec(page, spec(false));
+    const rows = await exported(false);
+    expect(rows.every((row) => row.block === null)).toBe(true);
+    expect((await exported(true)).length, 'OSM elements').toBeGreaterThan(rows.length);
+
+    // With it, each building keeps its parts and gains the block the grammar's cache gives it.
+    await runSpec(page, spec(true));
+    const written = await exported(false);
+    const cached = await page.evaluate(async () => (await window.grammar.data.box_buildings).features.map((feature) => feature.properties?.compute?.block));
+    expect(written.map(({ id, parts }) => ({ id, parts }))).toEqual(rows.map(({ id, parts }) => ({ id, parts })));
+    expect(written.map((row) => row.block)).toEqual(cached);
+    // autk-db clears the records of the OSM elements on any update, so osmElements then exports the rows.
+    expect(await exported(true)).toEqual(written);
+});
+
+// Sources with after: 'compute' run once every pass has run, and read what passes kept in autk-db with writeBack.
+
+/** Pins: two in square a, one in square c, none in b or d. */
+const pins: DataSourceSpec = {
+    type: 'geojson',
+    outputTableName: 'pins',
+    geojsonObject: {
+        type: 'FeatureCollection',
+        features: [[-73.9895, 40.7505], [-73.9894, 40.7506], [-73.9845, 40.7505]].map(([x, y]) =>
+            ({ type: 'Feature' as const, properties: {}, geometry: { type: 'Point' as const, coordinates: [x, y] } })),
+    },
+};
+
+test("joins after compute into a table a pass wrote back, and from one by a compute column, and draws what the joins wrote", async ({ page }) => {
+    await runSpec(page, {
+        data: [
+            // Listed before the sources they read, the joins run after them and after the pass, in this order.
+            { type: 'join', dataRef: 'squares', joinDataRef: 'pins', groupBy: [{ column: '*', aggregateFn: 'count' }], after: 'compute' },
+            { type: 'join', dataRef: 'zones', joinDataRef: 'squares', groupBy: [{ column: 'compute.cluster', aggregateFn: 'max' }], after: 'compute' },
+            area, zones, fourSquares, pins,
+        ],
+        compute: [{ type: 'clusters', dataRef: 'squares', outputColumnName: 'cluster', writeBack: true }],
+        map: [
+            { layerRefs: [{ dataRef: 'squares', getFnv: 'sjoin.count.pins' }] },
+            { layerRefs: [{ dataRef: 'zones', getFnv: 'sjoin.max.squares.compute.cluster' }] },
+        ],
+    });
+    // The squares hold the pass's clusters and the join's counts together: grammar.data and the map read autk-db's
+    // table, not the pass's result the join changed.
+    const squares = await page.evaluate(async () => Object.fromEntries((await window.grammar.data.squares).features.map((feature) =>
+        [feature.properties?.name, [feature.properties?.compute?.cluster, feature.properties?.sjoin?.count?.pins]])));
+    expect(squares).toEqual({ a: [0, 2], b: [0, 0], c: [1, 1], d: [1, 0] });
+    const drawn = await page.evaluate(() => window.drawnRows('map0', 'squares').map((row) =>
+        `${row?.name} ${(row?.compute as { cluster?: number })?.cluster} ${(row?.sjoin as { count?: { pins?: number } })?.count?.pins}`));
+    expect(drawn.sort()).toEqual(['a 0 2', 'b 0 0', 'c 1 1', 'd 1 0']);
+    // Zone 0 covers a and b, zone 1 c and d: the greatest cluster among the squares each covers, under the key autk-db
+    // writes, `<joinDataRef>.<column>`, which a layer's getFnv reads as a path.
+    const zoneClusters = await page.evaluate(async () => (await window.grammar.data.zones).features.map((feature) =>
+        [feature.properties?.id, feature.properties?.sjoin?.max?.['squares.compute.cluster'] ?? null]));
+    expect(zoneClusters.sort()).toEqual([[0, 0], [1, 1], [2, null], [3, null]]);
+    const zoneLayer = (await mapLayers(page, 'map1')).find((layer) => layer.id === 'zones');
+    expect([zoneLayer?.isColorMap, zoneLayer?.domain]).toEqual([true, [0, 1]]);
+});
+
+test('builds a heatmap after compute from the windows a pass wrote back', async ({ page }) => {
+    const buildings: DataSourceSpec = {
+        type: 'geojson',
+        outputTableName: 'buildings',
+        layerType: 'buildings',
+        geojsonObject: { type: 'FeatureCollection', features: [squareAt('north', -73.99, 40.76), squareAt('south', -73.98, 40.75)].map((feature) =>
+            ({ ...feature, properties: { ...feature.properties, height: 15 } })) },
+    };
+    await runSpec(page, {
+        data: [area, buildings, {
+            type: 'heatmap', outputTableName: 'heat', joinDataRef: 'windows', near: { distance: 10000 }, grid: { rows: 1, columns: 1 },
+            groupBy: [{ column: '*', aggregateFn: 'count' }], after: 'compute',
+        }],
+        compute: [{ type: 'windows', dataRef: 'buildings', floors: 2, outputTableName: 'windows', writeBack: true }],
+        map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'heat' }] },
+    });
+    // One cell, within reach of every window: it counts them all.
+    const windows = await page.evaluate(async () => (await window.grammar.data.windows).features.length);
+    expect(windows).toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.handedBand('map0', 'heat', 'band_1'))).toEqual([windows]);
+});
+
+test('queries a table a pass wrote back with a sql source after compute, and plots its rows', async ({ page }) => {
+    await runSpec(page, {
+        data: [area, fourSquares, {
+            type: 'sql',
+            outputTableName: 'sizes',
+            query: "SELECT CAST(properties->'compute'->>'block' AS INTEGER) AS block, CAST(count(*) AS INTEGER) AS squares FROM blocks GROUP BY block ORDER BY block",
+            after: 'compute',
+        }],
+        compute: [{ type: 'clusters', dataRef: 'squares', outputColumnName: 'block', outputTableName: 'blocks', writeBack: true }],
+        plot: { dataRef: 'sizes', mark: 'bar', axis: ['block', 'squares'] },
+    });
+    const bars = await page.evaluate(() => [...document.querySelectorAll('#plot rect.autkMark')]
+        .map((bar) => (bar as Element & { __data__?: { block?: number; squares?: number } }).__data__)
+        .map((datum) => `${datum?.block} ${datum?.squares}`));
+    expect(bars.sort()).toEqual(['0 2', '1 2']);
+});
+
+test('refuses a source after compute that reads a table a pass wrote without writeBack, and an after other than compute', async ({ page }) => {
+    const join: DataSourceSpec = { type: 'join', dataRef: 'squares', joinDataRef: 'pins', after: 'compute' };
+    await expect(runSpec(page, {
+        data: [area, fourSquares, pins, join],
+        compute: [{ type: 'clusters', dataRef: 'squares', outputColumnName: 'cluster' }],
+    })).rejects.toThrow('Data source 3 (join) runs after compute and reads "squares", which compute pass 0 writes without writeBack, so autk-db holds "squares" without that pass\'s result. Set writeBack: true on the pass.');
+    await expect(runSpec(page, { data: [area, { ...fourSquares, after: 'map' } as never] }))
+        .rejects.toThrow(`Data source 1 (geojson): after must be 'compute', the one phase a source runs after, not "map".`);
+});
+
 test('refuses a points layer in a render pass, and names the layer', async ({ page }) => {
     // autk-compute would skip it with only a warning. The schema refuses the type too.
     await expect(runSpec(page, {
@@ -1843,6 +2095,19 @@ test('refuses collect in a heatmap groupBy, naming the heatmap, and builds the h
         .rejects.toThrow('Heatmap "heat": aggregateFn "collect" lists the rows near a cell, and a cell holds one value; use sum, avg, count, min, max or weighted.');
     await runSpec(page, { data: [area, spots, heatmap('count')], map: { layerRefs: [{ dataRef: 'heat', getFnv: 'count.spots' }] } });
     expect((await mapLayers(page)).map((layer) => [layer.id, layer.type])).toEqual([['heat', 'raster']]);
+});
+
+test('counts the rows near each cell of a heatmap without groupBy, as with a count, which autk-db 4.1.1 drew as 0', async ({ page }) => {
+    // Each of the four cells is within 10 km of all nine spots.
+    const heatmap = (fields: object): DataSourceSpec => ({
+        type: 'heatmap', outputTableName: 'heat', joinDataRef: 'spots', near: { distance: 10000 }, grid: { rows: 2, columns: 2 }, ...fields,
+    }) as DataSourceSpec;
+    const cells = async (fields: object) => {
+        await runSpec(page, { data: [area, spots, heatmap(fields)], map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'heat' }] } });
+        return page.evaluate(() => window.handedBand('map0', 'heat', 'band_1'));
+    };
+    expect(await cells({ groupBy: [{ column: '*', aggregateFn: 'count' }] })).toEqual([9, 9, 9, 9]);
+    expect(await cells({})).toEqual([9, 9, 9, 9]);
 });
 
 test('accepts useCentroid on a heatmap', async ({ page }) => {
@@ -2559,6 +2824,25 @@ test('colors the buildings of building-clusters by the block of touching buildin
     expect(sourceBlocks, 'buildings with a block column').toBe(0);
     // The new table is drawn as its buildings are, colored by block.
     expect((await layerById(page))['Buildings that share walls']).toMatchObject({ type: 'buildings', isColorMap: true, interpolator: 'interpolateTurbo' });
+    await expectDrawn(page, 'map0');
+});
+
+test('charts the ten largest blocks of largest-blocks, counted in autk-db after its clusters pass, and maps every block', async ({ page }) => {
+    await run(page, 'largest-blocks');
+    // The ten largest blocks of the pass's result, as the grammar keeps it, most buildings first, then by block.
+    const blocks = await page.evaluate(async () => (await window.grammar.data.fidi_blocks).features.map((feature) => feature.properties?.compute?.block as number));
+    const sizes = new Map<number, number>();
+    for (const block of blocks) sizes.set(block, (sizes.get(block) ?? 0) + 1);
+    const largest = [...sizes].sort(([a, n], [b, m]) => m - n || a - b).slice(0, 10).map(([block, n]) => `block ${block} ${n}`);
+    expect(largest).toHaveLength(10);
+    expect(sizes.get(Number(largest[0].split(' ')[1])), 'a block of several buildings').toBeGreaterThan(1);
+    // The chart draws the rows the sql source counted in autk-db's copy of that result: the same ten.
+    const bars = await page.evaluate(() => [...document.querySelectorAll('#plot rect.autkMark')]
+        .map((bar) => (bar as Element & { __data__?: { block?: string; buildings?: number } }).__data__)
+        .map((datum) => `${datum?.block} ${datum?.buildings}`));
+    expect(bars.sort()).toEqual([...largest].sort());
+    expect(await page.evaluate(() => window.plotAxisTitles())).toEqual(['Block', 'Buildings']);
+    expect((await layerById(page))['Blocks of touching buildings']).toMatchObject({ type: 'buildings', isColorMap: true });
     await expectDrawn(page, 'map0');
 });
 

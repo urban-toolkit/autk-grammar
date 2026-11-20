@@ -68,6 +68,14 @@ test('the built files import autk-db and nothing of autk-map, autk-plot, autk-co
     }
 });
 
+test("both builds export dataPhases, which splits a spec's sources into those before compute and those after", async () => {
+    for (const [build, { dataPhases }] of await loaded()) {
+        const before = { type: 'csv', outputTableName: 'a', csvFileUrl: 'a.csv' } as const;
+        const later = { type: 'csv', outputTableName: 'b', csvFileUrl: 'b.csv', after: 'compute' } as const;
+        assert.deepEqual(dataPhases({ data: [later, before] }), { before: [before], after: [later] }, build);
+    }
+});
+
 test("tableKey names a table by its name in the default workspace, and <workspace>/<name> in another", async () => {
     for (const [build, { tableKey }] of await loaded()) {
         assert.equal(tableKey(undefined, 'roads'), 'roads', build);

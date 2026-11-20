@@ -160,6 +160,8 @@ export function createDataAdapter(targets?: Targets, cache?: Map<string, Feature
         async resolveSource(context: unknown, spec: DataSourceSpec): Promise<DeckGlDb> {
             const db = (context instanceof DeckGlDb) ? context : new DeckGlDb();
             const { type, ...rest } = spec;
+            if (spec.after !== undefined)
+                throw new Error(`${type} data source: after is read by the Autark adapter only; the deck.gl adapter runs no compute pass for a source to come after.`);
 
             switch (type) {
                 case 'geojson': {

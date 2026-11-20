@@ -312,6 +312,46 @@ test("a heatmap hands autk-db each band's normalize", async () => {
     ]);
 });
 
+test('a heatmap without groupBy hands autk-db the count its one band holds, which autk-db 4.1.1 built as 0 without it', async () => {
+    const heatmap = { type: 'heatmap', outputTableName: 'heat', joinDataRef: 'noise', near: { distance: 500 }, grid: { rows: 4, columns: 4 } };
+    const count = [{ column: '*', aggregateFn: 'count' }];
+    for (const fields of [{}, { groupBy: [] }]) {
+        assert.deepEqual(await callsFor({ ...heatmap, ...fields }), [
+            ['buildHeatmap', { tableJoinName: 'noise', near: { distance: 500 }, outputTableName: 'heat', grid: { rows: 4, columns: 4 }, groupBy: count }],
+        ]);
+    }
+});
+
+// Sources after compute: the same calls, and the tables they write leave the compute adapter's caches.
+test('a source after compute hands autk-db the fields it reads, never after', async () => {
+    assert.deepEqual(await callsFor({ type: 'csv', outputTableName: 'c', csvFileUrl: 'rows.csv', after: 'compute' }),
+        [['loadCsv', { outputTableName: 'c', csvFileUrl: 'rows.csv' }]]);
+    assert.deepEqual(await callsFor({ type: 'drop', dataRef: 'c', after: 'compute' }, [{ name: 'c', type: 'points' }]), [['removeLayer', 'c']]);
+});
+
+test("each table a source writes leaves the compute adapter's caches, and the others stay", async () => {
+    const written: Array<[unknown, string[]]> = [
+        [{ type: 'join', dataRef: 'blocks', joinDataRef: 'pins', after: 'compute' }, ['blocks']],
+        [{ type: 'sql', outputTableName: 's', query: 'SELECT 1', after: 'compute' }, ['s']],
+        [{ type: 'update', dataRef: 'blocks', strategy: 'replace', jsonObject: [{ a: 1 }] }, ['blocks']],
+        [{ type: 'drop', dataRef: 'blocks' }, ['blocks']],
+        [{ type: 'heatmap', outputTableName: 'h', joinDataRef: 'pins', near: { distance: 1 }, grid: { rows: 1, columns: 1 } }, ['h']],
+        [{ ...osm, outputTableName: 'box', autoLoadLayers: { layers: ['roads', 'buildings'] }, tagSets }, ['box_roads', 'box_buildings', 'box_cafes_points', 'box_paths_polylines']],
+        [{ type: 'join', dataRef: 'blocks', joinDataRef: 'pins', workspace: 'west' }, ['west/blocks']],
+    ];
+    const names = ['blocks', 'pins', 's', 'h', 'box_roads', 'box_buildings', 'box_cafes_points', 'box_paths_polylines', 'west/blocks'];
+    for (const [source, gone] of written) {
+        const computeCache = new Map(names.map((name) => [name, emptyCollection()]));
+        const computeTypes = new Map(names.map((name) => [name, 'polygons' as const]));
+        const { db } = fakeDb([{ name: 'blocks', type: 'polygons' }, { name: 'pins', type: 'points' }]);
+        (db as unknown as Record<string, unknown>).spatialQuery = async () => {};
+        await createDataAdapter(undefined, undefined, computeCache, computeTypes).resolveSource(db, source as DataSourceSpec);
+        const kept = names.filter((name) => !gone.includes(name));
+        assert.deepEqual([...computeCache.keys()], kept, JSON.stringify(source));
+        assert.deepEqual([...computeTypes.keys()], kept, JSON.stringify(source));
+    }
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
     try { await fn(); console.log(`ok ${name}`); }

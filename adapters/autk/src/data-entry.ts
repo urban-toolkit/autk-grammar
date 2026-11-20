@@ -5,10 +5,14 @@
  */
 export { createDataAdapter } from './adapters/data';
 export { enterWorkspace, tableKey } from './workspace';
-export type { Targets, GeoJsonCache } from './types';
+// The sources a spec runs before its compute passes and after them, which a host that runs the passes elsewhere splits.
+export { dataPhases } from '@urban-toolkit/the-urban-grammar';
+export type { Targets, GeoJsonCache, ComputeCache, ComputeLayerTypes } from './types';
 export type {
     DataAdapter,
+    DataPhases,
     DataSourceSpec,
+    SourcePhase,
     OsmDataSourceSpec,
     OsmTagSet,
     OsmTagFilter,

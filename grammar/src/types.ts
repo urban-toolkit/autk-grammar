@@ -34,6 +34,14 @@ export type WorkspaceSpec = {
 }
 
 /**
+ * When a source runs: `'compute'` runs it once every compute pass has run, instead of before them, so it reads the
+ * tables passes kept in autk-db with `writeBack`. The sources with it run in the order of `data`, after those without
+ * it. A run refuses a source after compute that reads a table a compute pass writes without `writeBack`, since autk-db
+ * holds that table without the pass's result. Read by the Autark adapter only.
+ */
+export type SourcePhase = 'compute';
+
+/**
  * Fields every table-producing data source shares.
  */
 export interface TableSourceBase {
@@ -41,6 +49,8 @@ export interface TableSourceBase {
     outputTableName: string
     /** Workspace the table is created in. */
     workspace?: WorkspaceName
+    /** Run the source after the compute passes. */
+    after?: SourcePhase
 }
 
 /**
@@ -59,6 +69,8 @@ export interface JoinSourceSpec {
     type: 'join';
     /** Workspace of the two tables. */
     workspace?: WorkspaceName;
+    /** Run the join after the compute passes. */
+    after?: SourcePhase;
     /** Table that receives the joined columns. */
     dataRef: string;
     /** Table whose rows are joined onto the root table. */
@@ -98,7 +110,7 @@ export interface HeatmapSourceSpec extends TableSourceBase {
          */
         useCentroid?: boolean;
     };
-    /** Aggregate the rows near each cell, one raster band per entry. */
+    /** Aggregate the rows near each cell, one raster band per entry. Without it, one band counts the rows near each cell. */
     groupBy?: Array<{
         column: string;
         /** How the rows combine into the cell's value: any aggregate but `collect`, which lists rows, while a cell holds one value. */
@@ -408,6 +420,8 @@ export interface UpdateSourceSpec {
     type: 'update';
     /** Workspace of the table. */
     workspace?: WorkspaceName;
+    /** Run the update after the compute passes. */
+    after?: SourcePhase;
     /** The table to change. */
     dataRef: string;
     /**
@@ -442,6 +456,8 @@ export interface DropSourceSpec {
     type: 'drop';
     /** Workspace of the table. */
     workspace?: WorkspaceName;
+    /** Run the drop after the compute passes. */
+    after?: SourcePhase;
     /** The table to drop. */
     dataRef: string;
 }
@@ -1049,8 +1065,8 @@ type GpgpuComputeBase = {
 }
 
 /**
- * Where a GPGPU or clusters pass writes its result. A render or windows pass declares its own `outputTableName` and
- * `layerType`.
+ * Where a GPGPU or clusters pass writes its result. A render or windows pass declares its own `outputTableName`,
+ * `layerType` and `writeBack`.
  */
 type ComputeOutput = {
     /**
@@ -1063,6 +1079,13 @@ type ComputeOutput = {
      * `outputTableName`.
      */
     layerType?: LayerType,
+    /**
+     * Also keep the result in autk-db, in the pass's workspace: as the table `outputTableName`, else in place of the
+     * `dataRef` table. autk-db keeps every row, each coordinate on the workspace's precision grid, so the sources that
+     * run after compute (`after: 'compute'`), such as a join, a heatmap, a `sql` source or an update, read the result
+     * there. Later passes, maps and plots read the result as they do without it. Read by the Autark adapter only.
+     */
+    writeBack?: boolean,
 }
 
 /**
@@ -1122,6 +1145,13 @@ export type RenderComputeSpec = {
      * `building-windows` strategy, whose result holds one point per window.
      */
     layerType?: LayerType,
+    /**
+     * Also keep the result in autk-db as the table `outputTableName`, in the pass's workspace. autk-db keeps every row,
+     * each coordinate on the workspace's precision grid, so the sources that run after compute (`after: 'compute'`),
+     * such as a join, a heatmap, a `sql` source or an update, read the result there. Later passes, maps and plots read
+     * the result as they do without it. Read by the Autark adapter only.
+     */
+    writeBack?: boolean,
     /**
      * Layers to render.
      * @minItems 1
@@ -1212,6 +1242,13 @@ export type WindowsComputeSpec = {
     outputTableName: string,
     /** How the map draws the new table. Defaults to `points`. */
     layerType?: LayerType,
+    /**
+     * Also keep the windows in autk-db as the table `outputTableName`, in the pass's workspace. autk-db keeps every
+     * window, each position on the workspace's precision grid, so the sources that run after compute
+     * (`after: 'compute'`), such as a join, a heatmap, a `sql` source or an update, read them there. Later passes, maps
+     * and plots read the windows as they do without it. Read by the Autark adapter only.
+     */
+    writeBack?: boolean,
 }
 
 /**
@@ -1296,9 +1333,9 @@ export type UrbanSpec = {
      * without an entry keeps autk-db's CRS and grid. Read by the Autark adapter only.
      */
     workspaces?: WorkspaceSpec[],
-    /** Tables to load, in order. */
+    /** Tables to load, in order: those without `after` before the compute passes, those with `after: 'compute'` after them. */
     data?: DataSourceSpec[],
-    /** Compute passes, run in order after the data is loaded. */
+    /** Compute passes, run in order once the data sources without `after` are loaded. */
     compute?: ComputeSpec[],
     /** One map, or several. */
     map?: MapSpec[] | MapSpec,

@@ -71,7 +71,7 @@ export class AutkGrammar {
     readonly interactions = new GrammarEventEmitter();
 
     constructor(targets?: Targets) {
-        this.dataAdapter = createDataAdapter(targets, this._geojsonCache);
+        this.dataAdapter = createDataAdapter(targets, this._geojsonCache, this._computeCache, this._computeTypes);
         this.mapAdapter = createMapAdapter(targets, this._layers, this._computeCache, this._maps, this._computeTypes, this._exports);
         this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, this._geojsonCache, this._computeCache, this._plotRows, this._exports);
         this.computeAdapter = createComputeAdapter(this._computeCache, this._computeTypes, this._geojsonCache);

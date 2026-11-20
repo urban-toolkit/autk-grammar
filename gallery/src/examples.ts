@@ -404,4 +404,10 @@ export const EXAMPLES: Record<string, ExampleMeta> = {
         supportedAdapters: ['autk'],
         load: () => import('./examples/building-clusters'),
     },
+    'largest-blocks': {
+        title: 'Compute, Then SQL: The Ten Largest Blocks',
+        layout: 'map+plot',
+        supportedAdapters: ['autk'],
+        load: () => import('./examples/largest-blocks'),
+    },
 };

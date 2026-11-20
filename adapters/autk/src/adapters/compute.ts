@@ -7,6 +7,7 @@ import { ComputeCache, ComputeLayerTypes, GeoJsonCache } from '../types';
 import { computeLayerNames, runCompute } from '../compute-params';
 import { clustersTable, windowsTable } from '../compute-tables';
 import { enterWorkspace, inWorkspaceCrs, tableKey } from '../workspace';
+import { writeBack } from '../write-back';
 
 /**
  * The layer types a render pass draws. autk-compute skips a layer of any other type, points among them, with only a
@@ -27,9 +28,10 @@ function layerTypeOf(db: AutkDb, name: string, workspace: string | undefined, ty
  * pass's workspace, which it leaves current: a GPGPU pass or a render pass on autk-compute, or a windows or clusters
  * pass on the CPU through autk-core. It does nothing without a database.
  *
- * A host calls it to run compute passes exactly as the grammar does. GPGPU and render passes need WebGPU, and results are
- * kept only in the caches: `cache` receives each pass's result under {@link tableKey} of its `outputTableName`, or of
- * the table it computed over, and a later pass reads a table from it first. `types` receives the layer type of each
+ * A host calls it to run compute passes exactly as the grammar does. GPGPU and render passes need WebGPU. Results are
+ * kept in the caches, and in autk-db too for a pass with `writeBack`: `cache` receives each pass's result under
+ * {@link tableKey} of its `outputTableName`, or of the table it computed over, and a later pass reads a table from it
+ * first. `types` receives the layer type of each
  * table a pass wrote under its own `outputTableName`, which a map needs to draw it. `sources` is the cache the data
  * adapter fills: a pass reads a `fromFeature` table from it next, as its plots read theirs, when a GeoJSON source put
  * the table there with its coordinates in the workspace's CRS.
@@ -42,17 +44,19 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
     }
 
     /**
-     * Stores a pass's result under `outputTableName`, or, without it, in place of the table `source`. A map draws a
+     * Stores a pass's result under `outputTableName`, or, without it, in place of the table `source`, and with
+     * `writeBack` keeps it in autk-db too (see {@link writeBack}; `label` names the pass in a refusal). A map draws a
      * new table as the spec's `layerType` says, else as `resultType`, else as it draws `source`.
      */
-    function store(
-        db: AutkDb, result: FeatureCollection, source: string,
-        spec: { workspace?: WorkspaceName; outputTableName?: string; layerType?: LayerType }, resultType?: LayerType,
-    ): void {
-        if (!cache) return;
+    async function store(
+        db: AutkDb, result: FeatureCollection, source: string, label: string,
+        spec: { workspace?: WorkspaceName; outputTableName?: string; layerType?: LayerType; writeBack?: boolean }, resultType?: LayerType,
+    ): Promise<void> {
         const name = spec.outputTableName ?? source;
-        cache.set(tableKey(spec.workspace, name), result);
         const type = spec.layerType ?? resultType ?? layerTypeOf(db, source, spec.workspace, types);
+        if (spec.writeBack) await writeBack(db, label, name, result, type, spec.outputTableName === undefined);
+        if (!cache) return;
+        cache.set(tableKey(spec.workspace, name), result);
         if (spec.outputTableName && type) types?.set(tableKey(spec.workspace, name), type);
     }
 
@@ -82,7 +86,8 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
         });
 
         // With `building-windows` the result holds one point per window, not the viewpoints' features.
-        store(db, result, spec.viewpoints.dataRef, spec, spec.viewpoints.strategy?.type === 'building-windows' ? 'points' : undefined);
+        await store(db, result, spec.viewpoints.dataRef, `Render pass "${spec.outputTableName}"`, spec,
+            spec.viewpoints.strategy?.type === 'building-windows' ? 'points' : undefined);
     }
 
     async function resolveWindows(db: AutkDb, spec: WindowsComputeSpec): Promise<void> {
@@ -98,7 +103,7 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
         } catch (error) {
             throw refuse(`autk-core places no windows on "${spec.dataRef}": ${error instanceof Error ? error.message : String(error)}`);
         }
-        store(db, windows, spec.dataRef, spec, 'points');
+        await store(db, windows, spec.dataRef, `Windows pass "${spec.outputTableName}"`, spec, 'points');
     }
 
     async function resolveClusters(db: AutkDb, spec: ClustersComputeSpec): Promise<void> {
@@ -106,7 +111,7 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
             throw new Error(`Clusters pass over "${spec.dataRef}": outputColumnName must name the column of the cluster ids, not ${JSON.stringify(spec.outputColumnName)}.`);
         // The table is read as a GPGPU pass reads its own: as an earlier pass wrote it, else as autk-db keeps it.
         const table = await read(db, spec.dataRef, spec.workspace);
-        store(db, clustersTable(table, spec.outputColumnName), spec.dataRef, spec);
+        await store(db, clustersTable(table, spec.outputColumnName), spec.dataRef, `Clusters pass over "${spec.dataRef}"`, spec);
     }
 
     async function resolveGpgpu(db: AutkDb, spec: GpgpuComputeSpec): Promise<void> {
@@ -133,7 +138,7 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
         const engine = new AutkComputeEngine();
         const result = await runCompute(spec, layers, params => engine.gpgpuPipeline(params));
 
-        store(db, result, spec.dataRef, spec);
+        await store(db, result, spec.dataRef, `GPGPU pass over "${spec.dataRef}"`, spec);
     }
 
     return {
