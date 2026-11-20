@@ -64,6 +64,9 @@ async function expectDrawn(page: Page, canvasId: string, minColors = 8) {
 }
 
 test('loads CSV and JSON sources', async ({ page }) => {
+    // DuckDB loads its extensions (spatial, then json) from extensions.duckdb.org. A run must not need that host, so this
+    // run has it out of reach: every request to it fails as if the runner were offline.
+    await page.context().route('https://extensions.duckdb.org/**', (route) => route.abort('internetdisconnected'));
     const { tables } = await run(page, 'load-multiple');
     expect(tables.noise.features).toBeGreaterThan(1000);
     expect(tables.noise.properties).toContain('Unique Key');
