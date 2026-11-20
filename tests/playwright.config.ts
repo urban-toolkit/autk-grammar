@@ -31,6 +31,8 @@ const linuxGpuArgs = [
 export default defineConfig({
     testDir: '.',
     testMatch: '*.spec.ts',
+    // Fetches the DuckDB extensions the tests serve the page that the copy does not hold yet (see duckdb-extensions.ts).
+    globalSetup: './duckdb-extensions.ts',
     outputDir: 'test-results',
     timeout: 180_000,
     expect: { timeout: 30_000 },
