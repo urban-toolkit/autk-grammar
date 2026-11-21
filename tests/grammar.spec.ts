@@ -2238,6 +2238,56 @@ test("runs passes written back and sources after compute on a database the host 
     ranWidths.forEach((width, i) => expect(width as number).toBeCloseTo(widths[i] as number, 3));
 });
 
+// A host made AutkGrammar with adapters of its own around the grammar's (wrapDataAdapter and wrapComputeAdapter), which
+// every run calls instead. window.runWrapped makes them: they record what goes through them and hand it on, the data
+// adapter handing the grammar's a database the page made.
+
+test("sends a run's workspaces, every source and every pass through a host's own adapters around the grammar's, on the host's database", async ({ page }) => {
+    const spec: UrbanSpec = {
+        // autk-db's own CRS and grid for the default workspace, so the run sets up its workspaces and draws as without them.
+        workspaces: [{ coordinateFormat: 'EPSG:3395', precisionGrid: 0.01 }],
+        data: [
+            // Listed first, the sources after compute run once both passes have, in this order.
+            { type: 'join', dataRef: 'squares', joinDataRef: 'pins', groupBy: [{ column: '*', aggregateFn: 'count' }], after: 'compute' },
+            area, fourSquares, pins,
+            {
+                type: 'sql', outputTableName: 'sizes', after: 'compute',
+                query: "SELECT CAST(properties->'compute'->>'block' AS INTEGER) AS block, CAST(count(*) AS INTEGER) AS squares FROM blocks GROUP BY block ORDER BY block",
+            },
+        ],
+        compute: [
+            { type: 'clusters', dataRef: 'squares', outputColumnName: 'cluster', writeBack: true },
+            { type: 'clusters', dataRef: 'squares', outputColumnName: 'block', outputTableName: 'blocks', writeBack: true },
+        ],
+        map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'squares', getFnv: 'sjoin.count.pins' }] },
+    };
+    const seen = await page.evaluate((s) => window.runWrapped(s), spec);
+
+    // Each wrap function was called once, as the grammar was made.
+    expect([...seen.wrapped].sort()).toEqual(['compute', 'data']);
+    // The workspaces, every source and every pass went through the host's adapters once each, in the order the engine
+    // runs them: the sources before compute in the order of data, the passes, then the sources after compute.
+    expect(seen.steps).toEqual([
+        'workspaces',
+        'source geojson area', 'source geojson squares', 'source geojson pins',
+        'pass clusters squares', 'pass clusters blocks',
+        'source join squares', 'source sql sizes',
+    ]);
+    // The run went on with the database the host's data adapter handed the grammar's, which holds the run's tables.
+    expect(seen.onHostDb).toBe(true);
+    expect(await page.evaluate(() => window.hostRows('SELECT block, squares FROM sizes ORDER BY block')))
+        .toEqual([{ block: 0, squares: 2 }, { block: 1, squares: 2 }]);
+    // The grammar's own adapters ran inside the host's: the map draws each square with the pass's cluster and the join's
+    // count of pins, as a run without the host's adapters draws them.
+    const drawn = await page.evaluate(() => window.drawnRows('map0', 'squares').map((row) =>
+        `${row?.name} ${(row?.compute as { cluster?: number } | undefined)?.cluster} ${(row?.sjoin as { count?: { pins?: number } } | undefined)?.count?.pins}`));
+    expect(drawn.sort()).toEqual(['a 0 2', 'b 0 0', 'c 1 1', 'd 1 0']);
+    await runSpec(page, spec);
+    const unwrapped = await page.evaluate(() => window.drawnRows('map0', 'squares').map((row) =>
+        `${row?.name} ${(row?.compute as { cluster?: number } | undefined)?.cluster} ${(row?.sjoin as { count?: { pins?: number } } | undefined)?.count?.pins}`));
+    expect(unwrapped.sort()).toEqual(drawn);
+});
+
 test('refuses a points layer in a render pass, and names the layer', async ({ page }) => {
     // autk-compute would skip it with only a warning. The schema refuses the type too.
     await expect(runSpec(page, {

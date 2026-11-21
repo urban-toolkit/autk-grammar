@@ -1,7 +1,7 @@
 import { AutkGrammar, applyCamera, playCameraMotion } from '@urban-toolkit/autk-grammar';
 // The whole entry, for the exports a test reads at its call (runOnHostDb), so the page loads with a grammar that lacks one.
 import * as grammarEntry from '@urban-toolkit/autk-grammar';
-import type { CameraTour } from '@urban-toolkit/autk-grammar';
+import type { AutkGrammarOptions, CameraTour, Targets } from '@urban-toolkit/autk-grammar';
 import type { CameraMotionStep, CameraSpec, UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import { ColorMap } from '@urban-toolkit/autk-core';
 import type { ColorMapInterpolator, ColorRGB } from '@urban-toolkit/autk-core';
@@ -73,6 +73,13 @@ export type ComputedRows = { layerType: string | null; rows: Array<Record<string
 /** What `ComputeSteps.computed` gives for each table a test names, once the passes have run and once the sources after compute have. */
 export type HostRun = { afterPasses: Record<string, ComputedRows>; atEnd: Record<string, ComputedRows> };
 
+/**
+ * What a host's own adapters around the grammar's saw of a run (`window.runWrapped`): each call of the wrap functions,
+ * each workspace, source and pass the run sent through them, in order, and whether the run went on with the database
+ * the host's data adapter handed the grammar's.
+ */
+export type WrappedRun = { wrapped: string[]; steps: string[]; onHostDb: boolean };
+
 const examples = import.meta.glob<{ spec: UrbanSpec }>('../../gallery/src/examples/*.ts');
 
 function element(tag: 'canvas' | 'div', id: string): HTMLElement {
@@ -100,6 +107,7 @@ declare global {
         hostDb?: AutkDb;
         runOnHostDb: (spec: UrbanSpec, names: string[]) => Promise<HostRun>;
         hostRows: (query: string) => Promise<Array<Record<string, unknown>>>;
+        runWrapped: (spec: UrbanSpec) => Promise<WrappedRun>;
         readMap: (canvasId: string) => Promise<string>;
         mapLayers: (canvasId: string) => LayerState[];
         drawnRows: (canvasId: string, layerId: string) => Array<Record<string, unknown> | null>;
@@ -167,12 +175,10 @@ window.exampleSpec = async (name: string) => {
 window.runExample = async (name: string) => window.runSpec(await window.exampleSpec(name));
 
 /**
- * Runs a spec, creating a canvas per map and a div for the plots: one div, `#plot`, that holds them all, or with
- * `plotTargets: 'each'` one div per plot, `#plot0`, `#plot1`, and so on. The grammar of the previous run is
- * destroyed first, so its maps release their GPU textures and buffers and their event handlers. (autk-map's maps
- * share one GPU device, which stays.)
+ * Destroys the grammar of the previous run, empties the stage, and makes a canvas per map of `spec` and a div for its
+ * plots, as `runSpec` describes. Returns the grammar's targets.
  */
-window.runSpec = async (spec: UrbanSpec, plotTargets: 'one' | 'each' = 'one') => {
+function freshStage(spec: UrbanSpec, plotTargets: 'one' | 'each'): Targets {
     window.grammar?.destroy();
     document.getElementById('stage')!.innerHTML = '';
     const maps = Array.isArray(spec.map) ? spec.map.map((_, i) => `map${i}`) : spec.map ? ['map0'] : [];
@@ -180,11 +186,20 @@ window.runSpec = async (spec: UrbanSpec, plotTargets: 'one' | 'each' = 'one') =>
     const plotCount = spec.plot === undefined ? 0 : Array.isArray(spec.plot) ? spec.plot.length : 1;
     const plotIds = plotTargets === 'each' ? Array.from({ length: plotCount }, (_, i) => `plot${i}`) : plotCount ? ['plot'] : [];
     plotIds.forEach((id) => element('div', id));
-
-    const grammar = new AutkGrammar({
+    return {
         ...(maps.length && { map: Array.isArray(spec.map) ? maps : maps[0] }),
         ...(plotIds.length && { plot: plotTargets === 'each' ? plotIds : 'plot' }),
-    });
+    };
+}
+
+/**
+ * Runs a spec, creating a canvas per map and a div for the plots: one div, `#plot`, that holds them all, or with
+ * `plotTargets: 'each'` one div per plot, `#plot0`, `#plot1`, and so on. The grammar of the previous run is
+ * destroyed first, so its maps release their GPU textures and buffers and their event handlers. (autk-map's maps
+ * share one GPU device, which stays.)
+ */
+window.runSpec = async (spec: UrbanSpec, plotTargets: 'one' | 'each' = 'one') => {
+    const grammar = new AutkGrammar(freshStage(spec, plotTargets));
     window.grammar = grammar;
     await grammar.run(spec);
 
@@ -345,8 +360,60 @@ window.runOnHostDb = async (spec: UrbanSpec, names: string[]) => {
 
 /** The rows a SELECT gives in the database `runOnHostDb` made, in its default workspace, with counts as numbers. */
 window.hostRows = async (query: string) => {
-    if (!window.hostDb) throw new Error('No database of the page: runOnHostDb makes one.');
+    if (!window.hostDb) throw new Error('No database of the page: runOnHostDb or runWrapped makes one.');
     return rowsOf(window.hostDb, query);
+};
+
+/**
+ * Runs a spec as `runSpec` does, on a grammar made with a host's own adapters around its own (`wrapDataAdapter` and
+ * `wrapComputeAdapter`): they record each call of the wrap functions and each workspace, source and pass the run sends
+ * through them, then hand it to the grammar's adapter. The data adapter hands the grammar's an autk-db database the page
+ * makes where it is given none, as a host that keeps the run's database does; the database stays in `window.hostDb`, for
+ * `hostRows`. A step names its entry by its type and the table it writes.
+ */
+window.runWrapped = async (spec: UrbanSpec) => {
+    const seen: WrappedRun = { wrapped: [], steps: [], onHostDb: false };
+    let db: AutkDb | undefined;
+    const hostDb = async (): Promise<AutkDb> => {
+        if (!db) {
+            db = new AutkDb();
+            await db.init();
+            window.hostDb = db;
+        }
+        return db;
+    };
+    const named = (entry: { type?: string; outputTableName?: string; dataRef?: string }) =>
+        `${entry.type ?? 'gpgpu'} ${entry.outputTableName ?? entry.dataRef}`;
+    const options: AutkGrammarOptions = {
+        wrapDataAdapter: (adapter) => {
+            seen.wrapped.push('data');
+            return {
+                ...adapter,
+                async resolveWorkspaces(context, workspaces) {
+                    seen.steps.push('workspaces');
+                    return adapter.resolveWorkspaces(context ?? await hostDb(), workspaces);
+                },
+                async resolveSource(context, source) {
+                    seen.steps.push(`source ${named(source as { type?: string; outputTableName?: string; dataRef?: string })}`);
+                    return adapter.resolveSource(context ?? await hostDb(), source);
+                },
+            };
+        },
+        wrapComputeAdapter: (adapter) => {
+            seen.wrapped.push('compute');
+            return {
+                async resolveCompute(context, pass) {
+                    seen.steps.push(`pass ${named(pass)}`);
+                    return adapter.resolveCompute(context, pass);
+                },
+            };
+        },
+    };
+    const grammar = new AutkGrammar(freshStage(spec, 'one'), options);
+    window.grammar = grammar;
+    await grammar.run(spec);
+    seen.onHostDb = db !== undefined && lastDb() === db;
+    return seen;
 };
 
 /**
