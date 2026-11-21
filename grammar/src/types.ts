@@ -94,6 +94,25 @@ export interface JoinSourceSpec {
 }
 
 /**
+ * An entry of a heatmap's `groupBy`, one band of the raster.
+ * @required ["column", "aggregateFn"]
+ */
+type HeatmapGroupByEntry = {
+    column: string;
+    /**
+     * How the rows combine into the cell's value: any aggregate but `collect`, which lists rows, while a cell
+     * holds one value. An entry without it is refused, as nothing would combine the rows.
+     */
+    aggregateFn?: HeatmapAggregateFunction;
+    /**
+     * Rescale the band's values from 0 to 1 across the grid's cells. It needs an autk-db with
+     * urban-toolkit/autark#132, which also adds `_norm` to the band's label; autk-db 4.1.1 builds the band from the
+     * values as they are.
+     */
+    normalize?: boolean;
+};
+
+/**
  * Aggregates a table onto a regular grid, producing a raster heatmap table.
  */
 export interface HeatmapSourceSpec extends TableSourceBase {
@@ -111,20 +130,7 @@ export interface HeatmapSourceSpec extends TableSourceBase {
         useCentroid?: boolean;
     };
     /** Aggregate the rows near each cell, one raster band per entry. Without it, one band counts the rows near each cell. */
-    groupBy?: Array<{
-        column: string;
-        /**
-         * How the rows combine into the cell's value: any aggregate but `collect`, which lists rows, while a cell
-         * holds one value. Each entry needs one, as nothing would combine the rows without it.
-         */
-        aggregateFn: HeatmapAggregateFunction;
-        /**
-         * Rescale the band's values from 0 to 1 across the grid's cells. It needs an autk-db with
-         * urban-toolkit/autark#132, which also adds `_norm` to the band's label; autk-db 4.1.1 builds the band from the
-         * values as they are.
-         */
-        normalize?: boolean;
-    }>;
+    groupBy?: Array<HeatmapGroupByEntry>;
     /** Grid resolution. */
     grid: {
         rows: number;

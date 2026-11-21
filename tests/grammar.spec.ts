@@ -2527,9 +2527,9 @@ test('refuses a heatmap groupBy entry with no aggregateFn, naming the heatmap an
         type: 'heatmap', outputTableName: 'heat', joinDataRef: 'spots', near: { distance: 10000 }, grid: { rows: 2, columns: 2 }, groupBy,
     });
     const refusal = 'Heatmap "heat": the groupBy entry for column "id" has no aggregateFn to combine the rows near a cell, and a cell holds one value; use sum, avg, count, min, max or weighted.';
-    await expect(runSpec(page, { data: [area, spots, heatmap([{ column: 'id' } as never])] })).rejects.toThrow(refusal);
+    await expect(runSpec(page, { data: [area, spots, heatmap([{ column: 'id' }])] })).rejects.toThrow(refusal);
     // Behind an entry that has one, it is still the entry named. A JSON spec's null is no aggregateFn, as autk-db reads it.
-    await expect(runSpec(page, { data: [area, spots, heatmap([{ column: '*', aggregateFn: 'count' }, { column: 'id' } as never])] })).rejects.toThrow(refusal);
+    await expect(runSpec(page, { data: [area, spots, heatmap([{ column: '*', aggregateFn: 'count' }, { column: 'id' }])] })).rejects.toThrow(refusal);
     await expect(runSpec(page, { data: [area, spots, heatmap([{ column: 'id', aggregateFn: null as never }])] })).rejects.toThrow(refusal);
     // With an aggregateFn, the same entry builds the heatmap: each of the four cells is within 10 km of all nine spots.
     await runSpec(page, { data: [area, spots, heatmap([{ column: 'id', aggregateFn: 'count' }])], map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'heat' }] } });
