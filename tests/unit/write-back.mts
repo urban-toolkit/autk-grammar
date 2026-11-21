@@ -6,7 +6,7 @@ import { DEFAULT_WORKSPACE_NAME } from '@urban-toolkit/autk-db';
 import type { AutkDb } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Polygon } from 'geojson';
 import type { ClustersComputeSpec } from '@urban-toolkit/the-urban-grammar';
-import { EMPTY_LAYER_QUERY, writeBack } from '../../adapters/autk/src/write-back.ts';
+import { EMPTY_LAYER_QUERY, stagingTable, writeBack } from '../../adapters/autk/src/write-back.ts';
 import { createComputeAdapter } from '../../adapters/autk/src/adapters/compute.ts';
 
 /** A call the code made: the method's name, then its arguments. */
@@ -33,6 +33,7 @@ function fakeDb(tables: FakeTable[], rows: number, layers: Record<string, Featur
         getTablesMetadata: () => tables.map((table) => ({ columns: [], ...table })),
         getLayer: async (name: string) => { calls.push(['getLayer', name]); return layers[name] ?? { type: 'FeatureCollection', features: [] }; },
         updateTable: async (...args: unknown[]) => { calls.push(['updateTable', ...args]); },
+        removeLayer: async (name: string) => { calls.push(['removeLayer', name]); },
         rawQuery: async (params: { query: string }) => {
             calls.push(['rawQuery', params]);
             return params.query.startsWith('SELECT count(*)') ? [{ n: BigInt(rows) }] : [];
@@ -42,6 +43,9 @@ function fakeDb(tables: FakeTable[], rows: number, layers: Record<string, Featur
 }
 
 const countQuery = (name: string) => ['rawQuery', { query: `SELECT count(*) AS n FROM "${name}"`, output: { type: 'RETURN_OBJECT' } }];
+/** The calls that put a table in place of `name`: a query that creates a table of that name. */
+const createdAs = (calls: Call[], name: string) => calls.filter(([method, params]) =>
+    method === 'rawQuery' && (params as { output: { type: string; tableName?: string } }).output.tableName === name);
 
 const tests: Array<[string, () => void | Promise<void>]> = [];
 const test = (name: string, fn: () => void | Promise<void>) => tests.push([name, fn]);
@@ -61,28 +65,52 @@ test("in place, it updates each row of an OSM table by its id, the id autk-db's 
     assert.deepEqual(calls[0], ['updateTable', { tableName: 'box_buildings', data: squares, strategy: 'update', idColumn: 'id' }]);
 });
 
-test('a new table is created empty, of its layer type, then every row is written in, with no cut to the workspace', async () => {
+test('a new table is filled aside, of its layer type, with every row and no cut to the workspace, counted there, then copied in place of its name', async () => {
     const { db, calls } = fakeDb([{ name: 'squares', type: 'polygons', columns: geojsonColumns }], 3);
     await writeBack(db, 'Pass', 'blocks', squares, 'polygons', false);
+    const aside = stagingTable('blocks');
     assert.deepEqual(calls, [
-        ['rawQuery', { query: EMPTY_LAYER_QUERY, output: { type: 'CREATE_TABLE', tableName: 'blocks', source: 'user', tableType: 'polygons' } }],
-        ['updateTable', { tableName: 'blocks', data: squares, strategy: 'replace' }],
-        countQuery('blocks'),
+        ['rawQuery', { query: EMPTY_LAYER_QUERY, output: { type: 'CREATE_TABLE', tableName: aside, source: 'user', tableType: 'polygons' } }],
+        ['updateTable', { tableName: aside, data: squares, strategy: 'replace' }],
+        countQuery(aside),
+        ['rawQuery', { query: `SELECT * FROM "${aside}"`, output: { type: 'CREATE_TABLE', tableName: 'blocks', source: 'user', tableType: 'polygons' } }],
+        ['removeLayer', aside],
     ]);
 });
 
 test('in place over a table autk-db does not hold, such as one a pass wrote without writeBack, it writes a new table', async () => {
     const { db, calls } = fakeDb([], 3);
     await writeBack(db, 'Pass', 'w', squares, 'points', true);
-    assert.deepEqual(calls.map(([method]) => method), ['rawQuery', 'updateTable', 'rawQuery']);
-    assert.deepEqual(calls[1], ['updateTable', { tableName: 'w', data: squares, strategy: 'replace' }]);
+    assert.deepEqual(calls.map(([method]) => method), ['rawQuery', 'updateTable', 'rawQuery', 'rawQuery', 'removeLayer']);
+    assert.deepEqual(calls[1], ['updateTable', { tableName: stagingTable('w'), data: squares, strategy: 'replace' }]);
+    assert.equal(createdAs(calls, 'w').length, 1);
 });
 
-test("refuses a table whose rows autk-db does not all keep, naming the pass and both counts", async () => {
-    const { db } = fakeDb([], 2);
+test("refuses a table whose rows autk-db does not all keep, naming the pass and both counts, before it takes the place of the table of that name", async () => {
+    const { db, calls } = fakeDb([], 2);
     await assert.rejects(writeBack(db, 'Windows pass "w"', 'w', squares, 'points', false), {
         message: 'Windows pass "w": autk-db holds 2 rows of "w" where the pass wrote 3, so its table and the one maps and plots draw would differ.',
     });
+    assert.deepEqual(createdAs(calls, 'w'), []);
+    assert.deepEqual(calls.at(-1), ['removeLayer', stagingTable('w')]);
+});
+
+test("a refusal of a new table's rows leaves the table of that name as it was, and drops the table they were written in aside", async () => {
+    const { db, calls } = fakeDb([{ name: 'scored', type: 'points', columns: geojsonColumns }], 3);
+    (db as unknown as { updateTable: (...args: unknown[]) => Promise<void> }).updateTable = async (...args: unknown[]) => {
+        calls.push(['updateTable', ...args]);
+        throw new Error('Duplicate GeoJSON feature ID: 3');
+    };
+    await assert.rejects(writeBack(db, 'Clusters pass over "readings"', 'scored', squares, 'points', false), {
+        message: 'Clusters pass over "readings": autk-db could not keep "scored": Duplicate GeoJSON feature ID: 3',
+    });
+    const aside = stagingTable('scored');
+    assert.deepEqual(calls, [
+        ['rawQuery', { query: EMPTY_LAYER_QUERY, output: { type: 'CREATE_TABLE', tableName: aside, source: 'user', tableType: 'points' } }],
+        ['updateTable', { tableName: aside, data: squares, strategy: 'replace' }],
+        ['removeLayer', aside],
+    ]);
+    assert.deepEqual(createdAs(calls, 'scored'), []);
 });
 
 test('refuses a raster, and a new table of no layer type, before it asks autk-db anything', async () => {
@@ -117,11 +145,14 @@ test('the compute adapter writes a pass back only with writeBack, and keeps its 
         assert.deepEqual(cache.get('squares')?.features.map((feature) => feature.properties?.compute?.cluster), [0, 0, 1]);
         if (writeBackKey) assert.deepEqual(written[0][1], { tableName: 'squares', data: cache.get('squares'), strategy: 'update', idColumn: 'geojson_id' });
     }
-    // Into a new table, of the type of the table the pass read.
+    // Into a new table, of the type of the table the pass read: filled aside, then copied in place of its name.
     const { db, calls } = fakeDb([{ name: 'squares', type: 'polygons', columns: geojsonColumns }], 3, { squares });
     await createComputeAdapter(new Map()).resolveCompute(db, { ...pass, outputTableName: 'blocks', writeBack: true });
-    assert.deepEqual((calls.find(([method]) => method === 'rawQuery')![1] as { output: unknown }).output,
-        { type: 'CREATE_TABLE', tableName: 'blocks', source: 'user', tableType: 'polygons' });
+    assert.deepEqual(calls.filter(([method]) => method === 'rawQuery').map(([, params]) => (params as { output: unknown }).output), [
+        { type: 'CREATE_TABLE', tableName: stagingTable('blocks'), source: 'user', tableType: 'polygons' },
+        { type: 'RETURN_OBJECT' },
+        { type: 'CREATE_TABLE', tableName: 'blocks', source: 'user', tableType: 'polygons' },
+    ]);
 });
 
 let failed = 0;
