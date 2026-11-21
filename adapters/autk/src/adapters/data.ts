@@ -454,9 +454,10 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache, compu
                         const reason = err instanceof Error ? err.message : String(err);
                         // autk-db puts the geometry of a table a query saves on the workspace's grid, read from a column
                         // named geometry, with a layerType or without one, so a geometry under another name fails there
-                        // with DuckDB's binder error for that column.
+                        // with DuckDB's binder error for that column. A query that reads a geometry column its table
+                        // lacks fails with the same error, so the advice holds for both, and autk-db's reason follows.
                         const advice = /Referenced column "geometry" not found/i.test(reason)
-                            ? 'autk-db reads the geometry of a table it saves from a column named geometry, so a query returns its geometry as geometry, for example ST_Centroid(geometry) AS geometry. autk-db: '
+                            ? 'if the query returns a geometry, name it geometry, for example ST_Centroid(geometry) AS geometry. autk-db: '
                             : '';
                         throw new Error(`SQL source "${sql.outputTableName}": ${advice}${reason}`);
                     }

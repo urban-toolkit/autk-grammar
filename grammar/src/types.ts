@@ -442,7 +442,8 @@ export interface UpdateSourceSpec {
     /**
      * With `update`, the column that matches a given row to the table's rows: in a table without a geometry, one of its
      * columns, such as `month`; in a table with one, a feature property as `properties.<name>`, such as
-     * `properties.parcel_id`.
+     * `properties.parcel_id`, or the feature id, `geojson_id` on a GeoJSON layer and `id` on an OpenStreetMap layer,
+     * which matches each given feature by the `id` that `AutkGrammar.data` gives it.
      * @minLength 1
      */
     idColumn?: string;
