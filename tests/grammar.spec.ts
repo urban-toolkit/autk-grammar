@@ -3797,6 +3797,65 @@ test("reads each building part's outline in a pass's fromFeature table, as a Geo
     for (const width of widths) expect(width as number).toBeCloseTo(60, 3);
 });
 
+test("reads in a pass's fromFeature table only the parts autk-db kept, in the order grammar.data gives them", async ({ page }) => {
+    // The test above's three parts, after a fourth 20 m part 2 km east of the ground, outside the workspace's box:
+    // autk-db drops it, and the map and grammar.data hold three parts. A pass read the source as it was given, the
+    // dropped part too: every spot added up four widths, 80 m, and the part at index 1 was the source's second, not the
+    // second part grammar.data gives.
+    const [x0, y0] = [-8235000, 4946000];
+    const square = (x: number, y: number, size: number) =>
+        ({ type: 'Polygon', coordinates: [[[x, y], [x + size, y], [x + size, y + size], [x, y + size], [x, y]]] });
+    const inMeters = (outputTableName: string, features: Array<{ properties: Record<string, unknown>; geometry: unknown }>, layerType?: string) => ({
+        type: 'geojson', outputTableName, coordinateFormat: 'EPSG:3395', ...(layerType && { layerType }),
+        geojsonObject: { type: 'FeatureCollection', features: features.map((feature) => ({ type: 'Feature', ...feature })) },
+    });
+    await runSpec(page, {
+        data: [
+            inMeters('ground', [{ properties: {}, geometry: square(x0 - 500, y0 - 500, 1000) }]),
+            inMeters('parts', [
+                { properties: { height: 99 }, geometry: square(x0 + 2000, y0, 20) },
+                ...[0, 1, 2].map((i) => ({ properties: { height: 10 + i }, geometry: square(x0 + i * 50, y0, 20) })),
+            ], 'buildings'),
+            inMeters('spots', [0, 1, 2, 3].map((i) => ({ properties: { w: 1 }, geometry: { type: 'Point', coordinates: [x0 + i * 40, y0 - 100] } }))),
+        ],
+        compute: [
+            {
+                dataRef: 'spots',
+                attributes: { w: 'w' },
+                uniformMatrices: { o: { fromFeature: { layer: 'parts', path: 'geometry.coordinates.0', iterate: 'batched' }, cols: 2 } },
+                outputColumnName: 'width',
+                // o packs [xmin,ymin, xmax,ymin, xmax,ymax, xmin,ymax] per part: sum the parts' widths.
+                wgslFunction: [
+                    'var total = 0.0;',
+                    'for (var i = 0u; i < u32(num_features); i++) { total += o[i * 8u + 2u] - o[i * 8u]; }',
+                    'return total * w;',
+                ],
+            },
+            // The height of the part at index 1, in a table of its own.
+            {
+                dataRef: 'spots',
+                attributes: { w: 'w' },
+                uniforms: { h: { fromFeature: { layer: 'parts', path: 'properties.height', index: 1 } } },
+                outputColumnName: 'second',
+                outputTableName: 'second_part',
+                wgslFunction: 'return h * w;',
+            },
+        ],
+    } as unknown as UrbanSpec);
+    // autk-db kept the three parts inside the box, which grammar.data gives.
+    expect(await page.evaluate(async () => (await window.grammar.data.parts).features.length)).toBe(3);
+    const heights = await page.evaluate(() => Promise.all([0, 1, 2].map((i) => window.valueAt('parts', i, 'height'))));
+    expect([...heights as number[]].sort((a, b) => a - b)).toEqual([10, 11, 12]);
+    // Every spot reads the outlines of those three parts, 3 x 20 m, and the part at index 1 is grammar.data's.
+    const read = await page.evaluate(() => Promise.all([0, 1, 2, 3].map(async (i) =>
+        [await window.valueAt('spots', i, 'compute.width'), await window.valueAt('second_part', i, 'compute.second')])));
+    expect(read).toHaveLength(4);
+    for (const [width, second] of read) {
+        expect.soft(width as number, 'the widths of the parts autk-db kept').toBeCloseTo(60, 3);
+        expect.soft(second, "the height of grammar.data's part at index 1").toBe(heights[1]);
+    }
+});
+
 // A noon shadow pass over roads: each building, packed as the box of its outline, casts its shadow north as far as it
 // is tall, and a road whose first point lies in a shadow is shaded. Every coordinate is measured from the road's first
 // point, since an f32 holds World Mercator's coordinates, near 1e7 m, only to about a meter.
