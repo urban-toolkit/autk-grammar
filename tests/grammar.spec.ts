@@ -3038,6 +3038,26 @@ test('stores the tables of each workspace in the CRS and on the grid its workspa
     }
 });
 
+test("gives in workspaceCrs the CRS of the last run's default workspace, the one the spec's workspaces set for it", async ({ page }) => {
+    // workspaceCrs gave autk-db's default, EPSG:3395, whatever the spec's workspaces set.
+    const webMercator = { coordinateFormat: 'EPSG:3857', precisionGrid: 1 };
+    const runs: Array<UrbanSpec['workspaces']> = [
+        undefined,
+        [{ name: 'web', ...webMercator }], // another workspace only: the default one keeps autk-db's default
+        [webMercator],
+        [{ name: 'autk', ...webMercator }], // the default workspace, by the name autk-db gives it
+    ];
+    const seen: string[] = [];
+    for (const workspaces of runs) {
+        await runSpec(page, { ...(workspaces && { workspaces }), data: [area] });
+        seen.push(await page.evaluate(() => window.grammar.workspaceCrs));
+    }
+    // The grammar run again, with a spec without workspaces.
+    await page.evaluate((spec) => window.runAgain(spec), { data: [area] } as UrbanSpec);
+    seen.push(await page.evaluate(() => window.grammar.workspaceCrs));
+    expect(seen).toEqual(['EPSG:3395', 'EPSG:3395', 'EPSG:3857', 'EPSG:3857', 'EPSG:3395']);
+});
+
 // The gallery examples of the keys 5.0.0 adds, each run as the gallery runs it, and checked for what it draws or computes.
 
 /** A gallery example's spec, loaded in the page (see window.exampleSpec), to run it changed. */
