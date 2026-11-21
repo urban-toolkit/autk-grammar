@@ -3789,6 +3789,43 @@ test('draws the marks of every plot of the page in one markColor, and the select
     expect(await plotStyle()).toEqual({ markColor: '#1f77b4', highlightColor: '#5dade2' });
 });
 
+test("sets the page's plot colors as a run's plots draw: a run that fails first leaves them, and one that loads its data while another draws keeps its own", async ({ page }) => {
+    const green = 'rgb(44, 160, 44)'; // #2ca02c
+    const zonesPlot = (fields: Record<string, unknown>) => plotOf({ dataRef: 'zones', axis: ['id', 'v'], ...fields });
+    const fills = async (target: string) => (await plotMarks(page, target)).map(({ fill }) => fill);
+
+    // A run that fails as it loads its data draws no plot, and leaves the page's colors as they were. It set them as it
+    // started.
+    await expect(runSpec(page, {
+        data: [area, zones, { type: 'drop', dataRef: 'nothing' }],
+        plot: zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c' }),
+    })).rejects.toThrow('Drop of "nothing"');
+    expect.soft(await page.evaluate(() => window.plotStyle()), 'the colors after a run that failed').toEqual({ markColor: '#bfbfbf', highlightColor: '#5dade2' });
+
+    // A run that sets a mark color loads its zones, held back here, while a second grammar's run, which sets none, draws
+    // its bars. The first run's bars are drawn in its own green: they were drawn in the gray the second run gave the page
+    // as it started.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/held/zones.geojson', async (route) => {
+        await held;
+        await route.fulfill({ json: (zones as unknown as { geojsonObject: unknown }).geojsonObject });
+    });
+    const heldZones = { type: 'geojson', outputTableName: 'zones', geojsonFileUrl: '/held/zones.geojson' } as DataSourceSpec;
+    type Pending = { firstRun?: Promise<string | null> };
+    await page.evaluate((spec) => {
+        (window as unknown as Pending).firstRun = window.runSpec(spec).then(() => null, (error: Error) => error.message);
+    }, { data: [area, heldZones], plot: zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c' }) } as UrbanSpec);
+    try {
+        await page.evaluate((spec) => window.runBeside(spec), { data: [area, zones], plot: zonesPlot({ id: 'c', mark: 'bar' }) } as UrbanSpec);
+        expect(await fills('beside')).toEqual([markGray, markGray, markGray, markGray]);
+    } finally {
+        release();
+    }
+    expect(await page.evaluate(() => (window as unknown as Pending).firstRun)).toBeNull();
+    expect.soft(await fills('plot'), "the bars of the run that loaded its data while the other drew").toEqual([green, green, green, green]);
+});
+
 test('colors the ten noisiest neighborhoods of plot-colors alike on its map and its chart, and selects the noisiest', async ({ page }) => {
     const spec = await exampleSpec(page, 'plot-colors');
     expect(spec.plot).toMatchObject({ colorMapInterpolator: 'interpolateReds', colorMapRange: [0, 80], selection: [0], highlightColor: '#1f77b4' });
