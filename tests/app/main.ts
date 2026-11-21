@@ -104,6 +104,7 @@ declare global {
         featureExtents: (table: string) => Promise<number[][]>;
         dbRows: (query: string) => Promise<Array<Record<string, unknown>>>;
         dbLayer: (table: string, osmElements?: boolean) => Promise<FeatureCollection>;
+        dbBands: (table: string) => Promise<Array<{ id: string; label?: string }>>;
         hostDb?: AutkDb;
         runOnHostDb: (spec: UrbanSpec, names: string[]) => Promise<HostRun>;
         hostRows: (query: string) => Promise<Array<Record<string, unknown>>>;
@@ -340,6 +341,12 @@ window.dbRows = async (query: string) => rowsOf(lastDb(), query);
 
 /** A table as autk-db exports it, not as the grammar's caches hold it; with `osmElements`, one feature per OSM element. */
 window.dbLayer = (table: string, osmElements?: boolean) => lastDb().getLayer(table, osmElements ? { osmElements: true } : undefined);
+
+/** The bands of a raster table of the last run, each band's id and label, as autk-db's `getRaster` gives them. */
+window.dbBands = async (table: string) => {
+    const raster = await lastDb().getRaster(table) as unknown as { features: Array<{ properties?: { bands?: Array<{ id: string; label?: string }> } }> };
+    return raster.features[0]?.properties?.bands ?? [];
+};
 
 /**
  * Runs a spec's workspaces, data sources and compute passes on an autk-db database the page makes and owns, through the
@@ -596,14 +603,19 @@ window.mapUi = (canvasId: string) => {
 };
 
 /**
- * The terrain of the map on #canvasId, or null when it draws none (see `TerrainState`). autk-map 4.1.1 gives no public
- * getter for a terrain's heightfield, so this reads the one its terrain render path keeps (`_terrainRenderPath`).
+ * The terrain of the map on #canvasId, or null when it draws none (see `TerrainState`). autk-map gives no public
+ * getter for a terrain's heightfield, so this reads the one its terrain render path keeps (`_terrainRenderPath`): its
+ * `heightfield` in 4.1.1, and on Autark's main the `heightfield` of its `heightSource`, which a raster's heights become.
  */
 window.terrain = (canvasId: string) => {
     const map = mapOn(canvasId);
-    const path = (map as unknown as { _terrainRenderPath?: { heightfield?: Omit<TerrainState, 'band' | 'bandMin' | 'bandMax'> } | null })._terrainRenderPath;
+    type Heightfield = Omit<TerrainState, 'band' | 'bandMin' | 'bandMax'>;
+    const path = (map as unknown as {
+        _terrainRenderPath?: { heightfield?: Heightfield; heightSource?: { heightfield?: Heightfield } } | null;
+    })._terrainRenderPath;
+    const heightfield = path?.heightfield ?? path?.heightSource?.heightfield;
     const handedTerrain = terrains.get(map);
-    if (!path?.heightfield || !handedTerrain) return null;
+    if (!heightfield || !handedTerrain) return null;
     const values = (handedTerrain.collection.features[0]?.properties as Record<string, ArrayLike<number>> | null)?.[handedTerrain.property] ?? [];
     let bandMin = Infinity;
     let bandMax = -Infinity;
@@ -612,7 +624,7 @@ window.terrain = (canvasId: string) => {
         bandMin = Math.min(bandMin, values[i]);
         bandMax = Math.max(bandMax, values[i]);
     }
-    const { width, height, minHeight, maxHeight, bounds } = path.heightfield;
+    const { width, height, minHeight, maxHeight, bounds } = heightfield;
     return { band: handedTerrain.property, bandMin, bandMax, width, height, minHeight, maxHeight, bounds: [...bounds] };
 };
 
