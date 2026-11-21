@@ -2288,6 +2288,42 @@ test("sends a run's workspaces, every source and every pass through a host's own
     expect(unwrapped.sort()).toEqual(drawn);
 });
 
+// What a run handed each view, which a host reads with the collection of each layer mapLayers gives and with
+// plotCollection.
+
+test("gives the collection a run handed each view: the one autk-map was handed for each layer, and every row for a plot", async ({ page }) => {
+    // Five sites, c without a geometry, and a heatmap of the nine spots, drawn on one map; a plot of the sites.
+    const sites = ['a', 'b', 'c', 'd', 'e'].map((name, i) => ({
+        type: 'Feature' as const,
+        properties: { name, v: i * 10, w: 40 - i * 10 },
+        geometry: name === 'c' ? null : { type: 'Point' as const, coordinates: [-73.985 + i * 0.002, 40.75 + i * 0.001] },
+    }));
+    await runSpec(page, {
+        data: [
+            { type: 'geojson', outputTableName: 'sites', geojsonObject: { type: 'FeatureCollection', features: sites } },
+            spots,
+            { type: 'heatmap', outputTableName: 'heat', joinDataRef: 'spots', near: { distance: 1000 }, grid: { rows: 2, columns: 2 } },
+        ],
+        map: { id: 'm', layerRefs: [{ dataRef: 'heat' }, { dataRef: 'sites', title: 'Sites' }] },
+        plot: { id: 'p', dataRef: 'sites', mark: 'scatter', axis: ['v', 'w'] },
+    } as unknown as UrbanSpec);
+
+    // Each layer's collection is the very one autk-map was handed for it: the raster's, of one feature, and the sites'.
+    expect(await page.evaluate(() => [window.handedToLayer('map0', 'heat', 'heat'), window.handedToLayer('map0', 'sites', 'Sites')]))
+        .toEqual([true, true]);
+    expect(await page.evaluate(() => window.grammar.mapLayer('heat', 'm')?.collection.features.length)).toBe(1);
+    // The layer of the sites draws those of its features that have a shape: c has none.
+    expect((await page.evaluate(() => window.drawnRows('map0', 'Sites'))).map((row) => row?.name).sort()).toEqual(['a', 'b', 'd', 'e']);
+    // The plot's collection is every row of the sites, c among them, in their order, which its marks draw.
+    const plotted = await page.evaluate(() => window.grammar.plotCollection('p')?.features.map((feature) => [feature.properties?.name, feature.geometry === null]));
+    expect(plotted).toEqual([['a', false], ['b', false], ['c', true], ['d', false], ['e', false]]);
+    expect((await page.evaluate(() => window.plotMarks())).map((mark) => mark.datum?.name).sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
+
+    // destroy(), which each run calls first, lets the last run's views go.
+    await page.evaluate(() => window.grammar.destroy());
+    expect(await page.evaluate(() => [window.grammar.mapLayers('sites').length, window.grammar.plotCollection('p') ?? null])).toEqual([0, null]);
+});
+
 test('refuses a points layer in a render pass, and names the layer', async ({ page }) => {
     // autk-compute would skip it with only a warning. The schema refuses the type too.
     await expect(runSpec(page, {

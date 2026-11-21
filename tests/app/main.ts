@@ -108,6 +108,7 @@ declare global {
         runOnHostDb: (spec: UrbanSpec, names: string[]) => Promise<HostRun>;
         hostRows: (query: string) => Promise<Array<Record<string, unknown>>>;
         runWrapped: (spec: UrbanSpec) => Promise<WrappedRun>;
+        handedToLayer: (canvasId: string, dataRef: string, layerId: string) => boolean;
         readMap: (canvasId: string) => Promise<string>;
         mapLayers: (canvasId: string) => LayerState[];
         drawnRows: (canvasId: string, layerId: string) => Array<Record<string, unknown> | null>;
@@ -150,6 +151,17 @@ AutkMap.prototype.loadCollection = function (this: AutkMap, ...args: Parameters<
     if (!handed.has(this)) handed.set(this, new Map());
     handed.get(this)!.set(layerId, collection as FeatureCollection);
     return loadCollection.apply(this, args);
+};
+
+/**
+ * Whether the collection the grammar's `mapLayers` gives for the layer `layerId` of the table `dataRef`, on the map on
+ * #canvasId, is the very collection autk-map was handed for that layer, as `loadCollection` recorded it.
+ */
+window.handedToLayer = (canvasId: string, dataRef: string, layerId: string) => {
+    const map = mapOn(canvasId);
+    const layer = window.grammar.mapLayers(dataRef).find((candidate) => candidate.map === map && candidate.layerId === layerId);
+    const recorded = handed.get(map)?.get(layerId);
+    return recorded !== undefined && layer?.collection === recorded;
 };
 
 /** The raster collection and the band's path autk-map was handed for the terrain of each map, recorded as it builds it. */
