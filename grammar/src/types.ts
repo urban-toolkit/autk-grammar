@@ -652,8 +652,9 @@ export type MapLayerSpec = {
      * `osm_type` and `osm_id` as its properties (and `building_id` in a buildings table, whose parts are elements of
      * their own), rather than one feature per row. A compute pass that changes the table in place leaves its elements as
      * they were: they are drawn without the pass's columns. A table that is not an OSM layer, a surface, and an OSM
-     * table an update changed, an in-place `writeBack` among them, are drawn row by row, as without it. Read by the
-     * Autark adapter only.
+     * table an update changed, an in-place `writeBack` among them, are drawn row by row, as without it. A run refuses a
+     * link, in `links` or by a plot's `mapRef`, between this layer and a plot of which one reads its table one feature
+     * per element and the other one per row, since their ids differ. Read by the Autark adapter only.
      */
     osmElements?: boolean,
     /**
@@ -960,7 +961,9 @@ export interface PlotBase {
      * `osm_type` and `osm_id` (and `building_id` in a buildings table), rather than one row per table row. A compute pass
      * that changes the table in place leaves its elements as they were: they are plotted without the pass's columns. A
      * table that is not an OSM layer, a surface, and an OSM table an update changed, an in-place `writeBack` among them,
-     * are plotted row by row, as without it. Read by the Autark adapter only.
+     * are plotted row by row, as without it. A run refuses a link, in `links` or by `mapRef`, between this plot and a map
+     * layer of which one reads its table one feature per element and the other one per row, since their ids differ.
+     * Read by the Autark adapter only.
      */
     osmElements?: boolean,
 }

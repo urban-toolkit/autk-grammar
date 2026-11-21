@@ -258,6 +258,8 @@ The CRS of an `osm` source's coordinates, as an EPSG string. It defaults to `EPS
 
 A map layer or a plot with `osmElements: true` reads an OpenStreetMap layer table as one feature per OSM element it was built from, rather than one per row. Each feature's properties are the element's tags, its `osm_type` (`node`, `way` or `relation`) and its `osm_id`; in a buildings table, whose parts are elements of their own, also the `building_id` of its building. A part takes only its own tags, so a buildings layer draws only the parts whose tags give their height. A compute pass that changes the table in place leaves autk-db's elements as they were, so they are read without the pass's columns. A table that is not an OSM layer, a surface, and an OSM table an `update` source or an in-place `writeBack` changed are read row by row, as without it.
 
+A plot and a layer linked, in [`links`](#plots-and-links) or by the plot's `mapRef`, find each other's rows by their feature ids, and autk-db names an element such as `way/123` but a row by a number. So a run refuses a link of which one view reads its table one feature per element and the other one per row: set `osmElements` on both, or on neither.
+
 ```ts
 map: { layerRefs: [{ dataRef: 'downtown_roads', osmElements: true, getFnv: 'highway', colorMapInterpolator: ColorMapInterpolator.CAT_TABLEAU10 }] },
 plot: { dataRef: 'downtown_roads', mark: 'table', axis: ['osm_id', 'highway', 'name'], osmElements: true },
@@ -647,7 +649,7 @@ A plot's `id` names it: as the `source` of a link, as the `plotId` of its `plot:
 | `target` | The map: its `id`. |
 | `layer` | The layer of the target map, by its `title`, else its `dataRef`. Defaults to the layer that draws the plot's `dataRef`. |
 
-A run refuses a link that names no plot, map or layer of the spec. A plot's `mapRef` is a shorthand for links: it names the table (`dataRef`) of map layers, and links the plot to every layer that draws it, in every map.
+A run refuses a link that names no plot, map or layer of the spec, and a link, or a `mapRef`, of which one view reads an OpenStreetMap table one feature per element and the other one per row (see [`osmElements`](#osmelements)). A plot's `mapRef` is a shorthand for links: it names the table (`dataRef`) of map layers, and links the plot to every layer that draws it, in every map.
 
 ```ts
 await grammar.run({
