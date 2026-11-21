@@ -602,7 +602,9 @@ map: { layerRefs: [{ dataRef: 'income', getFnv: 'median', legend: true }, { data
 
 ### `skippedComps`
 
-A layer's `skippedComps` lists the features it hides, by their positions among those it draws, as `map:picking` events and `highlightOnMap` give them: a filter the map applies as it is drawn. It hides features of every layer of polygons, lines, points or buildings. A run refuses it on a raster layer, and a position that is not a whole number from 0 or is past the last feature the layer draws. With autk-map 4.1.1, a hidden feature of a polygons or buildings layer can still be picked.
+A layer's `skippedComps` lists the features it hides, by their positions among those it draws, as `map:picking` events and `highlightOnMap` give them: a filter the map applies as it is drawn. It hides features of every layer of polygons, lines, points or buildings. A run refuses it on a raster layer, and a position that is not a whole number from 0 or is past the last feature the layer draws.
+
+autk-map 4.1.1 can still pick a hidden feature of a points, polygons or buildings layer, and Autark's main a hidden point: its picking pass draws them. The grammar leaves the hidden features out of the picks its `map:picking` events report, and out of the selections it hands the plots linked to the layer. A host that listens to the map's own events (`map.events`) still hears them.
 
 ```ts
 map: { layerRefs: [{ dataRef: 'parcels', skippedComps: [2, 5] }] }
