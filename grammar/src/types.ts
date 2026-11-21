@@ -454,8 +454,8 @@ export interface UpdateSourceSpec {
     geojsonObject?: InlineFeatureCollection;
     /**
      * The rows of a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`. With
-     * `update`, autk-db writes each given row as a whole row of the table, so a row gives every column of the table, by
-     * its name, in any order, and no other: a run refuses a row that lacks a column or has another.
+     * `update`, a row's keys name the table's columns, in any case and in any order, each once, and a column a row leaves
+     * out is null in it; a run refuses a key that names no column of the table.
      * @minItems 1
      */
     jsonObject?: Array<Record<string, unknown>>;

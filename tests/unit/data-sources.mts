@@ -342,6 +342,10 @@ test('an update row of a table without a geometry gets null in a column it leave
     await refused([{ zone: 2, count: 25, extra: 1 }], 'Update of "zones": jsonObject[0] has "extra", which is not a column of the table: "zone", "count".');
     await refused([{ zone: 2 }, { zone: 3, note: 5 }], 'Update of "zones": jsonObject[1] has "note", which is not a column of the table: "zone", "count".');
     await refused([{ zone: 2, Zone: 3, count: 25 }], 'Update of "zones": jsonObject[0] has "zone" and "Zone", which name one column of the table, "zone".');
+    // A row that is not an object, such as one given as an array of values, is refused rather than written as nulls.
+    const notAnObject = (index: number) => `Update of "zones": jsonObject[${index}] is not an object; give each row as an object whose keys name the table's columns.`;
+    await refused([[2, 25]], notAnObject(0));
+    await refused([{ zone: 2 }, null], notAnObject(1));
 });
 
 // A layer of plain columns, such as a CSV or JSON table loaded with geometryColumns, or a sql source's table drawn as a

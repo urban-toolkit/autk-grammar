@@ -129,27 +129,37 @@ async function updateByFeatureId(db: AutkDb, table: Table, rows: FeatureCollecti
 }
 
 /**
- * The rows of an update of a table without a geometry, each with its keys in the order of the table's columns. autk-db
- * 4.1.1 stages the given rows with DuckDB's `read_json_auto`, whose columns follow a row's keys in the order they come,
- * then inserts them with `INSERT INTO <table> SELECT * FROM <staging>`, by position: a row given as `{ count, zone }` to
- * a table of (zone, count) wrote its count in zone. autk-db writes each given row as a whole row of the table, so a row
- * that lacks a column of the table, or has one the table does not have, is refused, by that key. autk-db lists every
- * column of a table it holds, so the rows of a table listed without any, as a host's stand-in database may list it, go
- * as they are given.
+ * The rows of an update of a table without a geometry, each with every column of the table, in the table's order.
+ * autk-db 4.1.1 stages the given rows with DuckDB's `read_json_auto`, whose columns are the keys of all the rows, null
+ * in a row that leaves one out, then inserts them with `INSERT INTO <table> SELECT * FROM <staging>`, by position: a row
+ * given as `{ count, zone }` to a table of (zone, count) wrote its count in zone. DuckDB matches names without regard to
+ * case. So each row here takes its keys by the columns they name, in any case, and null in a column it leaves out, as
+ * 4.1.1 wrote a key another row gave. A key the table lacks, which 4.1.1 wrote into another column or refused on the
+ * count of values, is refused, and so are two keys that name one column. autk-db lists every column of a table it
+ * holds, so the rows of a table listed without any, as a host's stand-in database may list it, go as they are given.
  */
 function inColumnOrder(rows: Array<Record<string, unknown>>, table: Table): Array<Record<string, unknown>> {
     const columns = table.columns.map((column) => column.name);
     if (columns.length === 0) return rows;
     const listed = columns.map((column) => `"${column}"`).join(', ');
     return rows.map((row, index) => {
-        const keys = Object.keys(row ?? {});
-        const missing = columns.find((column) => !keys.includes(column));
-        if (missing !== undefined)
-            throw new Error(`jsonObject[${index}] has no "${missing}"; autk-db writes each given row as a whole row of the table, so it gives every column: ${listed}.`);
-        const extra = keys.find((key) => !columns.includes(key));
-        if (extra !== undefined)
-            throw new Error(`jsonObject[${index}] has "${extra}", which is not a column of the table: ${listed}.`);
-        return Object.fromEntries(columns.map((column) => [column, row[column]]));
+        // The schema refuses a row that is not an object, but a spec that was not checked against it reaches here.
+        if (row === null || typeof row !== 'object' || Array.isArray(row))
+            throw new Error(`jsonObject[${index}] is not an object; give each row as an object whose keys name the table's columns.`);
+        const ordered: Record<string, unknown> = Object.fromEntries(columns.map((column) => [column, null]));
+        const keyOf = new Map<string, string>();
+        for (const [key, value] of Object.entries(row)) {
+            const column = columns.find((name) => name.toLowerCase() === key.toLowerCase());
+            if (column === undefined)
+                throw new Error(`jsonObject[${index}] has "${key}", which is not a column of the table: ${listed}.`);
+            const named = keyOf.get(column);
+            if (named !== undefined)
+                throw new Error(`jsonObject[${index}] has "${named}" and "${key}", which name one column of the table, "${column}".`);
+            keyOf.set(column, key);
+            // JSON leaves out a key whose value is undefined, as autk-db reads the rows, so it is null in its row.
+            ordered[column] = value === undefined ? null : value;
+        }
+        return ordered;
     });
 }
 
