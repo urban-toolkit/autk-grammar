@@ -9,6 +9,7 @@ import { FeatureCollection } from "geojson";
 import { createMapAdapter } from "./adapters/map";
 import { createPlotAdapter, linkPlotToLayer, setPlotColors } from "./adapters/plot";
 import { checkPlotKeys, plotColorsOf, plotKey } from "./plot-options";
+import type { PlotColors } from "./plot-options";
 import { layerIdOf } from "./adapters/map";
 import { enterWorkspace } from "./workspace";
 import { wiredAdapters } from "./compute-steps";
@@ -82,6 +83,8 @@ export class AutkGrammar {
     private _exports: LayerExports = new Map();
     /** Each GeoJSON table a run loaded and each table a join wrote, which its plots read before the database. */
     private _geojsonCache: GeoJsonCache = new Map();
+    /** The page's plot colors the last run's spec sets, which its plots draw in. */
+    private _plotColors: PlotColors = {};
 
     readonly interactions = new GrammarEventEmitter();
 
@@ -95,7 +98,7 @@ export class AutkGrammar {
         this.dataAdapter = options?.wrapDataAdapter ? hostDataAdapter(options.wrapDataAdapter(data)) : data;
         this.computeAdapter = options?.wrapComputeAdapter ? hostComputeAdapter(options.wrapComputeAdapter(compute)) : compute;
         this.mapAdapter = createMapAdapter(targets, this._layers, this._computeCache, this._maps, this._computeTypes, this._exports);
-        this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, this._geojsonCache, this._computeCache, this._plotRows, this._exports, this._plotCollections);
+        this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, this._geojsonCache, this._computeCache, this._plotRows, this._exports, this._plotCollections, () => this._plotColors);
     }
 
     /**
@@ -235,9 +238,10 @@ export class AutkGrammar {
         const plotColors = plotColorsOf(asList(spec.plot));
 
         this.destroy();
-        // autk-plot keeps one mark color and one highlight color for the page, which a plot reads as it draws. A run that
-        // draws no plot leaves them as they are.
-        if (asList(spec.plot).length > 0) setPlotColors(plotColors);
+        // autk-plot keeps one mark color and one highlight color for the page, which a plot reads as it draws. The plot
+        // adapter sets the run's just before it draws each plot (setPlotColors), so a run that draws no plot, or fails
+        // before it draws one, leaves them as they are.
+        this._plotColors = plotColors;
 
         this.grammarEngine = createEngine({
             spec,
@@ -254,6 +258,8 @@ export class AutkGrammar {
         // Leave the database in the default workspace, whose tables `data` lists.
         if (db) await enterWorkspace(db);
         this._wireLinks(spec);
+        // The plots show their first selections in the run's colors too, though another run drew its plots since.
+        if (this._plotRegistry.size > 0) setPlotColors(plotColors);
         this._pickFromTheStart(spec);
         this._selectFromTheStart(spec);
         this._rewireInteractions(spec);

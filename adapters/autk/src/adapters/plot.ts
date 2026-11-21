@@ -35,8 +35,10 @@ let colorsBefore: { markColor: ColorHEX; highlightColor: ColorHEX } | undefined;
  * whole page (`PlotStyle`), which every plot reads as it draws and as it shows a selection. So a run that sets them
  * colors every plot on the page, and a run whose plots set neither gives back the colors autk-plot had before a run set
  * any: a run draws in the colors its own spec gives, though a host makes a new grammar for each run and never destroys
- * the old one. A page whose specs set neither never has its colors touched. `AutkGrammar.run` calls it before it draws
- * its first plot.
+ * the old one. A page whose specs set neither never has its colors touched. The plot adapter calls it just before it
+ * draws each plot of a run, and `AutkGrammar.run` just before the run's plots show their first selections: so a run that
+ * draws no plot, or fails before it draws one, leaves the colors as they are, and the plots of a run that loads its data
+ * while another run draws its own are drawn in their run's colors.
  */
 export function setPlotColors(colors: PlotColors): void {
     if (colors.markColor === undefined && colors.highlightColor === undefined && !colorsBefore) return;
@@ -85,9 +87,10 @@ async function tableRows(db: AutkDb, name: string, key: string, exports?: LayerE
 /**
  * The plot adapter `AutkGrammar` runs. Each plot it draws goes in `plotRegistry`, the keys of the rows it draws in
  * `plotRows`, and the collection it handed autk-plot in `plotCollections`, by the plot's `id`, else its `dataRef`. A table
- * it reads from autk-db is the export the maps of the run draw, from `exports`.
+ * it reads from autk-db is the export the maps of the run draw, from `exports`. `colors` gives the page's plot colors the
+ * run's spec sets, which it sets just before it draws each plot (see {@link setPlotColors}).
  */
-export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotRegistry?: PlotRegistry, plotLinks?: PlotLinks, cache?: GeoJsonCache, computeCache?: ComputeCache, plotRows?: PlotRows, exports?: LayerExports, plotCollections?: PlotCollections): PlotAdapter {
+export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotRegistry?: PlotRegistry, plotLinks?: PlotLinks, cache?: GeoJsonCache, computeCache?: ComputeCache, plotRows?: PlotRows, exports?: LayerExports, plotCollections?: PlotCollections, colors?: () => PlotColors): PlotAdapter {
 
     return {
         async resolvePlot(context: unknown, spec: PlotSpec, index: number = 0): Promise<void> {
@@ -115,6 +118,9 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
 
             const events = (spec.events ?? []) as unknown as AutkPlotEvent[];
 
+            // autk-plot draws the plot as it makes it, in the page's colors: the run's, set here, after every wait of
+            // the run, since another run may have set its own meanwhile.
+            if (colors) setPlotColors(colors());
             const plot = new AutkPlot(div, {
                 type: grammarMarkToPlotType(spec.mark),
                 collection: geojson,
