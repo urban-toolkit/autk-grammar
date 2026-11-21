@@ -191,11 +191,11 @@ await grammar.run({
 
 ### Extent and crop layer
 
-autk-db cuts each source it loads to the workspace's extent and to its crop layer: the first table with a geometry the workspace loads, when that table holds polygons, or the surface of an OpenStreetMap area. autk-db finds the crop layer by its name as each later source loads, so a source that changes that table changes how the sources after it are cut:
+autk-db cuts each CSV, JSON or GeoJSON source it loads to the workspace's extent and to its crop layer: the first table with a geometry the workspace loads, when that table holds polygons, or the surface of an OpenStreetMap area. autk-db finds the crop layer by its name as each of those sources loads, so a source that changes that table changes how the sources after it are cut:
 
 - **A `drop` of it** leaves the workspace without a crop layer, and with its extent: later sources are cut to the extent alone.
 - **A `sql` source saved under its name, or an `update` of it,** gives it other rows, and later sources are cut to those.
-- **A `sql` source that saves a table without a geometry under its name** makes the next source with a geometry fail to load.
+- **A `sql` source that saves a table without a geometry under its name** makes the next CSV, JSON or GeoJSON source with a geometry fail to load.
 
 ```ts
 data: [
