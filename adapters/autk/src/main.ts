@@ -15,7 +15,7 @@ import { wiredAdapters } from "./compute-steps";
 import { tourOf } from "./camera";
 import type { CameraTour } from "./camera";
 import { Targets, PlotRegistry, GeoJsonCache, ComputeCache, ComputeLayerTypes, GrammarEventEmitter } from "./types";
-import type { GrammarMapLayer, GrammarPlotSelectionEvent, MapId } from "./types";
+import type { AutkGrammarOptions, GrammarMapLayer, GrammarPlotSelectionEvent, MapId } from "./types";
 import { DrawnLayer, DrawnLayers, LayerExports, PlotLinks, PlotRows, addPlotLink, isOnMap, mapIdOf } from "./drawn";
 import { translateIds } from "./rows";
 
@@ -48,6 +48,20 @@ function checkViewIds(spec: UrbanSpec): void {
     }
 }
 
+/** The data adapter a host's `wrapDataAdapter` returned, refused unless it loads a source and sets up workspaces. */
+function hostDataAdapter(adapter: DataAdapter | undefined): DataAdapter {
+    if (typeof adapter?.resolveSource !== 'function' || typeof adapter.resolveWorkspaces !== 'function')
+        throw new Error('wrapDataAdapter must return a data adapter with resolveSource and resolveWorkspaces, as the one it is given has: { ...adapter, resolveSource } keeps its resolveWorkspaces.');
+    return adapter;
+}
+
+/** The compute adapter a host's `wrapComputeAdapter` returned, refused unless it runs a pass. */
+function hostComputeAdapter(adapter: ComputeAdapter | undefined): ComputeAdapter {
+    if (typeof adapter?.resolveCompute !== 'function')
+        throw new Error('wrapComputeAdapter must return a compute adapter with resolveCompute, as the one it is given has.');
+    return adapter;
+}
+
 export class AutkGrammar {
     private dataAdapter?: DataAdapter;
     private mapAdapter?: MapAdapter;
@@ -69,9 +83,15 @@ export class AutkGrammar {
 
     readonly interactions = new GrammarEventEmitter();
 
-    constructor(targets?: Targets) {
+    /**
+     * @param targets The elements of the page the maps and plots draw in.
+     * @param options A host's own adapters around the grammar's, which every run calls instead (see {@link AutkGrammarOptions}).
+     */
+    constructor(targets?: Targets, options?: AutkGrammarOptions) {
         // The data and compute adapters share the run's caches as a host's compute steps share theirs (createComputeSteps).
-        ({ data: this.dataAdapter, compute: this.computeAdapter } = wiredAdapters(targets, this._geojsonCache, this._computeCache, this._computeTypes));
+        const { data, compute } = wiredAdapters(targets, this._geojsonCache, this._computeCache, this._computeTypes);
+        this.dataAdapter = options?.wrapDataAdapter ? hostDataAdapter(options.wrapDataAdapter(data)) : data;
+        this.computeAdapter = options?.wrapComputeAdapter ? hostComputeAdapter(options.wrapComputeAdapter(compute)) : compute;
         this.mapAdapter = createMapAdapter(targets, this._layers, this._computeCache, this._maps, this._computeTypes, this._exports);
         this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, this._geojsonCache, this._computeCache, this._plotRows, this._exports);
     }
