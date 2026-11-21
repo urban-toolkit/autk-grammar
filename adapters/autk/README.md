@@ -86,7 +86,7 @@ await grammar.run({
 - **Without `groupBy`,** a heatmap's one band counts the rows near each cell, as `[{ column: '*', aggregateFn: 'count' }]` does: the grammar hands autk-db that count, where autk-db 4.1.1 left to itself drew 0 in every cell.
 - **An entry of `groupBy` without `aggregateFn` is refused,** as `collect` is, since a cell holds one value: autk-db would list the column's values near each cell, and 4.1.1 drew that band as 0 in every cell, with no error.
 - **`count` and `weighted` bands** are right on every autk-db release.
-- **`avg`, `sum`, `min` and `max` bands read 0 in every cell on npm's autk-db 4.1.1,** for any column. Autark's next autk-db release fixes it (our urban-toolkit/autark#132), and Curio's vendored autk-db already carries the fix.
+- **`avg`, `sum`, `min` and `max` bands read 0 in every cell on autk-db 4.1.1,** for any column. urban-toolkit/autark#132, merged into Autark's main, fixes them.
 
 ### Heatmap `normalize`
 
