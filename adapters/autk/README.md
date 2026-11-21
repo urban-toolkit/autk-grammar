@@ -529,7 +529,7 @@ map: {
 | Key | Effect |
 |---|---|
 | `highlightColor` | The color of the features the map draws as picked: by the user, by a layer's `pickedComps`, by a link, or by a call such as `highlightOnMap`, `#rrggbb`. autk-map's is `#5dade2`. |
-| `invalidValueColor` | The color of the features of a layer colored by value whose value autk-map cannot color: one without a value, or with one that is not on the layer's scale, `#rrggbb`. autk-map's is `#ffffff`. |
+| `invalidValueColor` | The color of the features of a layer colored by value whose value autk-map cannot color, `#rrggbb`: on a layer of numbers, a feature without the value or with one that does not read as a finite number (`null` and an empty string read as 0); on a layer of categories, a feature without the value or with a category outside its `colorMapDomain`. A number outside the scale takes the color of the scale's nearer end. autk-map's is `#ffffff`. |
 
 autk-map keeps both for each map, unlike autk-plot's mark and highlight colors, which are the page's: each map of a spec draws in its own.
 

@@ -807,9 +807,11 @@ export type MapSpec = {
      */
     highlightColor?: HexColor,
     /**
-     * The color of the features of a layer colored by value whose value autk-map cannot color: one without a value, or
-     * with one that is not on the layer's scale, `#rrggbb`. Each map has its own; autk-map's is `#ffffff`. Read by the
-     * Autark adapter; the deck.gl adapter ignores it.
+     * The color of the features of a layer colored by value whose value autk-map cannot color, `#rrggbb`: on a layer of
+     * numbers, a feature without the value or with one that does not read as a finite number (`null` and an empty string
+     * read as 0); on a layer of categories, a feature without the value or with a category outside its `colorMapDomain`.
+     * A number outside the scale takes the color of the scale's nearer end. Each map has its own; autk-map's is
+     * `#ffffff`. Read by the Autark adapter; the deck.gl adapter ignores it.
      */
     invalidValueColor?: HexColor,
     /**
