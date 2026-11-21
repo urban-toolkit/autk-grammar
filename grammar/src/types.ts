@@ -1040,7 +1040,9 @@ export type FromFeatureDirective = {
          * Iterate over every feature of `layer`. `all` runs the shader once per feature and sums the
          * outputs. `batched` packs every feature's value into a uniform array named after this entry
          * (matrix entries become each feature's bounding box as four corners), adds a `num_features`
-         * uniform, and runs the shader once.
+         * uniform, and runs the shader once. When an entry reads the geometry (a path that starts with
+         * `geometry.`), each polygon of a MultiPolygon or a GeometryCollection packs as a feature of its
+         * own, with its part's properties, and `num_features` counts the polygons.
          */
         iterate?: 'all' | 'batched';
         /** With `iterate: 'batched'`, drop features whose `path` does not resolve to a finite value. */

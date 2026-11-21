@@ -3,7 +3,7 @@ import type { GpgpuPipelineParams } from '@urban-toolkit/autk-compute';
 // A `fromFeature` path is read as autk-map reads a layer's getFnv: key by key, else as a key with dots in it, such as
 // the `<table>.<column>` a join writes its aggregates under.
 import { valueAtPath } from '@urban-toolkit/autk-core';
-import type { Feature, FeatureCollection } from 'geojson';
+import type { Feature, FeatureCollection, Geometry } from 'geojson';
 
 /** Tables a compute pass can read, keyed by table name. */
 export type ComputeLayers = Record<string, FeatureCollection | undefined> | Map<string, FeatureCollection>;
@@ -134,6 +134,45 @@ function isBatched(value: unknown): boolean {
     return isFromFeature(value) && value.fromFeature.iterate === 'batched';
 }
 
+/** True when a batched entry reads a feature's geometry, as `geometry.coordinates.0` reads a polygon's outer ring. */
+function batchedReadsGeometry(...entries: Array<Record<string, UniformEntry | MatrixEntry> | undefined>): boolean {
+    return entries.some((cfg) => Object.values(cfg ?? {}).some((value) =>
+        isFromFeature(value) && value.fromFeature.iterate === 'batched' && String(value.fromFeature.path).startsWith('geometry.')));
+}
+
+/**
+ * The features a batched entry that reads the geometry packs for `feature`: one for each polygon of a MultiPolygon,
+ * and of a GeometryCollection, nested collections included, each a Polygon with the feature's properties. A member of
+ * a GeometryCollection takes its part's properties over them too, from the `properties.parts` entry whose
+ * `geometryIndex` is its place, as autk-db keeps a building. Any other feature, and one with no polygon, is as it is.
+ */
+function polygonsOf(feature: Feature): Feature[] {
+    const geometry = feature.geometry;
+    const asPolygon = (properties: Feature['properties'], coordinates: number[][][]): Feature =>
+        ({ ...feature, properties, geometry: { type: 'Polygon', coordinates } });
+    if (geometry?.type === 'MultiPolygon') {
+        return geometry.coordinates.length > 0
+            ? geometry.coordinates.map((coordinates) => asPolygon(feature.properties, coordinates))
+            : [feature];
+    }
+    if (geometry?.type !== 'GeometryCollection') return [feature];
+    const { parts, ...shared } = (feature.properties ?? {}) as Record<string, unknown>;
+    const partAt = (index: number): Record<string, unknown> | undefined => (Array.isArray(parts)
+        ? parts.find((part) => part !== null && typeof part === 'object' && (part as Record<string, unknown>).geometryIndex === index)
+        : undefined);
+    const out: Feature[] = [];
+    const collect = (member: Geometry, properties: Feature['properties']): void => {
+        if (member.type === 'Polygon') out.push(asPolygon(properties, member.coordinates));
+        else if (member.type === 'MultiPolygon') member.coordinates.forEach((coordinates) => out.push(asPolygon(properties, coordinates)));
+        else if (member.type === 'GeometryCollection') member.geometries.forEach((nested) => collect(nested, properties));
+    };
+    geometry.geometries.forEach((member, index) => {
+        const part = partAt(index);
+        collect(member, part ? { ...shared, ...part } : feature.properties);
+    });
+    return out.length > 0 ? out : [feature];
+}
+
 /** Bytes one feature adds to the largest array a batched pass packs, or 0 when it packs none. */
 function batchedBytesPerFeature(
     uniforms: Record<string, UniformEntry> | undefined,
@@ -164,10 +203,13 @@ export function maxBatchedFeatures(
  * - a matrix entry becomes each feature's axis-aligned bounding box as four corners
  *   `[xmin,ymin, xmax,ymin, xmax,ymax, xmin,ymax]`, eight values per feature;
  * - `num_features` holds the feature count.
- * Features missing a `required` path are dropped first, and at most {@link maxBatchedFeatures}
- * are packed: as many as the largest array holds in one storage buffer binding of `bindingSize`
- * bytes. Plain numbers pass through; other entries that do not iterate are left to
- * {@link resolveComputeParams}.
+ * When an entry reads the geometry (a path that starts with `geometry.`), each polygon of a
+ * MultiPolygon or of a GeometryCollection is packed as a feature of its own, with its part's
+ * properties (see {@link polygonsOf}): `geometry.coordinates.0` then reads every polygon's
+ * outer ring, and the scalar entries repeat beside it. Features missing a `required` path are
+ * dropped next, and at most {@link maxBatchedFeatures} are packed: as many as the largest array
+ * holds in one storage buffer binding of `bindingSize` bytes. Plain numbers pass through; other
+ * entries that do not iterate are left to {@link resolveComputeParams}.
  */
 export function buildBatchedUniforms(
     uniforms: Record<string, UniformEntry> | undefined,
@@ -177,6 +219,9 @@ export function buildBatchedUniforms(
 ): { uniforms: Record<string, number>; uniformArrays: Record<string, number[]> } {
     const outUniforms: Record<string, number> = {};
     const outArrays: Record<string, number[]> = {};
+
+    // A polygon's own tags decide whether it has a `required` value, so it is a feature of its own before the filter.
+    if (batchedReadsGeometry(uniforms, matrices)) sources = sources.flatMap(polygonsOf);
 
     const required: string[] = [];
     for (const cfg of [uniforms, matrices]) {
@@ -243,16 +288,48 @@ export function buildBatchedUniforms(
 }
 
 /**
+ * The table a pass runs over as autk-compute reads it. autk-compute packs a matrix attribute row
+ * by row, and the rows of a MultiLineString's `geometry.coordinates` are lines, not points, so
+ * when an attribute reads the geometry each MultiLineString is handed as one LineString of its
+ * lines' points, in their order. Every other feature is the same object, and so is the table when
+ * it holds no MultiLineString or no attribute reads the geometry. {@link runCompute} gives each
+ * feature of the result its own geometry back.
+ */
+function asComputeReadsIt(block: GpgpuComputeSpec, collection: FeatureCollection): FeatureCollection {
+    if (!Object.values(block.attributes ?? {}).some((path) => String(path).startsWith('geometry.'))) return collection;
+    let joined = false;
+    const features = collection.features.map((feature) => {
+        if (feature.geometry?.type !== 'MultiLineString') return feature;
+        joined = true;
+        return { ...feature, geometry: { type: 'LineString' as const, coordinates: feature.geometry.coordinates.flat() } };
+    });
+    return joined ? { ...collection, features } : collection;
+}
+
+/** *result*, computed from *handed* (`asComputeReadsIt` of *collection*), with each feature's own geometry of *collection*. */
+function withOwnGeometries(result: FeatureCollection, collection: FeatureCollection, handed: FeatureCollection): FeatureCollection {
+    if (handed === collection) return result;
+    return {
+        ...result,
+        features: result.features.map((feature, i) => (handed.features[i] === collection.features[i]
+            ? feature
+            : { ...feature, geometry: collection.features[i].geometry })),
+    };
+}
+
+/**
  * Turns a compute pass into the parameters of one GPU dispatch. Pure: it reads `layers` and runs
  * nothing. With `iterate: 'all'`, pass the feature index as `iterateIndex` for each dispatch (see
- * {@link runCompute}). Throws when the pass's `dataRef` is not in `layers`.
+ * {@link runCompute}). Throws when the pass's `dataRef` is not in `layers`. When an attribute
+ * reads the geometry, the table it hands autk-compute holds each MultiLineString as one
+ * LineString of its points ({@link runCompute} gives the result its own geometries back).
  */
 export function resolveComputeParams(block: GpgpuComputeSpec, layers: ComputeLayers, iterateIndex?: number): GpgpuPipelineParams {
     const collection = lookup(layers, block.dataRef);
     if (!collection) throw new Error(`compute: table "${block.dataRef}" is not loaded`);
 
     const params: GpgpuPipelineParams = {
-        collection,
+        collection: asComputeReadsIt(block, collection),
         variableMapping: block.attributes,
         wgslBody: joinWgsl(block.wgslFunction),
     };
@@ -295,10 +372,14 @@ function outputColumns(block: GpgpuComputeSpec): string[] {
 /**
  * Runs a compute pass. Without iteration, or with `batched`, that is one dispatch. With `all` it is
  * one dispatch per feature of the iterated layer, and each output column holds the sum over them.
+ * Each feature of the result keeps its own geometry, whatever autk-compute was handed.
  */
 export async function runCompute(block: GpgpuComputeSpec, layers: ComputeLayers, run: ComputeRunner): Promise<FeatureCollection> {
     const iterate = findIterateSource(block);
-    if (iterate?.mode !== 'all') return run(resolveComputeParams(block, layers));
+    if (iterate?.mode !== 'all') {
+        const params = resolveComputeParams(block, layers);
+        return withOwnGeometries(await run(params), lookup(layers, block.dataRef)!, params.collection);
+    }
 
     const target = lookup(layers, block.dataRef);
     if (!target) throw new Error(`compute: table "${block.dataRef}" is not loaded`);
@@ -312,7 +393,8 @@ export async function runCompute(block: GpgpuComputeSpec, layers: ComputeLayers,
 
     const count = lookup(layers, iterate.layer)?.features?.length ?? 0;
     for (let i = 0; i < count; i++) {
-        const step = await run({ ...resolveComputeParams(block, layers, i), collection: summed });
+        // The sums' features hand autk-compute the table as it reads it; the sums keep their own geometries.
+        const step = await run({ ...resolveComputeParams(block, layers, i), collection: asComputeReadsIt(block, summed) });
         summed.features.forEach((f, j) => {
             const dst = (f.properties as Record<string, unknown> | null)?.compute as Record<string, number> | undefined;
             const src = (step.features[j]?.properties as Record<string, unknown> | null)?.compute as Record<string, unknown> | undefined;

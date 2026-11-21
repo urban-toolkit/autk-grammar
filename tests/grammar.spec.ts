@@ -3577,9 +3577,9 @@ test('colors the ten noisiest neighborhoods of plot-colors alike on its map and 
 
 test("reads each building part's outline in a pass's fromFeature table, as a GeoJSON source in its workspace's CRS gave it", async ({ page }) => {
     // Three building parts, each 20 m wide, and four spots south of them, written in World Mercator meters, the
-    // workspace's CRS, as a host that hands its own tables writes them. autk-db keeps each feature of a buildings table
-    // in its building model, the geometry inside a GeometryCollection, where geometry.coordinates.0 finds no outline:
-    // the pass packed three empty boxes, and every spot read a width of 0.
+    // workspace's CRS, as a host that hands its own tables writes them. The pass reads them as the source gave them,
+    // each part with its own outline, not as autk-db keeps them in its building model: read so before, they packed
+    // three empty boxes, and every spot read a width of 0.
     const [x0, y0] = [-8235000, 4946000];
     const square = (x: number, y: number, size: number) =>
         ({ type: 'Polygon', coordinates: [[[x, y], [x + size, y], [x + size, y + size], [x, y + size], [x, y]]] });
