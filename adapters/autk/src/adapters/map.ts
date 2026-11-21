@@ -301,18 +301,36 @@ function checkPositions(positions: unknown, key: string, layerId: string): void 
         throw new Error(`Layer "${layerId}": ${key} must list the positions of features the layer draws, whole numbers from 0, not ${JSON.stringify(positions)}.`);
 }
 
-/** The positions each layer of a map hides by its `skippedComps`, by the layer's id. */
-const hiddenPositions = new WeakMap<AutkMap, Map<string, ReadonlySet<number>>>();
+/**
+ * The positions of the features `layer` hides now, as autk-map's own getters give them: a vector layer's `skippedIds`,
+ * and on a points layer, which keeps no such list, each feature whose first point instance its `skippedVertices` hides,
+ * its components holding their instances up to a running count, `nPoints`. So the calls that hide and show features,
+ * autk-map's `setSkippedIds` and `clearSkippedIds` and the layer's own, a host's after the run included, count.
+ */
+function hiddenNow(layer: unknown): ReadonlySet<number> {
+    const { skippedIds, skippedVertices, components } = (layer ?? {}) as { skippedIds?: unknown; skippedVertices?: unknown; components?: unknown };
+    if (Array.isArray(skippedIds)) return new Set(skippedIds as number[]);
+    const hidden = new Set<number>();
+    if (!ArrayBuffer.isView(skippedVertices) || !Array.isArray(components)) return hidden;
+    const vertices = skippedVertices as unknown as ArrayLike<number>;
+    const counts = components as Array<{ nPoints?: number } | null>;
+    counts.forEach((component, position) => {
+        const first = position > 0 ? Number(counts[position - 1]?.nPoints) : 0;
+        if (first < Number(component?.nPoints) && vertices[first] > 0) hidden.add(position);
+    });
+    return hidden;
+}
 
 /**
- * The positions of `selection`, picked on the layer `layerId` of `map`, that the layer shows. autk-map 4.1.1's picking
- * passes draw the hidden features of a points, polygons or buildings layer too, so a pick can find a feature the layer's
- * `skippedComps` hides: the grammar leaves it out of the picks it forwards and of what it hands the plots linked to the
- * layer.
+ * The positions of `selection`, picked on the layer `layerId` of `map`, that the layer shows as the pick arrives.
+ * autk-map 4.1.1's picking passes draw the hidden features of a points, polygons or buildings layer too, so a pick can
+ * find a feature the layer hides: the grammar leaves it out of the picks it forwards and of what it hands the plots
+ * linked to the layer.
  */
 export function shownPicks(map: AutkMap, layerId: string, selection: number[]): number[] {
-    const hidden = hiddenPositions.get(map)?.get(layerId);
-    return hidden ? selection.filter((position) => !hidden.has(position)) : selection;
+    if (selection.length === 0) return selection;
+    const hidden = hiddenNow(map.layerManager.searchByLayerId(layerId));
+    return hidden.size > 0 ? selection.filter((position) => !hidden.has(position)) : selection;
 }
 
 /** Refuses positions on a raster layer, which draws no features, and positions past the last feature a layer draws. */
@@ -641,13 +659,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 checkDrawnPositions(layerRef.skippedComps, 'skippedComps', layerId, type, drawnRows.length);
                 // AutkMap.setSkippedIds passes over a points layer, which hides features of its own: the layer's own call
                 // hides them on every type of layer.
-                const layer = map.layerManager.searchByLayerId(layerId);
-                layer?.setSkippedIds(layerRef.skippedComps);
-                // The positions hidden, as the layer holds them: a vector layer gives its own, and a points layer hides
-                // each position it is given.
-                const hidden = (layer as unknown as { skippedIds?: number[] } | null)?.skippedIds;
-                if(!hiddenPositions.has(map)) hiddenPositions.set(map, new Map());
-                hiddenPositions.get(map)!.set(layerId, new Set(Array.isArray(hidden) ? hidden : layerRef.skippedComps));
+                map.layerManager.searchByLayerId(layerId)?.setSkippedIds(layerRef.skippedComps);
             }
             drawn.push({ rows: drawnRows, collection: data });
         }
