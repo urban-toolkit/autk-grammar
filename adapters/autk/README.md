@@ -841,6 +841,7 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 | `createDataAdapter(targets?, cache?, computeCache?, computeTypes?)` | The data adapter. Its `resolveWorkspaces(db, workspaces)` sets up a spec's `workspaces` before the first source loads, and its `resolveSource(db, source)` loads one `data` entry. Each takes an autk-db database, a new one when `db` is undefined, and returns it. `cache` receives each GeoJSON table and each table a join or an update wrote. `computeCache` and `computeTypes` are the compute adapter's `cache` and `types`: each table a source writes leaves them, so the maps and plots read what a source after compute wrote. |
 | `createComputeAdapter(cache?, types?, sources?)` | The compute adapter. Its `resolveCompute(db, pass)` runs one `compute` entry, on the GPU or, for a windows or clusters pass, on the CPU. The results are kept in `cache`, and in autk-db too for a pass with `writeBack`; `types` receives the layer type of each table a pass wrote under its own `outputTableName`. `sources` is the cache `createDataAdapter` fills, from which a pass reads a `fromFeature` table a GeoJSON source loaded in its workspace's CRS. |
 | `createComputeSteps()` | A run's workspaces, sources and compute passes, one call at a time, on an autk-db database the host owns: a data adapter and a compute adapter wired to one another as `AutkGrammar` wires its own, and each pass's result as the grammar holds it (see [Compute steps on a host's database](#compute-steps-on-a-hosts-database)). |
+| `AutkGrammar`'s options `wrapComputeAdapter` and `wrapDataAdapter` (`AutkGrammarOptions`) | A host's own adapters around the grammar's, which every run of the grammar calls instead: a check around each pass, a kind of source of its own, or a database of its own for the run (see [A host's own adapters around a run's](#a-hosts-own-adapters-around-a-runs)). |
 | `dataPhases(spec)` | The entries of a spec's `data` in the order the grammar runs them: `before`, the sources it runs before the compute passes, and `after`, those it runs after them (see [`after`](#after)). It refuses an `after` other than `'compute'`, and a source after compute that reads a table a pass writes without `writeBack`. A host that loads the data on a server and runs the passes in a browser loads `before` on the server, and runs `after` in the browser once the passes have run, with the compute adapter's caches handed to the data adapter. |
 | `enterWorkspace(db, workspace?)` | Makes an entry's workspace (the default one without a name) the one autk-db works in, and switches only when another is current. Every adapter calls it before it reads or writes an entry's tables. |
 | `tableKey(workspace, name)` | The key of a table in those caches: its name in the default workspace, `<workspace>/<name>` in another. |
@@ -896,14 +897,56 @@ const counts = await db.getTable('largest_blocks');
 - **One set of steps runs one spec:** a new run takes `createComputeSteps()` again.
 - **The main entry alone exports it,** since a pass runs on autk-compute or autk-core, which `./data` never imports. So a module that runs a spec's passes on its own database takes the main entry only.
 
-A host that reached into an `AutkGrammar` for its adapters and caches calls the steps instead, and the grammar's fields stay its own:
+### A host's own adapters around a run's
 
-| `AutkGrammar`'s private field | With the steps |
+`new AutkGrammar(targets, options)` takes two options. Each is a function from one of the grammar's adapters to the host's own, which every run of the grammar calls instead:
+
+| Option | Effect |
 |---|---|
-| `dataAdapter` | `steps.resolveWorkspaces(db, workspaces)` and `steps.resolveSource(db, source)`. |
-| `computeAdapter` | `steps.resolveCompute(db, pass)`. The steps have the compute adapter's shape, so a host that checks each pass wraps them. |
-| `_computeCache` | `steps.computed(name, workspace)?.collection`, and `steps.computed(name, workspace) !== undefined` for whether a pass's result is held. |
-| `_computeTypes` | `steps.computed(name, workspace)?.layerType`. |
+| `wrapComputeAdapter(adapter)` | Returns the compute adapter every pass of every run goes through. A host that checks each pass, in GPU error scopes for example, calls the given adapter's `resolveCompute(context, pass)` inside its check, and returns what that returns. |
+| `wrapDataAdapter(adapter)` | Returns the data adapter the `workspaces` and every source of every run go through, those before compute and those after. It keeps `resolveWorkspaces`: `{ ...adapter, resolveSource }` keeps the grammar's. A host that loads a kind of source of its own, such as a raster it holds as bytes, loads it there and hands every other source to the given adapter. |
+
+- **Each function is called once, as the grammar is made,** with the grammar's own adapter, already wired to the grammar's caches, so the maps and plots read what the host's adapters run.
+- **Each call of a data adapter takes the run's database,** undefined until the workspaces or the first source make one, and returns the database the run goes on with.
+- **A function that returns an adapter without those calls is refused** as the grammar is made. A grammar made without the options runs as before.
+
+A host that keeps the run's database in hand, to read its tables or to end its worker, hands the grammar's data adapter its own database where it is given none:
+
+```ts
+import { AutkDb } from '@urban-toolkit/autk-db';
+import { AutkGrammar } from '@urban-toolkit/autk-grammar';
+
+const db = new AutkDb();
+await db.init();
+const grammar = new AutkGrammar({ map: 'map' }, {
+  wrapDataAdapter: (adapter) => ({
+    resolveWorkspaces: (context, workspaces) => adapter.resolveWorkspaces(context ?? db, workspaces),
+    resolveSource: (context, source) => adapter.resolveSource(context ?? db, source),
+  }),
+  wrapComputeAdapter: (adapter) => ({
+    resolveCompute: async (context, pass) => {
+      console.time(`pass over ${pass.type ?? 'gpgpu'}`);
+      try { return await adapter.resolveCompute(context, pass); }
+      finally { console.timeEnd(`pass over ${pass.type ?? 'gpgpu'}`); }
+    },
+  }),
+});
+await grammar.run(spec); // db holds the run's tables, and stays in the host's hands whether the run ends or fails
+```
+
+### Instead of `AutkGrammar`'s private fields
+
+A host that reached into an `AutkGrammar` for its adapters, its caches or its database calls these instead, and the grammar's fields stay its own:
+
+| What the host did | Instead |
+|---|---|
+| Read `dataAdapter` to load a spec's sources on a database of its own | `createComputeSteps()`, then `steps.resolveWorkspaces(db, workspaces)` and `steps.resolveSource(db, source)`. |
+| Read `computeAdapter` to run a spec's passes there | `steps.resolveCompute(db, pass)`. The steps have the compute adapter's shape, so a host that checks each pass wraps them. |
+| Read `_computeCache` | `steps.computed(name, workspace)?.collection`, and `steps.computed(name, workspace) !== undefined` for whether a pass's result is held. |
+| Read `_computeTypes` | `steps.computed(name, workspace)?.layerType`. |
+| Replaced `computeAdapter` to wrap the passes of a run | `new AutkGrammar(targets, { wrapComputeAdapter })`. |
+| Replaced `dataAdapter` to wrap the sources of a run | `new AutkGrammar(targets, { wrapDataAdapter })`. |
+| Read the run's database from `grammarEngine.context` | Its own database, handed to the grammar's data adapter through `wrapDataAdapter`, as above. |
 
 ### Arranging the views
 
