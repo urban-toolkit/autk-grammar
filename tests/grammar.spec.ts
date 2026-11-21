@@ -2240,7 +2240,8 @@ test("runs passes written back and sources after compute on a database the host 
 
 // A host made AutkGrammar with adapters of its own around the grammar's (wrapDataAdapter and wrapComputeAdapter), which
 // every run calls instead. window.runWrapped makes them: they record what goes through them and hand it on, the data
-// adapter handing the grammar's a database the page made.
+// adapter handing the grammar's a database the page made, as the README's example does. window.runWrappedAgain runs
+// that grammar again.
 
 test("sends a run's workspaces, every source and every pass through a host's own adapters around the grammar's, on the host's database", async ({ page }) => {
     const spec: UrbanSpec = {
@@ -2286,6 +2287,44 @@ test("sends a run's workspaces, every source and every pass through a host's own
     const unwrapped = await page.evaluate(() => window.drawnRows('map0', 'squares').map((row) =>
         `${row?.name} ${(row?.compute as { cluster?: number } | undefined)?.cluster} ${(row?.sjoin as { count?: { pins?: number } } | undefined)?.count?.pins}`));
     expect(unwrapped.sort()).toEqual(drawn);
+});
+
+test("runs the README's after example twice on one grammar, each run on a database of the host's own that wrapDataAdapter hands it", async ({ page }) => {
+    // The README's example of a source after compute: an OpenStreetMap area, a clusters pass written back, and a sql
+    // source that counts the buildings of each block the pass kept in autk-db, plotted.
+    const spec: UrbanSpec = {
+        data: [
+            { type: 'osm', outputTableName: 'fidi', pbfFileUrl: '/data/lower_mnt.osm.pbf', queryArea: { bbox: [-74.0132, 40.7032, -74.0072, 40.7088] }, autoLoadLayers: { layers: ['buildings'] } },
+            {
+                type: 'sql',
+                outputTableName: 'largest_blocks',
+                query: "SELECT CAST(properties->'compute'->>'block' AS INTEGER) AS block, CAST(count(*) AS INTEGER) AS buildings FROM fidi_blocks GROUP BY block ORDER BY buildings DESC, block LIMIT 10",
+                after: 'compute',
+            },
+        ],
+        compute: [{ type: 'clusters', dataRef: 'fidi_buildings', outputColumnName: 'block', outputTableName: 'fidi_blocks', writeBack: true }],
+        plot: { dataRef: 'largest_blocks', mark: 'bar', axis: ['block', 'buildings'], tickFormats: [',~f', ',~f'] },
+    };
+    const largest = 'SELECT block, buildings FROM largest_blocks ORDER BY buildings DESC, block';
+    const bars = () => page.evaluate(() => document.querySelectorAll('#plot rect.autkMark').length);
+
+    const first = await page.evaluate((s) => window.runWrapped(s), spec);
+    expect([first.onHostDb, first.databases]).toEqual([true, 1]);
+    const blocks = await page.evaluate((query) => window.hostRows(query), largest);
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(await bars()).toBe(blocks.length);
+
+    // The same grammar runs the spec again, as a host that keeps one grammar does. autk-db keeps a database's tables, its
+    // workspace's extent and crop, and its grid: it refuses an OpenStreetMap source once the workspace holds another
+    // table, such as the blocks the first run's pass wrote back.
+    const second = await page.evaluate((s) => window.runWrappedAgain(s), spec);
+    // The wrap functions were called once, as the grammar was made, and the run went through them as the first did.
+    expect([...second.wrapped].sort()).toEqual(['compute', 'data']);
+    expect(second.steps).toEqual(first.steps);
+    // The run went on a database of its own, the second the host made, which holds this run's tables: the same blocks.
+    expect([second.onHostDb, second.databases]).toEqual([true, 2]);
+    expect(await page.evaluate((query) => window.hostRows(query), largest)).toEqual(blocks);
+    expect(await bars()).toBe(blocks.length);
 });
 
 // What a run handed each view, which a host reads with the collection of each layer mapLayers gives and with

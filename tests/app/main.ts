@@ -74,11 +74,12 @@ export type ComputedRows = { layerType: string | null; rows: Array<Record<string
 export type HostRun = { afterPasses: Record<string, ComputedRows>; atEnd: Record<string, ComputedRows> };
 
 /**
- * What a host's own adapters around the grammar's saw of a run (`window.runWrapped`): each call of the wrap functions,
- * each workspace, source and pass the run sent through them, in order, and whether the run went on with the database
- * the host's data adapter handed the grammar's.
+ * What a host's own adapters around the grammar's saw of a run (`window.runWrapped`, `window.runWrappedAgain`): each
+ * call of the wrap functions since the grammar was made, each workspace, source and pass the run sent through them, in
+ * order, whether the run went on with the database the host's data adapter handed the grammar's, and how many databases
+ * the host's data adapter has made over the grammar's runs.
  */
-export type WrappedRun = { wrapped: string[]; steps: string[]; onHostDb: boolean };
+export type WrappedRun = { wrapped: string[]; steps: string[]; onHostDb: boolean; databases: number };
 
 const examples = import.meta.glob<{ spec: UrbanSpec }>('../../gallery/src/examples/*.ts');
 
@@ -108,6 +109,7 @@ declare global {
         runOnHostDb: (spec: UrbanSpec, names: string[]) => Promise<HostRun>;
         hostRows: (query: string) => Promise<Array<Record<string, unknown>>>;
         runWrapped: (spec: UrbanSpec) => Promise<WrappedRun>;
+        runWrappedAgain: (spec: UrbanSpec) => Promise<WrappedRun>;
         handedToLayer: (canvasId: string, dataRef: string, layerId: string) => boolean;
         readMap: (canvasId: string) => Promise<string>;
         mapLayers: (canvasId: string) => LayerState[];
@@ -377,56 +379,82 @@ window.hostRows = async (query: string) => {
 };
 
 /**
+ * The grammar `runWrapped` made last, with each call of its wrap functions, the steps of its last run, and each database
+ * its host's data adapter made, in order.
+ */
+type WrappedHost = { grammar?: AutkGrammar; wrapped: string[]; steps: string[]; databases: AutkDb[] };
+let wrappedHost: WrappedHost | undefined;
+
+/**
  * Runs a spec as `runSpec` does, on a grammar made with a host's own adapters around its own (`wrapDataAdapter` and
  * `wrapComputeAdapter`): they record each call of the wrap functions and each workspace, source and pass the run sends
  * through them, then hand it to the grammar's adapter. The data adapter hands the grammar's an autk-db database the page
- * makes where it is given none, as a host that keeps the run's database does; the database stays in `window.hostDb`, for
- * `hostRows`. A step names its entry by its type and the table it writes.
+ * makes where it is given none, as the README's example of a host's adapters does: one database, made once, for every
+ * run of the grammar (`runWrappedAgain` runs it again). The database stays in `window.hostDb`, for `hostRows`. A step
+ * names its entry by its type and the table it writes.
  */
 window.runWrapped = async (spec: UrbanSpec) => {
-    const seen: WrappedRun = { wrapped: [], steps: [], onHostDb: false };
-    let db: AutkDb | undefined;
+    const host: WrappedHost = { wrapped: [], steps: [], databases: [] };
     const hostDb = async (): Promise<AutkDb> => {
-        if (!db) {
-            db = new AutkDb();
+        if (host.databases.length === 0) {
+            const db = new AutkDb();
             await db.init();
+            host.databases.push(db);
             window.hostDb = db;
         }
-        return db;
+        return host.databases[0];
     };
     const named = (entry: { type?: string; outputTableName?: string; dataRef?: string }) =>
         `${entry.type ?? 'gpgpu'} ${entry.outputTableName ?? entry.dataRef}`;
     const options: AutkGrammarOptions = {
         wrapDataAdapter: (adapter) => {
-            seen.wrapped.push('data');
+            host.wrapped.push('data');
             return {
                 ...adapter,
                 async resolveWorkspaces(context, workspaces) {
-                    seen.steps.push('workspaces');
+                    host.steps.push('workspaces');
                     return adapter.resolveWorkspaces(context ?? await hostDb(), workspaces);
                 },
                 async resolveSource(context, source) {
-                    seen.steps.push(`source ${named(source as { type?: string; outputTableName?: string; dataRef?: string })}`);
+                    host.steps.push(`source ${named(source as { type?: string; outputTableName?: string; dataRef?: string })}`);
                     return adapter.resolveSource(context ?? await hostDb(), source);
                 },
             };
         },
         wrapComputeAdapter: (adapter) => {
-            seen.wrapped.push('compute');
+            host.wrapped.push('compute');
             return {
                 async resolveCompute(context, pass) {
-                    seen.steps.push(`pass ${named(pass)}`);
+                    host.steps.push(`pass ${named(pass)}`);
                     return adapter.resolveCompute(context, pass);
                 },
             };
         },
     };
-    const grammar = new AutkGrammar(freshStage(spec, 'one'), options);
-    window.grammar = grammar;
-    await grammar.run(spec);
-    seen.onHostDb = db !== undefined && lastDb() === db;
-    return seen;
+    host.grammar = new AutkGrammar(freshStage(spec, 'one'), options);
+    window.grammar = host.grammar;
+    wrappedHost = host;
+    return runOnWrappedHost(spec);
 };
+
+/**
+ * Runs a spec again on the grammar `runWrapped` made, in the elements it made, as a host that keeps one grammar does:
+ * the plot elements are emptied first, as `runAgain` does. Returns what the host's adapters saw of this run.
+ */
+window.runWrappedAgain = async (spec: UrbanSpec) => {
+    if (!wrappedHost?.grammar || window.grammar !== wrappedHost.grammar) throw new Error('No grammar runWrapped made is the page\'s: call runWrapped first.');
+    document.querySelectorAll('#stage [id^="plot"]').forEach((element) => { element.innerHTML = ''; });
+    return runOnWrappedHost(spec);
+};
+
+/** Runs a spec on the grammar `runWrapped` made, and gives what its host's adapters saw of the run. */
+async function runOnWrappedHost(spec: UrbanSpec): Promise<WrappedRun> {
+    const host = wrappedHost!;
+    host.steps.length = 0;
+    await host.grammar!.run(spec);
+    const db = host.databases[host.databases.length - 1];
+    return { wrapped: [...host.wrapped], steps: [...host.steps], onHostDb: db !== undefined && lastDb() === db, databases: host.databases.length };
+}
 
 /**
  * Reads a map canvas as a PNG data URL, in the animation frame that draws the map.
