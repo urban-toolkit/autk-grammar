@@ -373,8 +373,10 @@ export function applyCamera(map: AutkMap, camera: CameraSpec): void {
 
 /**
  * Raises the map's ground to the heights of a raster band, through autk-map's `enableTerrainMode`, once its layers are
- * loaded. autk-map drapes the flat layers over the ground the raster covers and fits the view to it. It refuses a
- * `dataRef` that names no raster table of the map's workspace, and a `band` that names none of several bands.
+ * loaded. autk-map drapes the flat layers over the ground the raster covers, and the view is fitted to that ground with
+ * autk-map's `resetCamera`, which in terrain mode frames the heights: autk-map 4.1.1 also frames them as it enables the
+ * terrain, while Autark's main keeps the view the map's layers set. It refuses a `dataRef` that names no raster table of
+ * the map's workspace, and a `band` that names none of several bands.
  */
 async function loadTerrain(map: AutkMap, context: AutkDb, terrain: TerrainSpec, index: number): Promise<void> {
     const refuse = (message: string) => new Error(`Map ${index}: terrain ${message}`);
@@ -387,6 +389,7 @@ async function loadTerrain(map: AutkMap, context: AutkDb, terrain: TerrainSpec, 
     const band = rasterBand(collection, terrain.band, (message) => refuse(`band ${message}`));
     try {
         map.enableTerrainMode(collection, band);
+        map.resetCamera();
     } catch (error) {
         throw refuse(`"${terrain.dataRef}": ${error instanceof Error ? error.message : String(error)}`);
     }
