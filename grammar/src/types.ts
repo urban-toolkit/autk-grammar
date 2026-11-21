@@ -619,10 +619,11 @@ export type MapLayerSpec = {
     normalization?: { mode: NormalizationMode; lowerPercentile?: number; upperPercentile?: number },
     /**
      * How the map draws the layer's table, in place of the table's own type, among the types of its kind of geometry: a
-     * table of polygons as `polygons`, `surface`, `parks`, `water` or `buildings` (raised by its heights), a table of lines
-     * as `polylines` or `roads`, a table of points as `points`, and a raster as `raster`. autk-map draws surface, parks,
-     * water and roads layers below the others, in that order, whatever the order of `layerRefs`. Read by the Autark
-     * adapter; the deck.gl adapter ignores it.
+     * table of polygons as `polygons`, `surface`, `parks`, `water` or `buildings` (each feature raised by its `height`,
+     * `building:height`, `levels` or `building:levels`; a buildings layer none of whose features has one is refused,
+     * unless `buildingsZeroHeight` raises them), a table of lines as `polylines` or `roads`, a table of points as
+     * `points`, and a raster as `raster`. autk-map draws surface, parks, water and roads layers below the others, in
+     * that order, whatever the order of `layerRefs`. Read by the Autark adapter; the deck.gl adapter ignores it.
      */
     layerType?: LayerType,
     /**

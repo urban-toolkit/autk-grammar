@@ -617,12 +617,12 @@ A layer draws its table as the table's own type, which its source or compute pas
 
 | Table | `layerType` |
 |---|---|
-| Polygons, and the surface, parks, water and buildings tables | `polygons`, `surface`, `parks`, `water`, or `buildings`, raised by each feature's height |
+| Polygons, and the surface, parks, water and buildings tables | `polygons`, `surface`, `parks`, `water`, or `buildings`, each feature raised by its `height`, `building:height`, `levels` or `building:levels` |
 | Lines, and the roads tables | `polylines`, or `roads`, each line as wide as its kind of road |
 | Points | `points` |
 | A raster | `raster` |
 
-A run refuses a type of another kind of geometry, for which autk-map would draw nothing. autk-map draws surface, parks, water and roads layers below every other layer, in that order, whatever the order of `layerRefs`.
+A run refuses a type of another kind of geometry, for which autk-map would draw nothing. It also refuses a layer whose features autk-map makes nothing of, naming the cause: as `buildings`, features none of which has `height`, `building:height`, `levels` or `building:levels`, the four keys autk-core raises a building part from (or with `buildingsZeroHeight`, none of which has a height above its minimum). A table with no feature to draw is not refused. autk-map draws surface, parks, water and roads layers below every other layer, in that order, whatever the order of `layerRefs`.
 
 ```ts
 map: {
