@@ -2126,6 +2126,24 @@ test("joins after compute into a table a pass wrote back, and from one by a comp
     expect([zoneLayer?.isColorMap, zoneLayer?.domain]).toEqual([true, [0, 1]]);
 });
 
+test("joins after compute by the column of an earlier pass without writeBack, which a later pass in place keeps in autk-db with it", async ({ page }) => {
+    // The second pass reads the first's result from the grammar's cache, and its write-back sets each zone's properties
+    // whole, so autk-db holds both passes' columns.
+    await runSpec(page, {
+        data: [area, zones, { type: 'join', dataRef: 'area', joinDataRef: 'zones', groupBy: [{ column: 'compute.twice', aggregateFn: 'sum' }], after: 'compute' }],
+        compute: [
+            { dataRef: 'zones', attributes: { v: 'v' }, outputColumnName: 'twice', wgslFunction: 'return v * 2.0;' },
+            { type: 'clusters', dataRef: 'zones', outputColumnName: 'block', writeBack: true },
+        ],
+    });
+    const kept = await page.evaluate(async () => (await window.dbLayer('zones')).features
+        .map((feature) => [feature.properties?.id, feature.properties?.compute?.twice, feature.properties?.compute?.block])
+        .sort((a, b) => a[0] - b[0]));
+    expect(kept).toEqual([[0, 0, 0], [1, 20, 1], [2, 40, 2], [3, 60, 3]]);
+    // The join summed the first pass's column over the four zones: 0 + 20 + 40 + 60.
+    expect(await page.evaluate(async () => (await window.dbLayer('area')).features[0]?.properties?.sjoin?.sum?.['zones.compute.twice'])).toBe(120);
+});
+
 test('builds a heatmap after compute from the windows a pass wrote back', async ({ page }) => {
     const buildings: DataSourceSpec = {
         type: 'geojson',

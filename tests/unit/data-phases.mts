@@ -63,6 +63,21 @@ test('takes a source after compute that reads what passes kept in autk-db, or a 
     takes({ data: [csv('blocks'), join('blocks', 'pins')], compute: [clusters('blocks')] });
 });
 
+test("takes a source after compute that reads a table whose last pass writes it with writeBack, which keeps the earlier passes' columns", () => {
+    // Passes chain through the grammar's cache, and a write-back in place sets each row's properties whole, so the last
+    // pass that writes a table decides what autk-db holds.
+    const takes = (spec: UrbanSpec) => assert.deepEqual(dataPhases(spec).after, (spec.data ?? []).filter((source) => (source as { after?: string }).after));
+    // A GPGPU pass in place without writeBack, then a clusters pass in place with it, which reads the first's result: a
+    // join after compute reads the first's column in autk-db.
+    const shade = { dataRef: 'fidi_buildings', attributes: { h: 'height' }, outputColumnName: 'shade', wgslFunction: 'return h;' } as ComputeSpec;
+    takes({
+        data: [join('zones', 'fidi_buildings', { groupBy: [{ column: 'compute.shade', aggregateFn: 'avg' }], ...after })],
+        compute: [shade, clusters('fidi_buildings', { outputColumnName: 'block', writeBack: true })],
+    });
+    // A new table a pass wrote without writeBack, then a pass in place over it with writeBack.
+    takes({ data: [join('blocks', 'w', after)], compute: [windows('buildings', 'w'), clusters('w', { writeBack: true })] });
+});
+
 test('the engine runs the sources before compute, then the passes, then the sources after compute, then maps and plots', async () => {
     const calls: string[] = [];
     const record = (what: string) => async (context: unknown, spec: { outputTableName?: string; dataRef?: string; type?: string }) => {
