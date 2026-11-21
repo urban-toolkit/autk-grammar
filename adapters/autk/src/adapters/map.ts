@@ -75,6 +75,16 @@ function bandValues(collection: { features?: { properties?: unknown }[] }, band:
 }
 
 /**
+ * Whether a color map config's scheme is categorical. autk-core 4.1.1 gives every config an interpolator. On Autark's
+ * main a config can also be made of colors alone, with no interpolator and a `type` that says whether it is
+ * categorical, so both are read here.
+ */
+function isCategoricalConfig(config: ColorMapConfig): boolean {
+    if (config.interpolator !== undefined) return ColorMap.isCategorical(config.interpolator);
+    return (config as unknown as { type?: string }).type === 'categorical';
+}
+
+/**
  * The domain of a raster's color scale when the layer sets a range, a center or reverse, or `undefined` when it
  * sets none of them, the scheme is categorical, or, without a range, the band has no value. A range is the domain:
  * `[low, high]`, or `[low, center, high]` with a center. Without one, a scale centered on `center` runs from the
@@ -84,7 +94,7 @@ function bandValues(collection: { features?: { properties?: unknown }[] }, band:
 export function rasterScaleDomain(
     values: Float32Array | null, config: ColorMapConfig, center?: number, reverse?: boolean, range?: [number, number],
 ): number[] | undefined {
-    if (ColorMap.isCategorical(config.interpolator)) return undefined;
+    if (isCategoricalConfig(config)) return undefined;
     if (range != null) {
         const domain = center != null ? [range[0], center, range[1]] : [range[0], range[1]];
         return reverse === true ? domain.reverse() : domain;
@@ -112,7 +122,7 @@ export function rasterScaleDomain(
  * centered nor reversed.
  */
 function vectorScaleDomain(config: ColorMapConfig, range?: [number, number]): number[] | undefined {
-    if (range == null || ColorMap.isCategorical(config.interpolator)) return undefined;
+    if (range == null || isCategoricalConfig(config)) return undefined;
     return [range[0], range[1]];
 }
 
