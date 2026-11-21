@@ -20,6 +20,10 @@ const squares: FeatureCollection = {
 };
 const geojsonColumns = ['id', 'geojson_id', 'geometry', 'properties'].map((name) => ({ name, type: name === 'geometry' ? 'GEOMETRY' : 'JSON' }));
 const osmColumns = ['id', 'building_id', 'geometry', 'properties', '__autk_osm_elements'].map((name) => ({ name, type: name === 'geometry' ? 'GEOMETRY' : 'JSON' }));
+/** The columns of a CSV or JSON layer, or of a `sql` source's table of plain columns: its values in columns of their own. */
+const plainColumns = ['name', 'v', 'Latitude', 'Longitude', 'geometry'].map((name) => ({ name, type: name === 'geometry' ? 'GEOMETRY' : 'VARCHAR' }));
+/** The squares, none with a feature id, as autk-db exports a table without an id column. */
+const anonymous: FeatureCollection = { ...squares, features: squares.features.map((feature) => ({ ...feature, id: undefined })) };
 
 /**
  * A fake AutkDb holding `tables`, whose exports are `layers`, that records every call. A count query answers `rows`
@@ -63,6 +67,27 @@ test("in place, it updates each row of an OSM table by its id, the id autk-db's 
     const { db, calls } = fakeDb([{ name: 'box_buildings', type: 'buildings', columns: osmColumns }], 3);
     await writeBack(db, 'Pass', 'box_buildings', squares, 'buildings', true);
     assert.deepEqual(calls[0], ['updateTable', { tableName: 'box_buildings', data: squares, strategy: 'update', idColumn: 'id' }]);
+});
+
+test("in place over a CSV or JSON layer, or a sql source's table of plain columns, it replaces the table's rows with the result's, then counts them", async () => {
+    // Such a table has no properties column for an update by feature id to set, with an id column or without one.
+    for (const columns of [plainColumns, [{ name: 'id', type: 'BIGINT' }, ...plainColumns]]) {
+        const { db, calls } = fakeDb([{ name: 'readings', type: 'points', columns }], 3);
+        await writeBack(db, 'Pass', 'readings', squares, 'points', true);
+        assert.deepEqual(calls, [
+            ['updateTable', { tableName: 'readings', data: squares, strategy: 'replace' }],
+            countQuery('readings'),
+        ]);
+    }
+});
+
+test('in place, a result with a row without a feature id, and a table without a column of feature ids, are written whole too', async () => {
+    const unnamed = fakeDb([{ name: 'squares', type: 'polygons', columns: geojsonColumns }], 3);
+    await writeBack(unnamed.db, 'Pass', 'squares', anonymous, 'polygons', true);
+    assert.deepEqual(unnamed.calls[0], ['updateTable', { tableName: 'squares', data: anonymous, strategy: 'replace' }]);
+    const noIdColumn = fakeDb([{ name: 'kept', type: 'polygons', columns: geojsonColumns.filter(({ name }) => name === 'geometry' || name === 'properties') }], 3);
+    await writeBack(noIdColumn.db, 'Pass', 'kept', squares, 'polygons', true);
+    assert.deepEqual(noIdColumn.calls[0], ['updateTable', { tableName: 'kept', data: squares, strategy: 'replace' }]);
 });
 
 test('a new table is filled aside, of its layer type, with every row and no cut to the workspace, counted there, then copied in place of its name', async () => {

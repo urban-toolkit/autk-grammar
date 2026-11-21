@@ -1,5 +1,5 @@
 import { isVectorTable } from '@urban-toolkit/autk-db';
-import type { AutkDb } from '@urban-toolkit/autk-db';
+import type { AutkDb, Table } from '@urban-toolkit/autk-db';
 import type { LayerType } from '@urban-toolkit/the-urban-grammar';
 import type { FeatureCollection } from 'geojson';
 
@@ -13,6 +13,19 @@ export const EMPTY_LAYER_QUERY = 'SELECT CAST(NULL AS GEOMETRY) AS geometry, CAS
  */
 export function stagingTable(name: string): string {
     return `__autk_grammar_write_back_${name}`;
+}
+
+/**
+ * The column autk-db's update by feature id matches the rows of the layer `table` on: the one its export gives each row
+ * as its feature id, `geojson_id`, else `id`. That update sets each row's `properties`, so it cannot change a table that
+ * keeps its values in columns of their own, without a `properties` column, such as a CSV or JSON layer or a `sql`
+ * source's table of plain columns: undefined for such a table, and for one without either id column.
+ */
+export function updateIdColumn(table: Table): 'geojson_id' | 'id' | undefined {
+    const columns = new Set(table.columns.map((column) => column.name));
+    if (!columns.has('properties')) return undefined;
+    if (columns.has('geojson_id')) return 'geojson_id';
+    return columns.has('id') ? 'id' : undefined;
 }
 
 /** A table's name as SQL quotes an identifier. */
@@ -33,7 +46,10 @@ async function rowCount(db: AutkDb, name: string): Promise<number> {
  *
  * - **In place**, autk-db's `updateTable` changes each row the result names by its feature id (the `geojson_id` column,
  *   else `id`), as the rows of autk-db's own export carry them. Every column of the table stays, a building keeps its
- *   parts, and autk-db clears the records of an OSM table's elements, as it does for any update.
+ *   parts, and autk-db clears the records of an OSM table's elements, as it does for any update. A table that update
+ *   cannot change ({@link updateIdColumn}), such as a CSV or JSON layer, and a result with a row without a feature id,
+ *   are written whole instead: `updateTable` replaces the table's rows with the result's, in one transaction, each
+ *   row's values in its `properties`, as a GeoJSON layer keeps them, and the table keeps its layer type.
  * - **A new table** is filled aside first, in a table of its own ({@link stagingTable}): `rawQuery` creates it empty,
  *   and `updateTable` replaces its rows with every row of the result, with the coordinates as they are, in the
  *   workspace's CRS. Only once it holds them all does a copy of it take the place of `name`, in one statement, so a
@@ -51,8 +67,8 @@ export async function writeBack(
     if (type === 'raster')
         throw refuse(`writeBack keeps a table of features in autk-db, and "${name}" is a raster.`);
     const table = db.getTablesMetadata().find((candidate) => candidate.name === name);
-    const update = inPlace && table !== undefined && isVectorTable(table);
-    if (!update && type === undefined)
+    const layer = inPlace && table !== undefined && isVectorTable(table) ? table : undefined;
+    if (layer === undefined && type === undefined)
         throw refuse(`writeBack keeps "${name}" in autk-db as a layer, and the grammar knows no layer type for it: set the pass's layerType.`);
 
     /** Runs one of autk-db's writes, naming the pass and the table when autk-db refuses it. */
@@ -70,9 +86,12 @@ export async function writeBack(
             throw refuse(`autk-db holds ${rows} rows of "${name}" where the pass wrote ${result.features.length}, so its table and the one maps and plots draw would differ.`);
     };
 
-    if (update) {
-        const idColumn = table.columns.some((column) => column.name === 'geojson_id') ? 'geojson_id' : 'id';
-        await kept(() => db.updateTable({ tableName: name, data: result, strategy: 'update', idColumn }));
+    if (layer) {
+        const idColumn = updateIdColumn(layer);
+        const everyRowNamed = result.features.every((feature) => feature.id !== undefined && feature.id !== null);
+        await kept(() => db.updateTable(idColumn !== undefined && everyRowNamed
+            ? { tableName: name, data: result, strategy: 'update', idColumn }
+            : { tableName: name, data: result, strategy: 'replace' }));
         await holdsEveryRow(name);
         return;
     }
