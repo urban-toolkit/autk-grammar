@@ -408,7 +408,8 @@ function cameraRefusal(camera: CameraSpec): string | undefined {
  * Moves a map's camera as `camera` says, from the view that fits the map's layers. The camera reports each change,
  * so the map redraws without a request. It refuses a pitch that is not at least 0 and less than 90 degrees, and a
  * `center` that `resolveCameraCenter` has not put on the map. On a map whose terrain the grammar raised, it looks at
- * the ground, at the terrain's height under the point it looks at, and keeps the eye's distance above it.
+ * the ground, at the terrain's height under the point it looks at, and sets the eye's distance from that point: `zoom`'s,
+ * else that of the view that fits the terrain.
  *
  * The map adapter calls it once the map's layers are loaded and before the map's first `draw()`. A host that builds
  * its own map from a spec's `map` entry calls it at the same point, so the map looks from where the grammar's would.
@@ -425,9 +426,10 @@ export function applyCamera(map: AutkMap, camera: CameraSpec): void {
     const view = map.camera;
     const [x, y] = center ?? view.getLookAt();
     // autk-map draws a terrain at its raw elevation, which can lie kilometres above z = 0: the point looked at is on the
-    // ground, and the eye's distance is measured from it.
+    // ground, and the eye's distance is measured from it. Without zoom, it is the height of the eye of the view this
+    // turns, as on a flat map: the view that fits the layers, or the terrain, which autk-map measures from z = 0.
     const ground = groundHeight(map, x, y);
-    const distance = camera.zoom !== undefined ? 10000 / Math.pow(2, camera.zoom - 10) : Math.abs(view.getEye()[2] - ground);
+    const distance = camera.zoom !== undefined ? 10000 / Math.pow(2, camera.zoom - 10) : Math.abs(view.getEye()[2]);
     const pitch = (camera.pitch ?? 0) * Math.PI / 180;
     const bearing = (camera.bearing ?? 0) * Math.PI / 180;
     const eye = [

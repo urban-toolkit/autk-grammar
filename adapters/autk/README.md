@@ -488,7 +488,7 @@ A map's `terrain` raises its ground to the heights a raster band gives, through 
 
 A run refuses a `dataRef` that names no raster table of the map's workspace, and a `band` that names none of the bands of a raster of several.
 
-On a map with a terrain, the `camera` looks at the ground: the point it looks at lies at the terrain's height there, and `zoom` sets the eye's distance from that point, so the eye stays above ground high above z = 0. Each step of a camera tour turns the view around the ground its line of sight meets as the step starts; when it meets none, as with the eye under the ground, around the point the camera looks at. `applyCamera` and `playCameraMotion` measure from the terrain of a map the grammar drew; on a map whose terrain a host raised itself, they measure from z = 0.
+On a map with a terrain, the `camera` looks at the ground: the point it looks at lies at the terrain's height there, and `zoom` sets the eye's distance from that point, so the eye stays above ground high above z = 0. Without `zoom`, the eye keeps the distance of the view that fits the terrain. Each step of a camera tour turns the view around the ground its line of sight meets as the step starts; when it meets none, as with the eye under the ground, around the point the camera looks at. `applyCamera` and `playCameraMotion` measure from the terrain of a map the grammar drew; on a map whose terrain a host raised itself, they measure from z = 0.
 
 autk-map 4.1.1 measures from z = 0 in two places of its own:
 
