@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import type { Feature, FeatureCollection } from 'geojson';
 import type { ComputeSpec } from '@urban-toolkit/the-urban-grammar';
+import { TriangulatorBuildings } from '@urban-toolkit/autk-core';
 import {
     STORAGE_BUFFER_BINDING_SIZE, buildBatchedUniforms, computeLayerNames, findIterateSource, joinWgsl,
     maxBatchedFeatures, resolveComputeParams, runCompute,
@@ -138,6 +139,59 @@ test("batched packs each polygon of a GeometryCollection, as autk-db keeps a bui
     assert.equal(packed.uniforms.num_features, 3);
     assert.deepEqual(packed.uniformArrays.h, [10, 20, 20]);
     assert.deepEqual(packed.uniformArrays.o, [0, 0, 2, 0, 2, 2, 0, 2, 5, 0, 6, 0, 6, 1, 5, 1, 8, 0, 9, 0, 9, 1, 8, 1]);
+});
+
+test("batched gives each polygon of a building the height and levels its part draws from in autk-core, the building's only where the part sets none", () => {
+    // autk-db's building model of a relation tagged with a height, levels and a min_height, and four parts, each a square
+    // 100 units east of the last: one tagged with its levels only, one with no tags, one with its own height, and one with
+    // its own min_level.
+    const building: Feature = {
+        type: 'Feature',
+        properties: {
+            building_id: 9, height: 50, 'building:levels': 12, min_height: 5,
+            parts: [
+                { id: 90, geometryIndex: 0, 'building:levels': 3 },
+                { id: 91, geometryIndex: 1 },
+                { id: 92, geometryIndex: 2, height: 30 },
+                { id: 93, geometryIndex: 3, min_level: 1 },
+            ],
+        },
+        geometry: {
+            type: 'GeometryCollection',
+            geometries: [0, 100, 200, 300].map((x) => ({ type: 'Polygon' as const, coordinates: [square(x, 10)] })),
+        },
+    };
+    // autk-core draws a part that sets any of height, building:height, levels and building:levels from its own, and none
+    // of the building's, and so for min_height, min_level and building:min_level: from 5 m, 3 levels of 3.4 m; from 5 m,
+    // the building's 50 m; from 5 m, the part's own 30 m; from the part's first level, 3.4 m, the building's 50 m.
+    const [meshes] = TriangulatorBuildings.buildMesh({ type: 'FeatureCollection', features: [building] }, [0, 0]);
+    const drawn = [0, 1, 2, 3].map(() => [Infinity, -Infinity]);
+    for (const { position } of meshes) {
+        for (let i = 0; i < position.length; i += 3) {
+            const span = drawn[Math.floor(position[i] / 100)];
+            span[0] = Math.min(span[0], position[i + 2]);
+            span[1] = Math.max(span[1], position[i + 2]);
+        }
+    }
+    const spans = [[5, 10.2], [5, 50], [5, 30], [3.4, 50]];
+    assert.ok(drawn.every((span, i) => span.every((z, j) => Math.abs(z - spans[i][j]) < 1e-4)), `autk-core draws ${JSON.stringify(drawn)}`);
+
+    // A batched pass reads each polygon's tags as its part draws from them: a tag the part does not draw from reads the
+    // entry's default.
+    const tag = (path: string) => ({ fromFeature: { layer: 'bldg', path: `properties.${path}`, iterate: 'batched' as const }, default: -1 });
+    const packed = buildBatchedUniforms(
+        { height: tag('height'), levels: tag('building:levels'), minHeight: tag('min_height'), minLevel: tag('min_level') },
+        outline,
+        [building],
+    );
+    assert.equal(packed.uniforms.num_features, 4);
+    const { height, levels, minHeight, minLevel } = packed.uniformArrays;
+    assert.deepEqual({ height, levels, minHeight, minLevel }, {
+        height: [-1, 50, 30, 50],
+        levels: [3, 12, -1, 12],
+        minHeight: [5, 5, 5, -1],
+        minLevel: [-1, -1, -1, 1],
+    });
 });
 
 test("hands autk-compute a MultiLineString's lines as one line when an attribute reads its geometry, and gives it back its own", async () => {
