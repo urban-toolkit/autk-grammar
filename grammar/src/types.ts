@@ -400,14 +400,17 @@ export interface SqlSourceSpec extends TableSourceBase {
     /**
      * A `SELECT`, or a `WITH` query that ends in one, in DuckDB's SQL, over the tables of the source's workspace by their
      * names. autk-db refuses any other statement, and any query in which `insert`, `update`, `delete`, `create`,
-     * `alter`, `drop`, `truncate` or `replace` appears as a word, even inside a string.
+     * `alter`, `drop`, `truncate` or `replace` appears as a word, even inside a string. A query that returns a
+     * geometry, with a `layerType` or without one, returns it as a column named `geometry`, such as
+     * `ST_Centroid(geometry) AS geometry`: autk-db reads the new table's geometry from that column, and a run refuses a
+     * geometry under another name.
      * @minLength 1
      */
     query: string;
     /**
-     * How a map draws the new table, whose geometry must then be in a column named `geometry`, in the workspace's CRS,
-     * as the workspace's tables hold it. Without it, the table has no layer type: a plot draws its rows, while a map
-     * does not draw it and `AutkGrammar.data` does not list it.
+     * How a map draws the new table, from its `geometry` column, in the workspace's CRS, as the workspace's tables hold
+     * it. Without it, the table has no layer type: a plot draws its rows, while a map does not draw it and
+     * `AutkGrammar.data` does not list it.
      */
     layerType?: LayerType;
 }
@@ -430,22 +433,32 @@ export interface UpdateSourceSpec {
     /**
      * `replace` swaps every row of the table for the given rows. `update` changes the rows whose `idColumn` value a
      * given row has: in a table with a geometry, each takes the given row's geometry and properties, and no row is
-     * added; in a table without one, the given rows replace them, and those that match no row are added.
+     * added; in a table without one, the given rows replace them, and those that match no row are added. A run refuses
+     * `update` on a layer of plain columns, which keeps each value in a column of its own, with no `properties` column:
+     * a CSV or JSON table loaded with `geometryColumns`, or a `sql` source's table whose query returns no `properties`.
+     * `replace` takes such a table, and leaves each row's values in `properties`, as a GeoJSON layer keeps them.
      */
     strategy: 'replace' | 'update';
     /**
-     * With `update`, the column that matches a given row to the table's rows: a column such as `month`, or a feature
-     * property as `properties.<name>`, such as `properties.parcel_id`.
+     * With `update`, the column that matches a given row to the table's rows: in a table without a geometry, one of its
+     * columns, such as `month`; in a table with one, a feature property as `properties.<name>`, such as
+     * `properties.parcel_id`, or the feature id, `geojson_id` on a GeoJSON layer and `id` on an OpenStreetMap layer,
+     * which matches each given feature by the `id` that `AutkGrammar.data` gives it.
      * @minLength 1
      */
     idColumn?: string;
     /**
-     * The rows of a table with a geometry. autk-db stores their coordinates as they come, so they are in the
-     * workspace's CRS, as `AutkGrammar.data` gives a table's features.
+     * The rows of a table with a geometry. autk-db stores their coordinates as they come, so they are in the CRS of the
+     * table's workspace, as `AutkGrammar.data` gives a table's features: the `coordinateFormat` of its `workspaces`
+     * entry, else autk-db's default, `'EPSG:3395'`.
      */
     geojsonObject?: InlineFeatureCollection;
     /**
-     * The rows of a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`.
+     * The rows of a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`. With
+     * `update`, a row's keys name the table's columns, in any case and in any order, each once, and a column a row leaves
+     * out is null in it; a run refuses a key that names no column of the table. A run refuses `update` on a table whose
+     * columns named as whole numbers, such as `2020`, do not all come first, smallest first: use `replace` with every row
+     * of the table, or rename those columns.
      * @minItems 1
      */
     jsonObject?: Array<Record<string, unknown>>;

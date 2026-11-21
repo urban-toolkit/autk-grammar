@@ -106,6 +106,7 @@ declare global {
         dbRows: (query: string) => Promise<Array<Record<string, unknown>>>;
         dbLayer: (table: string, osmElements?: boolean) => Promise<FeatureCollection>;
         dbBands: (table: string) => Promise<Array<{ id: string; label?: string }>>;
+        dbUpdate: (params: Parameters<AutkDb['updateTable']>[0]) => Promise<void>;
         hostDb?: AutkDb;
         runOnHostDb: (spec: UrbanSpec, names: string[]) => Promise<HostRun>;
         hostRows: (query: string) => Promise<Array<Record<string, unknown>>>;
@@ -348,6 +349,14 @@ window.dbLayer = (table: string, osmElements?: boolean) => lastDb().getLayer(tab
 window.dbBands = async (table: string) => {
     const raster = await lastDb().getRaster(table) as unknown as { features: Array<{ properties?: { bands?: Array<{ id: string; label?: string }> } }> };
     return raster.features[0]?.properties?.bands ?? [];
+};
+
+/**
+ * Runs autk-db's own `updateTable` on the last run's database with the parameters as given, as 5.6.0's data adapter ran
+ * it for an update of a table without a geometry, whose `jsonObject` it handed on unchanged.
+ */
+window.dbUpdate = async (params) => {
+    await lastDb().updateTable(params);
 };
 
 /**

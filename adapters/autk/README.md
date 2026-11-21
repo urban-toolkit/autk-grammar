@@ -104,9 +104,9 @@ A `sql` source saves the rows of a query over the tables of its workspace as a n
 | Field | Effect |
 |---|---|
 | `query` | A `SELECT`, or a `WITH` query that ends in one, in DuckDB's SQL, naming the workspace's tables by their names. autk-db refuses any other statement, and any query in which `insert`, `update`, `delete`, `create`, `alter`, `drop`, `truncate` or `replace` appears as a word, even inside a string; the run's message names the source. |
-| `layerType` | How a map draws the new table. The query then returns its geometry in a column named `geometry`, as the workspace's tables hold it, in the workspace's CRS. Without it, the table has no layer type: a plot draws its rows, but a map does not draw it and `grammar.data` does not list it. |
+| `layerType` | How a map draws the new table, from its `geometry` column, in the workspace's CRS, as the workspace's tables hold it. Without it, the table has no layer type: a plot draws its rows, but a map does not draw it and `grammar.data` does not list it. |
 
-A GeoJSON table keeps each feature's properties in a JSON column, `properties`, which `properties->>'name'` reads as text; a CSV or JSON table keeps a column per field. A query that returns `properties` gives each feature those properties; otherwise each column but `geometry` becomes a property. Saving under a table's own name replaces it.
+A GeoJSON table keeps each feature's properties in a JSON column, `properties`, which `properties->>'name'` reads as text; a CSV or JSON table keeps a column per field. A query that returns `properties` gives each feature those properties; otherwise each column but `geometry` becomes a property. A query that returns a geometry returns it as a column named `geometry`, as in `ST_Centroid(geometry) AS geometry`, with a `layerType` or without one: autk-db reads the new table's geometry from that column, and the run refuses a geometry under another name, saying so. Saving under a table's own name replaces it.
 
 ```ts
 await grammar.run({
@@ -132,11 +132,13 @@ An `update` source replaces or changes the rows of a table already loaded, `data
 | Field | Effect |
 |---|---|
 | `strategy` | `replace` swaps every row of the table for the given rows. `update` changes the rows whose `idColumn` value a given row has: in a table with a geometry, each takes the given row's geometry and properties, and no row is added; in a table without one, the given rows replace them, and those that match no row are added. |
-| `idColumn` | With `update`, the column that matches a given row to the table's rows: a column such as `month`, or a feature property as `properties.<name>`. |
-| `geojsonObject` | The rows of a table with a geometry, as a FeatureCollection. autk-db stores their coordinates as they come, so they are in the workspace's CRS, as `grammar.data` gives a table's features. |
-| `jsonObject` | The rows of a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`, as an array of objects. |
+| `idColumn` | With `update`, the column that matches a given row to the table's rows: in a table without a geometry, one of its columns, such as `month`; in a table with one, a feature property as `properties.<name>`, or the feature id, `geojson_id` on a GeoJSON layer and `id` on an OpenStreetMap layer, which matches each given feature by the `id` that `grammar.data` gives it. |
+| `geojsonObject` | The rows of a table with a geometry, as a FeatureCollection. autk-db stores their coordinates as they come, so they are in the CRS of the table's workspace, as `grammar.data` gives a table's features: the `coordinateFormat` of its `workspaces` entry, else autk-db's default, `EPSG:3395`. Once a spec has run, `grammar.workspaceCrs` gives its default workspace's. |
+| `jsonObject` | The rows of a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`, as an array of objects. With `update`, a row's keys name the table's columns, in any case and in any order, each once, and a column a row leaves out is null in it; the run refuses a key that names no column of the table, naming it. The run refuses `update` on a table whose columns named as whole numbers, such as `2020`, do not all come first, smallest first: use `replace` with every row of the table, or rename those columns. |
 
 A source gives its rows in `geojsonObject` or in `jsonObject`, not both. The maps and plots after it draw the table's rows as they are now. The run's message names the table when autk-db refuses an update.
+
+**A layer of plain columns takes `replace` only.** autk-db's `update` of a table with a geometry sets the `properties` column of each row it matches, and a layer of plain columns, which keeps each value in a column of its own, has none: a CSV or JSON table loaded with `geometryColumns`, or a `sql` source's table whose query returns no `properties`. The run refuses `update` on such a table before anything runs, saying so. `replace` gives it the rows of a FeatureCollection, such as its own features from `grammar.data`, edited, each row's values in its `properties`, as a GeoJSON layer keeps them, so a `sql` source after it reads a column as `properties->>'<column>'`.
 
 ```ts
 await grammar.run({
@@ -163,7 +165,7 @@ data: [
 
 ### Workspaces
 
-A workspace is an isolated set of tables with its own extent. The first source loaded into a workspace sets its extent, and later sources are cut to it, so two areas that must not clip each other go in two workspaces. A table is found by its name inside its workspace, so two workspaces may hold tables of the same name.
+A workspace is an isolated set of tables with its own extent. The first source loaded into a workspace sets its extent, and later sources are cut to it, so two areas that must not clip each other go in two workspaces; a `drop`, a `sql` source or an `update` can change what they are cut to (see [Extent and crop layer](#extent-and-crop-layer)). A table is found by its name inside its workspace, so two workspaces may hold tables of the same name.
 
 `workspace` names one, on a source (where its table goes), a compute pass (where it reads and writes), a map or a plot (where it reads its tables). An entry without one uses the default workspace, which autk-db names `autk`.
 
@@ -185,6 +187,22 @@ await grammar.run({
   data: [{ type: 'geojson', outputTableName: 'parcels', geojsonFileUrl: 'parcels.geojson' }],
   map: { layerRefs: [{ dataRef: 'parcels' }] },
 });
+```
+
+### Extent and crop layer
+
+autk-db cuts each CSV, JSON or GeoJSON source it loads to the workspace's extent and to its crop layer: the first table with a geometry the workspace loads, when that table holds polygons, or the surface of an OpenStreetMap area. autk-db finds the crop layer by its name as each of those sources loads, so a source that changes that table changes how the sources after it are cut:
+
+- **A `drop` of it** leaves the workspace without a crop layer, and with its extent: later sources are cut to the extent alone.
+- **A `sql` source saved under its name, or an `update` of it,** gives it other rows, and later sources are cut to those.
+- **A `sql` source that saves a table without a geometry under its name** makes the next CSV, JSON or GeoJSON source with a geometry fail to load.
+
+```ts
+data: [
+  { type: 'geojson', outputTableName: 'manhattan', geojsonFileUrl: 'manhattan.geojson' },  // the crop layer
+  { type: 'drop', dataRef: 'manhattan' },  // no crop layer from here on
+  { type: 'csv', outputTableName: 'noise', csvFileUrl: 'noise.csv', geometryColumns: true },  // cut to manhattan's extent alone, not to its shape
+],
 ```
 
 ## OpenStreetMap areas

@@ -2604,6 +2604,28 @@ test('saves the rows of a sql source as a table, drawn as its layerType says, or
         .rejects.toThrow('SQL source "gone": Only SELECT queries are allowed for raw queries.');
 });
 
+test('saves a sql source whose query returns its geometry as geometry, and tells one that DuckDB finds no geometry column for to name a geometry it returns so', async ({ page }) => {
+    // autk-db puts the geometry of a table a query saves on the workspace's grid, read from a column named geometry, with
+    // a layerType or without one. DuckDB's error for a geometry under another name is the one for a query that reads a
+    // geometry column its table lacks, so the advice holds for both.
+    const centers = (name: string): DataSourceSpec => ({
+        type: 'sql', outputTableName: 'centers', query: `SELECT CAST(properties->>'id' AS INTEGER) AS id, ST_Centroid(geometry) AS ${name} FROM zones`,
+    });
+    await runSpec(page, { data: [area, zones, centers('geometry')] });
+    expect(await page.evaluate(() => window.dbRows('SELECT id FROM centers ORDER BY id'))).toEqual([{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }]);
+    const counts: DataSourceSpec = { type: 'csv', outputTableName: 'counts', csvObject: [['zone', 'count'], [1, 10]] };
+    /** The run's message when it was refused. */
+    const refusal = (spec: UrbanSpec) => runSpec(page, spec).then(() => 'ran', (error: Error) => error.message);
+    const advice = (table: string) => expect.stringContaining(
+        `SQL source "${table}": if the query returns a geometry, name it geometry, for example ST_Centroid(geometry) AS geometry. autk-db: Binder Error: Referenced column "geometry" not found`,
+    );
+    expect([
+        await refusal({ data: [area, zones, centers('center')] }),
+        // A table of plain columns has no geometry to read.
+        await refusal({ data: [counts, { type: 'sql', outputTableName: 'placed', query: 'SELECT zone, geometry FROM counts' }] }),
+    ]).toEqual([advice('centers'), advice('placed')]);
+});
+
 test('replaces and updates the rows of a table with an update source, and the map and the plot draw them as they are now', async ({ page }) => {
     /** Each bar of the plot, as its two axes' values. */
     const bars = (axes: [string, string]) => page.evaluate((axes) => [...document.querySelectorAll('#plot rect.autkMark')]
@@ -2640,6 +2662,156 @@ test('replaces and updates the rows of a table with an update source, and the ma
     // autk-db's refusal names the table.
     await expect(runSpec(page, { data: [area, zones, { type: 'update', dataRef: 'nowhere', strategy: 'replace', jsonObject: [{ v: 1 }] }] }))
         .rejects.toThrow('Update of "nowhere": Table nowhere not found.');
+});
+
+test("updates a table without a geometry by the names of its columns, whatever the order of a given row's keys", async ({ page }) => {
+    // autk-db stages the given rows with their columns in the order of their keys, then inserts them by position: on 4.1.1
+    // { count: 25, zone: 2 } wrote 25 in zone and 2 in count, and { total: 9, month: 'Feb' } was refused for its total.
+    const zoneCounts: DataSourceSpec = { type: 'csv', outputTableName: 'zones', csvObject: [['zone', 'count'], [1, 10], [2, 20]] };
+    const sales: DataSourceSpec = { type: 'csv', outputTableName: 'sales', csvObject: [['month', 'total'], ['Jan', 3], ['Feb', 5]] };
+    /** The table's rows in autk-db once the update ran, or the run's message when it was refused. */
+    const updated = (source: DataSourceSpec, dataRef: string, idColumn: string, jsonObject: Array<Record<string, unknown>>) =>
+        runSpec(page, { data: [source, { type: 'update', dataRef, strategy: 'update', idColumn, jsonObject }] })
+            .then(() => page.evaluate((table) => window.dbRows(`SELECT * FROM ${table} ORDER BY 1`), dataRef), (error: Error) => error.message);
+    expect([
+        await updated(zoneCounts, 'zones', 'zone', [{ count: 25, zone: 2 }]),
+        await updated(sales, 'sales', 'month', [{ total: 9, month: 'Feb' }]),
+        // A column a row leaves out is null in it, and a key the table lacks is refused.
+        await updated(sales, 'sales', 'month', [{ month: 'Feb' }]),
+        await updated(sales, 'sales', 'month', [{ month: 'Feb', total: 9, note: 'late' }]),
+    ]).toEqual([
+        [{ zone: 1, count: 10 }, { zone: 2, count: 25 }],
+        [{ month: 'Feb', total: 9 }, { month: 'Jan', total: 3 }],
+        [{ month: 'Feb', total: null }, { month: 'Jan', total: 3 }],
+        expect.stringContaining('Update of "sales": jsonObject[0] has "note", which is not a column of the table: "month", "total".'),
+    ]);
+});
+
+test('autk-db 4.1.1, handed the jsonObject rows of an update as 5.6.0 handed them, writes a key a row leaves out as null and matches names without regard to case', async ({ page }) => {
+    // This test encodes autk-db 4.1.1, run as 5.6.0's data adapter ran it: an update of a table without a geometry handed
+    // its jsonObject to updateTable unchanged (window.dbUpdate). autk-db stages the rows with DuckDB's read_json_auto,
+    // deletes the table's rows whose idColumn value a staged row has, then inserts every staged row by position. The
+    // grammar writes such rows as autk-db wrote these, each with its keys in the table's column order (the next test).
+    // Both E2E legs run autk-db 4.1.1, the newest on npm, so a later autk-db that writes them otherwise fails here.
+    const zoneCounts = (zone: string, count: string): DataSourceSpec => ({ type: 'csv', outputTableName: 'zones', csvObject: [[zone, count], [1, 10], [2, 20]] });
+    const sales: DataSourceSpec = { type: 'csv', outputTableName: 'sales', csvObject: [['month', 'total'], ['Jan', 3], ['Feb', 5]] };
+    /** The table's rows once autk-db's update ran on the rows as given, or autk-db's refusal. */
+    const written = async (source: DataSourceSpec, table: string, idColumn: string, data: Array<Record<string, unknown>>) => {
+        await runSpec(page, { data: [source] });
+        return page.evaluate(async ([table, idColumn, data]) => {
+            try {
+                await window.dbUpdate({ tableName: table, data, strategy: 'update', idColumn });
+            } catch (error) {
+                return `refused: ${error instanceof Error ? error.message : String(error)}`;
+            }
+            return window.dbRows(`SELECT * FROM ${table} ORDER BY 1`);
+        }, [table, idColumn, data] as const);
+    };
+    const refused = expect.stringMatching(/^refused: /);
+    expect([
+        // A key one row gives and another leaves out: null in the row that leaves it out.
+        await written(zoneCounts('zone', 'count'), 'zones', 'zone', [{ zone: 2, count: 25 }, { zone: 3 }]),
+        // Keys in another case than the table's columns.
+        await written(zoneCounts('Zone', 'Count'), 'zones', 'zone', [{ zone: 2, count: 25 }]),
+        // A null in a column no row gives a value, as the grammar hands autk-db a key a row leaves out.
+        await written(sales, 'sales', 'month', [{ month: 'Feb', total: null }]),
+        // A column no row gives: the staged rows have one column fewer than the table.
+        await written(sales, 'sales', 'month', [{ month: 'Feb' }]),
+        // A key the table lacks, in place of one of its columns: its value goes into that column.
+        await written(zoneCounts('zone', 'count'), 'zones', 'zone', [{ zone: 2, note: 5 }]),
+        // A key the table lacks, beside all of its columns: the staged rows have one column more than the table.
+        await written(zoneCounts('zone', 'count'), 'zones', 'zone', [{ zone: 2, count: 25, note: 'late' }]),
+        // Two keys that name one column, in two cases.
+        await written(zoneCounts('zone', 'count'), 'zones', 'zone', [{ zone: 2, Zone: 3, count: 25 }]),
+    ]).toEqual([
+        [{ zone: 1, count: 10 }, { zone: 2, count: 25 }, { zone: 3, count: null }],
+        [{ Zone: 1, Count: 10 }, { Zone: 2, Count: 25 }],
+        [{ month: 'Feb', total: null }, { month: 'Jan', total: 3 }],
+        refused,
+        [{ zone: 1, count: 10 }, { zone: 2, count: 5 }],
+        refused,
+        refused,
+    ]);
+});
+
+test('updates a table without a geometry as autk-db 4.1.1 wrote the rows 5.6.0 handed it, each value in the column its key names, and refuses a key the table lacks', async ({ page }) => {
+    // The rows of the test before this one, through the grammar: a column a row leaves out is null in it, and a key names
+    // its column without regard to case. A key the table lacks, which 4.1.1 wrote into another column or refused, is
+    // refused, naming it.
+    const zoneCounts = (zone: string, count: string): DataSourceSpec => ({ type: 'csv', outputTableName: 'zones', csvObject: [[zone, count], [1, 10], [2, 20]] });
+    const lower = zoneCounts('zone', 'count');
+    const upper = zoneCounts('Zone', 'Count');
+    /** The table's rows in autk-db once the update ran, or the run's message when it was refused. */
+    const updated = (source: DataSourceSpec, jsonObject: Array<Record<string, unknown>>) =>
+        runSpec(page, { data: [source, { type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'zone', jsonObject }] })
+            .then(() => page.evaluate(() => window.dbRows('SELECT * FROM zones ORDER BY 1')), (error: Error) => error.message);
+    const notAColumn = expect.stringContaining('Update of "zones": jsonObject[0] has "note", which is not a column of the table: "zone", "count".');
+    expect([
+        await updated(lower, [{ zone: 2, count: 25 }, { zone: 3 }]),
+        await updated(lower, [{ count: 25, zone: 2 }, { zone: 3 }]),
+        await updated(upper, [{ zone: 2, count: 25 }]),
+        await updated(upper, [{ count: 25, zone: 2 }]),
+        await updated(lower, [{ zone: 2, note: 5 }]),
+        await updated(lower, [{ zone: 2, count: 25, note: 'late' }]),
+        await updated(lower, [{ zone: 2, Zone: 3, count: 25 }]),
+    ]).toEqual([
+        [{ zone: 1, count: 10 }, { zone: 2, count: 25 }, { zone: 3, count: null }],
+        [{ zone: 1, count: 10 }, { zone: 2, count: 25 }, { zone: 3, count: null }],
+        [{ Zone: 1, Count: 10 }, { Zone: 2, Count: 25 }],
+        [{ Zone: 1, Count: 10 }, { Zone: 2, Count: 25 }],
+        notAColumn,
+        notAColumn,
+        expect.stringContaining('Update of "zones": jsonObject[0] has "zone" and "Zone", which name one column of the table, "zone".'),
+    ]);
+});
+
+test('refuses the update strategy on a table whose column named as a whole number comes after another, and leaves its rows as they were', async ({ page }) => {
+    // The rows of an update reach autk-db as JSON objects, which put a key named as a whole number, such as "2020", before
+    // the others, and autk-db 4.1.1 inserts them by position: zone 2's row below wrote 25 in zone and 2 in "2020". The run
+    // refuses such an update before autk-db runs. A refused run leaves the grammar no database to read, so the run goes
+    // through runWrapped, whose database hostRows reads back.
+    const zones: DataSourceSpec = { type: 'csv', outputTableName: 'zones', csvObject: [['zone', '2020'], [1, 10], [2, 20]] };
+    const spec = { data: [zones, { type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'zone', jsonObject: [{ zone: 2, '2020': 25 }] }] } as UrbanSpec;
+    const outcome = await page.evaluate((spec) => window.runWrapped(spec), spec).then(() => 'ran', (error: Error) => error.message);
+    expect(await page.evaluate(() => window.hostRows('SELECT * FROM zones ORDER BY 1'))).toEqual([{ zone: 1, '2020': 10 }, { zone: 2, '2020': 20 }]);
+    expect(outcome).toContain(`Update of "zones": the update strategy cannot change a table whose column "2020", named as a whole number, comes after "zone". Use strategy 'replace' with every row of the table, or rename the column.`);
+});
+
+test('replaces the rows of a layer of plain columns, and refuses the update strategy on it, which autk-db 4.1.1 cannot run there', async ({ page }) => {
+    // A CSV table of points keeps each value in a column of its own beside its geometry: it has no properties column,
+    // which autk-db's update of a layer sets, and no feature id.
+    const noise: DataSourceSpec = {
+        type: 'csv', outputTableName: 'noise', geometryColumns: true,
+        csvObject: [['key', 'level', 'Latitude', 'Longitude'], [1, 50, 40.75, -73.98], [2, 70, 40.76, -73.97]],
+    };
+    await runSpec(page, { data: [noise] });
+    const exported = await page.evaluate(async () => (await window.grammar.data.noise).features);
+    expect(exported).toHaveLength(2);
+    const edited = {
+        type: 'FeatureCollection',
+        features: exported.map((feature) => ({ ...feature, properties: { ...feature.properties, level: feature.properties?.key === 2 ? 75 : feature.properties?.level } })),
+    };
+    // replace swaps its rows for its own export, edited.
+    await runSpec(page, { data: [noise, { type: 'update', dataRef: 'noise', strategy: 'replace', geojsonObject: edited } as DataSourceSpec] });
+    expect(await page.evaluate(async () => (await window.grammar.data.noise).features.map((feature) => Number(feature.properties?.level)).sort((a, b) => a - b)))
+        .toEqual([50, 75]);
+
+    // The update strategy is refused, by a property, by a column or with rows without a geometry, before autk-db runs; so
+    // is an update of a sql source's table of plain columns drawn as a layer.
+    const outcome = (spec: UrbanSpec) => runSpec(page, spec).then(() => 'ran', (error: Error) => error.message);
+    const update = (dataRef: string, fields: object) => ({ type: 'update', dataRef, strategy: 'update', ...fields }) as DataSourceSpec;
+    const zoneValues: DataSourceSpec = {
+        type: 'sql', outputTableName: 'zone_values', layerType: 'polygons',
+        query: "SELECT CAST(properties->>'id' AS INTEGER) AS zone, CAST(properties->>'v' AS INTEGER) AS v, geometry FROM zones",
+    };
+    const zoneTwo = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: null, properties: { zone: 2, v: 99 } }] };
+    const refused = (table: string) => expect.stringContaining(`Update of "${table}": on a layer, the update strategy sets the properties column of each row it matches, and this layer has none`);
+    expect([
+        await outcome({ data: [noise, update('noise', { idColumn: 'properties.key', geojsonObject: edited })] }),
+        await outcome({ data: [noise, update('noise', { idColumn: 'key', geojsonObject: edited })] }),
+        await outcome({ data: [noise, update('noise', { idColumn: 'key', jsonObject: [{ key: 2, level: 75 }] })] }),
+        await outcome({ data: [area, zones, zoneValues, update('zone_values', { idColumn: 'properties.zone', geojsonObject: zoneTwo })] }),
+    ]).toEqual([refused('noise'), refused('noise'), refused('noise'), refused('zone_values')]);
 });
 
 test('drops a table with a drop source, so data no longer lists it and a map no longer finds it', async ({ page }) => {
@@ -3120,6 +3292,26 @@ test('stores the tables of each workspace in the CRS and on the grid its workspa
         expect(Math.abs(origin[0] - x), `${name} origin x`).toBeLessThan(2);
         expect(Math.abs(origin[1] - y), `${name} origin y`).toBeLessThan(2);
     }
+});
+
+test("gives in workspaceCrs the CRS of the last run's default workspace, the one the spec's workspaces set for it", async ({ page }) => {
+    // workspaceCrs gave autk-db's default, EPSG:3395, whatever the spec's workspaces set.
+    const webMercator = { coordinateFormat: 'EPSG:3857', precisionGrid: 1 };
+    const runs: Array<UrbanSpec['workspaces']> = [
+        undefined,
+        [{ name: 'web', ...webMercator }], // another workspace only: the default one keeps autk-db's default
+        [webMercator],
+        [{ name: 'autk', ...webMercator }], // the default workspace, by the name autk-db gives it
+    ];
+    const seen: string[] = [];
+    for (const workspaces of runs) {
+        await runSpec(page, { ...(workspaces && { workspaces }), data: [area] });
+        seen.push(await page.evaluate(() => window.grammar.workspaceCrs));
+    }
+    // The grammar run again, with a spec without workspaces.
+    await page.evaluate((spec) => window.runAgain(spec), { data: [area] } as UrbanSpec);
+    seen.push(await page.evaluate(() => window.grammar.workspaceCrs));
+    expect(seen).toEqual(['EPSG:3395', 'EPSG:3395', 'EPSG:3857', 'EPSG:3857', 'EPSG:3395']);
 });
 
 // The gallery examples of the keys 5.0.0 adds, each run as the gallery runs it, and checked for what it draws or computes.
