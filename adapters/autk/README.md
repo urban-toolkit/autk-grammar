@@ -165,7 +165,7 @@ data: [
 
 ### Workspaces
 
-A workspace is an isolated set of tables with its own extent. The first source loaded into a workspace sets its extent, and later sources are cut to it, so two areas that must not clip each other go in two workspaces. A table is found by its name inside its workspace, so two workspaces may hold tables of the same name.
+A workspace is an isolated set of tables with its own extent. The first source loaded into a workspace sets its extent, and later sources are cut to it, so two areas that must not clip each other go in two workspaces; a `drop`, a `sql` source or an `update` can change what they are cut to (see [Extent and crop layer](#extent-and-crop-layer)). A table is found by its name inside its workspace, so two workspaces may hold tables of the same name.
 
 `workspace` names one, on a source (where its table goes), a compute pass (where it reads and writes), a map or a plot (where it reads its tables). An entry without one uses the default workspace.
 
@@ -187,6 +187,22 @@ await grammar.run({
   data: [{ type: 'geojson', outputTableName: 'parcels', geojsonFileUrl: 'parcels.geojson' }],
   map: { layerRefs: [{ dataRef: 'parcels' }] },
 });
+```
+
+### Extent and crop layer
+
+autk-db cuts each source it loads to the workspace's extent and to its crop layer: the first table with a geometry the workspace loads, when that table holds polygons, or the surface of an OpenStreetMap area. autk-db finds the crop layer by its name as each later source loads, so a source that changes that table changes how the sources after it are cut:
+
+- **A `drop` of it** leaves the workspace without a crop layer, and with its extent: later sources are cut to the extent alone.
+- **A `sql` source saved under its name, or an `update` of it,** gives it other rows, and later sources are cut to those.
+- **A `sql` source that saves a table without a geometry under its name** makes the next source with a geometry fail to load.
+
+```ts
+data: [
+  { type: 'geojson', outputTableName: 'manhattan', geojsonFileUrl: 'manhattan.geojson' },  // the crop layer
+  { type: 'drop', dataRef: 'manhattan' },  // no crop layer from here on
+  { type: 'csv', outputTableName: 'noise', csvFileUrl: 'noise.csv', geometryColumns: true },  // cut to manhattan's extent alone, not to its shape
+],
 ```
 
 ## OpenStreetMap areas
