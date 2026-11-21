@@ -328,10 +328,11 @@ test('refuses a link or a mapRef between a plot and a layer of which one reads O
         map: { layerRefs: [{ dataRef: 'box_roads', title: 'Roads' }] },
         plot: roads({ osmElements: true, mapRef: 'box_roads' }),
     })).toContain('Plot "roads" and layer "Roads", linked by its mapRef, disagree on osmElements: the plot reads its table one feature per OpenStreetMap element, named such as "way/123", and the layer one feature per row, named by a number, so neither finds the other\'s rows. Set osmElements on both, or on neither.');
+    // The plot of rows shows a column the rows have: they have no osm_type, which autk-plot refuses to draw.
     expect.soft(await refusal({
         data: [box],
         map: { id: 'm', layerRefs: [{ dataRef: 'box_roads', title: 'Roads', osmElements: true }] },
-        plot: roads({}),
+        plot: roads({ axis: ['highway'] }),
         links: [{ source: 'roads', target: 'm', layer: 'Roads' }],
     })).toContain('Plot "roads" and layer "Roads", linked in links, disagree on osmElements: the layer reads its table one feature per OpenStreetMap element, named such as "way/123", and the plot one feature per row, named by a number, so neither finds the other\'s rows. Set osmElements on both, or on neither.');
 
