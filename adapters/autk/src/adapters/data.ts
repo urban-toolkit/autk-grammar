@@ -436,7 +436,14 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache, compu
                             },
                         });
                     } catch (err) {
-                        throw new Error(`SQL source "${sql.outputTableName}": ${err instanceof Error ? err.message : String(err)}`);
+                        const reason = err instanceof Error ? err.message : String(err);
+                        // autk-db puts the geometry of a table a query saves on the workspace's grid, read from a column
+                        // named geometry, with a layerType or without one, so a geometry under another name fails there
+                        // with DuckDB's binder error for that column.
+                        const advice = /Referenced column "geometry" not found/i.test(reason)
+                            ? 'autk-db reads the geometry of a table it saves from a column named geometry, so a query returns its geometry as geometry, for example ST_Centroid(geometry) AS geometry. autk-db: '
+                            : '';
+                        throw new Error(`SQL source "${sql.outputTableName}": ${advice}${reason}`);
                     }
                     // A query saved under the name of a GeoJSON table replaces it, so the plots no longer read its rows.
                     cache?.delete(tableKey(workspace, sql.outputTableName));
