@@ -171,6 +171,20 @@ test('names the sql source whose query autk-db refuses', async () => {
     );
 });
 
+// autk-db 4.1.1 puts the geometry of a table a query saves on the workspace's grid, read from a column named geometry,
+// with a layerType or without one: a query that returns its geometry under another name fails there, with DuckDB's
+// binder error for a column named geometry.
+test('tells a sql source whose query returns its geometry under another name to name it geometry, and keeps autk-db\'s reason', async () => {
+    const binder = 'Binder Error: Referenced column "geometry" not found in FROM clause!\nCandidate bindings: "center", "name"';
+    const { db } = fakeDb();
+    Object.assign(db, { rawQuery: async () => { throw new Error(binder); } });
+    const query = "SELECT properties->>'ntaname' AS name, ST_Centroid(geometry) AS center FROM neighborhoods";
+    await assert.rejects(
+        createDataAdapter().resolveSource(db, { type: 'sql', outputTableName: 'centers', query } as DataSourceSpec),
+        { message: `SQL source "centers": autk-db reads the geometry of a table it saves from a column named geometry, so a query returns its geometry as geometry, for example ST_Centroid(geometry) AS geometry. autk-db: ${binder}` },
+    );
+});
+
 test("a sql source saved under a GeoJSON table's name takes its rows out of the cache the plots read first", async () => {
     const cache = new Map([['zones', emptyCollection()], ['west/zones', emptyCollection()]]);
     await createDataAdapter(undefined, cache).resolveSource(fakeDb().db, { type: 'sql', outputTableName: 'zones', query: 'SELECT * FROM zones' } as DataSourceSpec);
