@@ -6,13 +6,12 @@ import type { MapEventData } from "@urban-toolkit/autk-map";
 import { PlotEvent } from "@urban-toolkit/autk-plot";
 import type { PlotEventData } from "@urban-toolkit/autk-plot";
 import { FeatureCollection } from "geojson";
-import { createDataAdapter } from "./adapters/data";
 import { createMapAdapter } from "./adapters/map";
 import { createPlotAdapter, linkPlotToLayer, setPlotColors } from "./adapters/plot";
 import { checkPlotKeys, plotColorsOf, plotKey } from "./plot-options";
 import { layerIdOf } from "./adapters/map";
 import { enterWorkspace } from "./workspace";
-import { createComputeAdapter } from "./adapters/compute";
+import { wiredAdapters } from "./compute-steps";
 import { tourOf } from "./camera";
 import type { CameraTour } from "./camera";
 import { Targets, PlotRegistry, GeoJsonCache, ComputeCache, ComputeLayerTypes, GrammarEventEmitter } from "./types";
@@ -71,10 +70,10 @@ export class AutkGrammar {
     readonly interactions = new GrammarEventEmitter();
 
     constructor(targets?: Targets) {
-        this.dataAdapter = createDataAdapter(targets, this._geojsonCache, this._computeCache, this._computeTypes);
+        // The data and compute adapters share the run's caches as a host's compute steps share theirs (createComputeSteps).
+        ({ data: this.dataAdapter, compute: this.computeAdapter } = wiredAdapters(targets, this._geojsonCache, this._computeCache, this._computeTypes));
         this.mapAdapter = createMapAdapter(targets, this._layers, this._computeCache, this._maps, this._computeTypes, this._exports);
         this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, this._geojsonCache, this._computeCache, this._plotRows, this._exports);
-        this.computeAdapter = createComputeAdapter(this._computeCache, this._computeTypes, this._geojsonCache);
     }
 
     /**

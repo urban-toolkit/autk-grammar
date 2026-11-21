@@ -9,3 +9,6 @@ export type { CameraTour } from './camera';
 export { createDataAdapter } from './adapters/data';
 export { createComputeAdapter } from './adapters/compute';
 export { enterWorkspace, tableKey } from './workspace';
+// A run's sources and passes on a database the host owns, with the passes' results as the grammar holds them.
+export { createComputeSteps } from './compute-steps';
+export type { ComputeSteps, ComputedTable } from './compute-steps';
