@@ -389,20 +389,18 @@ let wrappedHost: WrappedHost | undefined;
  * Runs a spec as `runSpec` does, on a grammar made with a host's own adapters around its own (`wrapDataAdapter` and
  * `wrapComputeAdapter`): they record each call of the wrap functions and each workspace, source and pass the run sends
  * through them, then hand it to the grammar's adapter. The data adapter hands the grammar's an autk-db database the page
- * makes where it is given none, as the README's example of a host's adapters does: one database, made once, for every
- * run of the grammar (`runWrappedAgain` runs it again). The database stays in `window.hostDb`, for `hostRows`. A step
- * names its entry by its type and the table it writes.
+ * makes where it is given none, as the README's example of a host's adapters does: a new one for each run of the
+ * grammar, at its first call (`runWrappedAgain` runs it again). The last run's database stays in `window.hostDb`, for
+ * `hostRows`. A step names its entry by its type and the table it writes.
  */
 window.runWrapped = async (spec: UrbanSpec) => {
     const host: WrappedHost = { wrapped: [], steps: [], databases: [] };
     const hostDb = async (): Promise<AutkDb> => {
-        if (host.databases.length === 0) {
-            const db = new AutkDb();
-            await db.init();
-            host.databases.push(db);
-            window.hostDb = db;
-        }
-        return host.databases[0];
+        const db = new AutkDb();
+        await db.init();
+        host.databases.push(db);
+        window.hostDb = db;
+        return db;
     };
     const named = (entry: { type?: string; outputTableName?: string; dataRef?: string }) =>
         `${entry.type ?? 'gpgpu'} ${entry.outputTableName ?? entry.dataRef}`;
