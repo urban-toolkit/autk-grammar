@@ -150,6 +150,15 @@ function inColumnOrder(rows: Array<Record<string, unknown>>, table: Table): Arra
     });
 }
 
+/**
+ * Whether a table keeps its rows' values in a `properties` column, as a GeoJSON or an OSM layer does. autk-db's update of
+ * a layer sets that column on each row it matches, so it cannot change a layer of plain columns, which keeps each value
+ * in a column of its own: a CSV or JSON layer, or a `sql` source's table of plain columns drawn as a layer.
+ */
+function hasPropertiesColumn(table: Table): boolean {
+    return table.columns.some((column) => column.name === 'properties');
+}
+
 /** The database a source loads into: `context`, else a new one. */
 async function database(context: AutkDb | undefined): Promise<AutkDb> {
     if (context) return context;
@@ -446,6 +455,10 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache, compu
                     let idColumn = update.idColumn;
                     try {
                         const table = db.getTablesMetadata().find((candidate) => candidate.name === update.dataRef);
+                        // autk-db cannot update a layer of plain columns (see hasPropertiesColumn): on 4.1.1 such an update
+                        // failed for want of a feature id or of a column, or on rows that were not a FeatureCollection.
+                        if (update.strategy === 'update' && table && isVectorTable(table) && !hasPropertiesColumn(table))
+                            throw new Error("on a layer, the update strategy sets the properties column of each row it matches, and this layer has none: it keeps its values in plain columns, as a CSV or JSON layer or a sql source's table of plain columns does. Use strategy 'replace', with every row in geojsonObject.");
                         // autk-db inserts the given rows of a table without a geometry by position, so each comes in the
                         // table's column order. replace makes the table of the given rows, by their keys' names.
                         if (update.strategy === 'update' && update.jsonObject && table && !isVectorTable(table))
