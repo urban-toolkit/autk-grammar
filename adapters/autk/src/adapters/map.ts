@@ -287,6 +287,20 @@ function checkPositions(positions: unknown, key: string, layerId: string): void 
         throw new Error(`Layer "${layerId}": ${key} must list the positions of features the layer draws, whole numbers from 0, not ${JSON.stringify(positions)}.`);
 }
 
+/** The positions each layer of a map hides by its `skippedComps`, by the layer's id. */
+const hiddenPositions = new WeakMap<AutkMap, Map<string, ReadonlySet<number>>>();
+
+/**
+ * The positions of `selection`, picked on the layer `layerId` of `map`, that the layer shows. autk-map 4.1.1's picking
+ * passes draw the hidden features of a points, polygons or buildings layer too, so a pick can find a feature the layer's
+ * `skippedComps` hides: the grammar leaves it out of the picks it forwards and of what it hands the plots linked to the
+ * layer.
+ */
+export function shownPicks(map: AutkMap, layerId: string, selection: number[]): number[] {
+    const hidden = hiddenPositions.get(map)?.get(layerId);
+    return hidden ? selection.filter((position) => !hidden.has(position)) : selection;
+}
+
 /** Refuses positions on a raster layer, which draws no features, and positions past the last feature a layer draws. */
 function checkDrawnPositions(positions: readonly number[], key: string, layerId: string, type: LayerType, count: number): void {
     if (type === 'raster')
@@ -612,7 +626,13 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 checkDrawnPositions(layerRef.skippedComps, 'skippedComps', layerId, type, drawnRows.length);
                 // AutkMap.setSkippedIds passes over a points layer, which hides features of its own: the layer's own call
                 // hides them on every type of layer.
-                map.layerManager.searchByLayerId(layerId)?.setSkippedIds(layerRef.skippedComps);
+                const layer = map.layerManager.searchByLayerId(layerId);
+                layer?.setSkippedIds(layerRef.skippedComps);
+                // The positions hidden, as the layer holds them: a vector layer gives its own, and a points layer hides
+                // each position it is given.
+                const hidden = (layer as unknown as { skippedIds?: number[] } | null)?.skippedIds;
+                if(!hiddenPositions.has(map)) hiddenPositions.set(map, new Map());
+                hiddenPositions.get(map)!.set(layerId, new Set(Array.isArray(hidden) ? hidden : layerRef.skippedComps));
             }
             drawn.push({ rows: drawnRows, collection: data });
         }

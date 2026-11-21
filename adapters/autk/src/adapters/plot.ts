@@ -13,6 +13,7 @@ import type { ColorHEX } from '@urban-toolkit/autk-core';
 import { MapEvent } from '@urban-toolkit/autk-map';
 import type { MapEventData } from '@urban-toolkit/autk-map';
 import { FeatureCollection } from 'geojson';
+import { shownPicks } from './map';
 
 function grammarMarkToPlotType(mark: PlotMark): PlotType {
     const mapping: Record<PlotMark, PlotType> = {
@@ -56,7 +57,7 @@ export function linkPlotToLayer(plot: AutkPlot, rows: readonly string[], events:
 
     // A pick names the layer it was made on, so a pick on another layer of the map leaves the plot alone.
     map.events.on(MapEvent.PICKING, ({ layerId: picked, selection }: MapEventData) => {
-        if (picked === layerId) plot.setSelection(translateIds(selection, layer.rows, rows));
+        if (picked === layerId) plot.setSelection(translateIds(shownPicks(map, layerId, selection), layer.rows, rows));
     });
 
     for(const event of events) {
