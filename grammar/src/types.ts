@@ -1028,8 +1028,9 @@ export type FromFeatureDirective = {
     fromFeature: {
         /**
          * Table to read from. The Autark adapter reads it as an earlier compute pass wrote it; else, when a GeoJSON source
-         * loaded it with its coordinates in its workspace's CRS, as the source gave its features, each building part with
-         * its own outline; else as autk-db keeps it, a buildings table's geometry inside a GeometryCollection.
+         * loaded it with its coordinates in its workspace's CRS, as the source gave the features autk-db kept, in the
+         * order autk-db keeps them, each building part with its own outline; else as autk-db keeps it, a buildings
+         * table's geometry inside a GeometryCollection.
          */
         layer: string;
         /** Dot path from the feature root, for example `properties.height` or `geometry.coordinates.0`. */
