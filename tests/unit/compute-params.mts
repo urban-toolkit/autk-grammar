@@ -4,7 +4,7 @@
 // buffer; autk-compute 3 bound them as 64 KiB uniform buffers. tests/grammar.spec.ts runs a batched
 // pass past 64 KiB on the GPU.
 import assert from 'node:assert/strict';
-import type { FeatureCollection } from 'geojson';
+import type { Feature, FeatureCollection } from 'geojson';
 import type { ComputeSpec } from '@urban-toolkit/the-urban-grammar';
 import {
     STORAGE_BUFFER_BINDING_SIZE, buildBatchedUniforms, computeLayerNames, findIterateSource, joinWgsl,
@@ -101,6 +101,81 @@ test('batched packs values and bounding boxes, drops features missing required p
     assert.deepEqual(packed.uniforms, { doy: 172, num_features: 2 });
     assert.deepEqual(packed.uniformArrays.h, [10, 30]);
     assert.deepEqual(packed.uniformArrays.o, [0, 0, 4, 0, 4, 2, 0, 2, -1, -1, 1, -1, 1, 3, -1, 3]);
+});
+
+// A building part OpenStreetMap maps as one element of several polygons, two squares apart, and a part of one square.
+const square = (x: number, side: number) => [[x, 0], [x + side, 0], [x + side, side], [x, side], [x, 0]];
+const heights = { h: { fromFeature: { layer: 'bldg', path: 'properties.h', iterate: 'batched' as const, required: true } } };
+const outline = { o: { fromFeature: { layer: 'bldg', path: 'geometry.coordinates.0', iterate: 'batched' as const }, cols: 2 } };
+
+test("batched packs each polygon of a MultiPolygon as a feature of its own, its values beside it, when an entry reads the geometry", () => {
+    const parts: Feature[] = [
+        { type: 'Feature', properties: { h: 12 }, geometry: { type: 'MultiPolygon', coordinates: [[square(0, 4)], [square(10, 2)]] } },
+        { type: 'Feature', properties: { h: 30 }, geometry: { type: 'Polygon', coordinates: [square(20, 1)] } },
+    ];
+    const packed = buildBatchedUniforms(heights, outline, parts);
+    assert.equal(packed.uniforms.num_features, 3);
+    assert.deepEqual(packed.uniformArrays.h, [12, 12, 30]);
+    assert.deepEqual(packed.uniformArrays.o, [0, 0, 4, 0, 4, 4, 0, 4, 10, 0, 12, 0, 12, 2, 10, 2, 20, 0, 21, 0, 21, 1, 20, 1]);
+    // A pass whose batched entries read no geometry packs each feature once.
+    assert.deepEqual(buildBatchedUniforms(heights, undefined, parts).uniformArrays.h, [12, 30]);
+});
+
+test("batched packs each polygon of a GeometryCollection, as autk-db keeps a building, with its part's properties", () => {
+    // autk-db's building model: one GeometryCollection of the parts, each part's tags in properties.parts by geometryIndex.
+    const building: Feature = {
+        type: 'Feature',
+        properties: { building_id: 7, parts: [{ id: 71, geometryIndex: 0, h: 10 }, { id: 72, geometryIndex: 1, h: 20 }] },
+        geometry: {
+            type: 'GeometryCollection',
+            geometries: [
+                { type: 'Polygon', coordinates: [square(0, 2)] },
+                { type: 'MultiPolygon', coordinates: [[square(5, 1)], [square(8, 1)]] },
+            ],
+        },
+    };
+    const packed = buildBatchedUniforms(heights, outline, [building]);
+    assert.equal(packed.uniforms.num_features, 3);
+    assert.deepEqual(packed.uniformArrays.h, [10, 20, 20]);
+    assert.deepEqual(packed.uniformArrays.o, [0, 0, 2, 0, 2, 2, 0, 2, 5, 0, 6, 0, 6, 1, 5, 1, 8, 0, 9, 0, 9, 1, 8, 1]);
+});
+
+test("hands autk-compute a MultiLineString's lines as one line when an attribute reads its geometry, and gives it back its own", async () => {
+    const roads: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: [
+            { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[0, 0], [1, 0], [2, 0]] } },
+            { type: 'Feature', properties: {}, geometry: { type: 'MultiLineString', coordinates: [[[5, 5], [6, 5]], [[7, 5], [8, 6]]] } },
+        ],
+    };
+    const spec: ComputeSpec = {
+        dataRef: 'roads', attributes: { seg: 'geometry.coordinates' }, attributeMatrices: { seg: { rows: 'auto', cols: 2 } },
+        outputColumnName: 'out', wgslFunction: 'return seg[0u];',
+    };
+    const handed: FeatureCollection[] = [];
+    const fakeRun = async (p: { collection: FeatureCollection }) => {
+        handed.push(p.collection);
+        // As autk-compute does: a copy of each feature it was handed, its result under compute.
+        return { ...p.collection, features: p.collection.features.map((f) => ({ ...f, properties: { ...f.properties, compute: { out: 1 } } })) };
+    };
+    const out = await runCompute(spec, { roads }, fakeRun);
+    // A LineString is handed as it is; a MultiLineString as one line of its points, in their order.
+    assert.deepEqual(handed[0].features.map((f) => f.geometry), [
+        roads.features[0].geometry,
+        { type: 'LineString', coordinates: [[5, 5], [6, 5], [7, 5], [8, 6]] },
+    ]);
+    // The result holds each road's own geometry, and the input is not changed.
+    assert.deepEqual(out.features.map((f) => f.geometry), roads.features.map((f) => f.geometry));
+    assert.equal(roads.features[1].geometry.type, 'MultiLineString');
+    // With iterate 'all' too, one dispatch per feature of the iterated table.
+    const sun = fc([{ w: 1 }, { w: 2 }]);
+    handed.length = 0;
+    const each = await runCompute(
+        { ...spec, uniforms: { w: { fromFeature: { layer: 'sun', path: 'properties.w', iterate: 'all' } } } }, { roads, sun }, fakeRun,
+    );
+    assert.equal(handed.length, 2);
+    for (const collection of handed) assert.equal(collection.features[1].geometry.type, 'LineString');
+    assert.deepEqual(each.features.map((f) => f.geometry), roads.features.map((f) => f.geometry));
 });
 
 const box = (i: number) => [[i, 0], [i + 1, 0], [i + 1, 1]];
