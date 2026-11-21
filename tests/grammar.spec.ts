@@ -210,6 +210,54 @@ async function answerOverpass(page: Page, answer: object): Promise<string[]> {
     return queries;
 }
 
+/**
+ * Answers the page's Overpass API requests for an OSM source's layers: each query of buildings (one a tile of the area)
+ * with `layers.buildings`, the query of roads with `layers.roads`, and any other (the coastline query) with no elements.
+ */
+async function answerOverpassLayers(page: Page, layers: { roads: object[]; buildings: object[] }): Promise<void> {
+    const headers = { 'access-control-allow-origin': '*' };
+    await page.route('https://overpass-api.de/api/status', (route) => route.fulfill({ status: 404, headers, body: '' }));
+    await page.route('https://overpass-api.de/api/interpreter', (route) => {
+        const query = decodeURIComponent((route.request().postData() ?? '').replace(/^data=/, ''));
+        const elements = query.includes('way["building"') ? layers.buildings : query.includes('way["highway"') ? layers.roads : [];
+        return route.fulfill({ status: 200, headers, contentType: 'application/json', body: JSON.stringify({ version: 0.6, elements }) });
+    });
+}
+
+test('draws the other OSM layers when autk-map raises no building of the buildings, and warns why, naming the keys autk-core raises a part from', async ({ page }) => {
+    // Three buildings tagged building=yes alone, as many OSM buildings are, between two roads inside BOX. autk-map raises
+    // none of them and makes no buildings layer: the run refused the whole spec, where 5.6.0 drew the surface and the roads.
+    const way = (id: number, tags: object, points: number[][]) =>
+        ({ type: 'way', id, tags, nodes: points.map((_, i) => id + i + 1), geometry: points.map(([lon, lat]) => ({ lat, lon })) });
+    const road = (id: number, lat: number) => way(id, { highway: 'residential' }, [[-74.012, lat], [-74.0085, lat]]);
+    const building = (id: number, i: number) => {
+        const [west, east] = [-74.0115 + i * 0.0012, -74.0109 + i * 0.0012];
+        return way(id, { building: 'yes' }, [[west, 40.7068], [east, 40.7068], [east, 40.7074], [west, 40.7074], [west, 40.7068]]);
+    };
+    await answerOverpassLayers(page, { roads: [road(100, 40.706), road(110, 40.708)], buildings: [building(200, 0), building(210, 1), building(220, 2)] });
+    const warnings: string[] = [];
+    page.on('console', (message) => {
+        if (message.type() === 'warning') warnings.push(message.text());
+    });
+
+    const { tables } = await runSpec(page, {
+        data: [{ type: 'osm', outputTableName: 'plain', queryArea: { bbox: BOX }, autoLoadLayers: { layers: ['surface', 'roads', 'buildings'] } } as DataSourceSpec],
+        map: { camera: { zoom: 14 }, layerRefs: [{ dataRef: 'plain_surface' }, { dataRef: 'plain_roads' }, { dataRef: 'plain_buildings' }] },
+    });
+    expect(tables.plain_buildings?.features).toBe(3);
+    expect(tables.plain_roads?.features).toBeGreaterThan(0);
+    // The map draws the surface and the roads, and has no buildings layer, which the run's lookup does not name.
+    expect((await mapLayers(page)).map((layer) => layer.id).sort()).toEqual(['plain_roads', 'plain_surface']);
+    expect(await page.evaluate(() => window.grammar.mapLayer('plain_buildings') === undefined)).toBe(true);
+    expect(await page.evaluate(() => window.grammar.mapLayer('plain_roads')?.layerId)).toBe('plain_roads');
+    // One warning says why, naming the four keys.
+    expect(warnings.filter((text) => text.startsWith('Layer "plain_buildings"'))).toEqual([
+        expect.stringContaining('Layer "plain_buildings": autk-map drew no building of the 3 features of the table "plain_buildings", so the map has no layer of them: '
+            + 'autk-core raises a building part only from height, building:height, levels or building:levels'),
+    ]);
+    expect(await drawnPixels(page, 'surface and roads, without buildings'), 'pixels of the surface and the roads').toBeGreaterThan(1000);
+});
+
 /** The value at `path` of each of the first `count` features of `table`. */
 function valuesOf(page: Page, table: string, count: number, path: string): Promise<unknown[]> {
     return page.evaluate(async ({ table, count, path }) => {
@@ -1036,17 +1084,29 @@ test('draws the buildings that have no height with buildingsZeroHeight, each 3 t
     expect(sixRoofs, `six roofs cover ${sixRoofs} pixels, three ${threeRoofs}`).toBeGreaterThan(threeRoofs * 1.6);
 });
 
-test('refuses a buildings layer autk-map raises no building of, naming the keys autk-core raises a part from', async ({ page }) => {
-    // The zones have an id and a v, and none of height, building:height, levels and building:levels. autk-map logged
-    // "Invalid Building Layer." and made no layer, and the run went on as if the map drew one: the layer's lookup named a
-    // layer the map lacks, and its links and picks did nothing.
+test('draws a map without a buildings layer autk-map raises no building of, warns why, and refuses legend and pickedComps on it', async ({ page }) => {
+    // The zones have an id and a v, and none of height, building:height, levels and building:levels. autk-map logs
+    // "Invalid Building Layer." and makes no layer. The run goes on without it, as 5.6.0 did, and says why; the layer's
+    // lookup names no layer the map lacks, and the keys that need the layer are refused, naming the cause.
     const zonesAsBuildings = (options: Partial<MapLayerSpec>): UrbanSpec => ({
         data: [area, zones],
-        map: { layerRefs: [{ dataRef: 'zones', title: 'Zones', layerType: 'buildings', ...options }] },
+        map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'zones', title: 'Zones', layerType: 'buildings', ...options }] },
     });
-    await expect(runSpec(page, zonesAsBuildings({}))).rejects.toThrow('Layer "Zones": autk-map drew no building of the 4 features of the table "zones", '
-        + 'so the map has no layer of them: autk-core raises a building part only from height, building:height, levels or building:levels');
-    // The map that failed is destroyed, so it leaves nothing on the page.
+    const warnings: string[] = [];
+    page.on('console', (message) => {
+        if (message.type() === 'warning') warnings.push(message.text());
+    });
+    const cause = 'autk-map drew no building of the 4 features of the table "zones", so the map has no layer of them: '
+        + 'autk-core raises a building part only from height, building:height, levels or building:levels';
+    await runSpec(page, zonesAsBuildings({}));
+    expect(warnings.filter((text) => text.startsWith('Layer "Zones"'))).toEqual([expect.stringContaining(`Layer "Zones": ${cause}`)]);
+    expect(Object.keys(await layerById(page))).toEqual(['area']);
+    expect(await page.evaluate(() => window.grammar.mapLayer('zones') === undefined)).toBe(true);
+
+    // legend and pickedComps need the layer. The map that failed is destroyed, so it leaves nothing on the page.
+    await expect(runSpec(page, zonesAsBuildings({ getFnv: 'v', legend: true }))).rejects.toThrow(`Layer "Zones": legend needs the layer, and ${cause}`);
+    expect(await page.evaluate(() => window.grammar.maps.length)).toBe(0);
+    await expect(runSpec(page, zonesAsBuildings({ isPick: true, pickedComps: [0] }))).rejects.toThrow(`Layer "Zones": pickedComps needs the layer, and ${cause}`);
     expect(await page.evaluate(() => window.grammar.maps.length)).toBe(0);
 
     // With buildingsZeroHeight, each zone stands at a random height, and the map draws the layer.
