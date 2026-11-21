@@ -1210,6 +1210,45 @@ test('hides the features skippedComps names, on a layer of polygons, of lines or
         .rejects.toThrow('Layer "heatmap": skippedComps names features, and a raster layer has none.');
 });
 
+test('drops a hidden point a double click picks from map:picking and from the plot linked to its layer', async ({ page }) => {
+    // autk-map's picking pass draws every point of a points layer, the hidden ones too, so a double click where hidden
+    // spot 0 lies picked it: map:picking reported it, and the plot linked to the layer by mapRef selected its row.
+    await runSpec(page, {
+        data: [area, spots],
+        map: { layerRefs: [{ dataRef: 'spots', title: 'Spots', isPick: true, skippedComps: [0] }] },
+        plot: { id: 'p', dataRef: 'spots', mark: 'table', axis: ['id'], mapRef: 'spots', events: ['click'] },
+    });
+    expect((await page.evaluate(() => window.drawnRows('map0', 'Spots'))).map((row) => row?.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect((await layerById(page)).Spots.skippedIds).toEqual([0]);
+
+    // Double-clicks the map where spot `id` lies, as the user picks, and gives the selection of the next map:picking
+    // event and the ids of the rows the plot then selects. The spot is put on the page by the map's camera.
+    const pickSpot = (id: number) => page.evaluate(async ([x, y]) => {
+        const map = window.grammar.maps[0];
+        const [ox, oy] = map.layerManager.origin;
+        map.camera.update();
+        const m = map.camera.getViewProjectionMatrix();
+        const [wx, wy] = [x - ox, y - oy];
+        const [cx, cy, cw] = [m[0] * wx + m[4] * wy + m[12], m[1] * wx + m[5] * wy + m[13], m[3] * wx + m[7] * wy + m[15]];
+        const box = map.canvas.getBoundingClientRect();
+        const clientX = box.left + ((cx / cw + 1) / 2) * box.width;
+        const clientY = box.top + ((1 - cy / cw) / 2) * box.height;
+        const reported = await new Promise<number[] | string>((resolve) => {
+            window.grammar.interactions.on('map:picking', ({ selection }) => resolve([...selection]));
+            setTimeout(() => resolve('no map:picking event within 5 s'), 5000);
+            map.canvas.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX, clientY }));
+        });
+        const rows = window.grammar.plotCollection('p')?.features ?? [];
+        const selected = [...(window.grammar as any)._plotRegistry.get('p').selection] as number[];
+        return { reported, plotted: selected.map((position) => rows[position]?.properties?.id).sort() };
+    }, worldMercator(-73.984 + (id % 3) * 0.004, 40.751 + Math.floor(id / 3) * 0.004));
+
+    // A shown spot is picked, and its row selected.
+    expect(await pickSpot(4)).toEqual({ reported: [4], plotted: [4] });
+    // The hidden spot is not: the pick reports the spots picked before it, and the plot keeps their rows.
+    expect(await pickSpot(0)).toEqual({ reported: [4], plotted: [4] });
+});
+
 test('draws each line of a roads layer as wide as widthBy says, and a line without a width as wide as its kind of road', async ({ page }) => {
     // Four east-west lines of one length: three with a width w, the fourth without one.
     const lanes = (widths: number[]): DataSourceSpec => ({
