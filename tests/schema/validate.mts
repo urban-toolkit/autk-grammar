@@ -581,6 +581,16 @@ for (const [definition, paths] of newKeys) {
     }
 }
 
+// A heatmap's groupBy entry requires aggregateFn, which every run refuses an entry without, while a join's entry keeps it
+// optional, as it was.
+for (const [definition, required] of [['HeatmapSourceSpec', ['column', 'aggregateFn']], ['JoinSourceSpec', ['column']]] as const) {
+    const entries = objectsOf(keysAt(definition, 'groupBy'));
+    if (entries.length !== 1 || JSON.stringify(entries[0].required) !== JSON.stringify(required)) {
+        failures++;
+        console.error(`FAIL ${definition}.groupBy's entry requires ${JSON.stringify(entries.map((entry) => entry.required))}, not ${JSON.stringify(required)}`);
+    }
+}
+
 if (checked === 0) {
     failures++;
     console.error('FAIL no gallery specs were found');
