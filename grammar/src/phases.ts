@@ -19,6 +19,17 @@ function tablesRead(source: DataSourceSpec): string[] {
     }
 }
 
+/**
+ * The name autk-db gives its default workspace (`DEFAULT_WORKSPACE_NAME`). A run reads it as the workspace of an entry
+ * without one, as the Autark adapter's `tableKey` names a table.
+ */
+const DEFAULT_WORKSPACE = 'autk';
+
+/** Whether two entries' `workspace`s name one workspace: the default one, by its name or by none, or another by its name. */
+function sameWorkspace(a: string | undefined, b: string | undefined): boolean {
+    return (a ?? DEFAULT_WORKSPACE) === (b ?? DEFAULT_WORKSPACE);
+}
+
 /** The table a compute pass writes: its `outputTableName`, else, for a GPGPU or clusters pass, its `dataRef`. */
 function tableWritten(pass: ComputeSpec): string {
     return pass.outputTableName ?? (pass as { dataRef: string }).dataRef;
@@ -33,7 +44,7 @@ function tableWritten(pass: ComputeSpec): string {
 function lastWriter(passes: ComputeSpec[], workspace: string | undefined, table: string): number {
     for (let index = passes.length - 1; index >= 0; index--) {
         const pass = passes[index];
-        if ((pass.workspace ?? null) === (workspace ?? null) && tableWritten(pass) === table) return index;
+        if (sameWorkspace(pass.workspace, workspace) && tableWritten(pass) === table) return index;
     }
     return -1;
 }
