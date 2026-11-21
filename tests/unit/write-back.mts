@@ -90,6 +90,16 @@ test('in place, a result with a row without a feature id, and a table without a 
     assert.deepEqual(noIdColumn.calls[0], ['updateTable', { tableName: 'kept', data: squares, strategy: 'replace' }]);
 });
 
+test("in place over a table a host's stand-in database lists without columns, it updates each row by its id, as 5.6.0 did", async () => {
+    // autk-db lists every column of a table it holds, so a table listed without any is not known to keep plain columns.
+    const { db, calls } = fakeDb([{ name: 'squares', type: 'polygons', columns: [] }], 3);
+    await writeBack(db, 'Pass', 'squares', squares, 'polygons', true);
+    assert.deepEqual(calls, [
+        ['updateTable', { tableName: 'squares', data: squares, strategy: 'update', idColumn: 'id' }],
+        countQuery('squares'),
+    ]);
+});
+
 test('a new table is filled aside, of its layer type, with every row and no cut to the workspace, counted there, then copied in place of its name', async () => {
     const { db, calls } = fakeDb([{ name: 'squares', type: 'polygons', columns: geojsonColumns }], 3);
     await writeBack(db, 'Pass', 'blocks', squares, 'polygons', false);
