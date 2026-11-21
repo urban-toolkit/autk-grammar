@@ -2485,6 +2485,29 @@ test('replaces and updates the rows of a table with an update source, and the ma
         .rejects.toThrow('Update of "nowhere": Table nowhere not found.');
 });
 
+test("updates a table without a geometry by the names of its columns, whatever the order of a given row's keys", async ({ page }) => {
+    // autk-db stages the given rows with their columns in the order of their keys, then inserts them by position: on 4.1.1
+    // { count: 25, zone: 2 } wrote 25 in zone and 2 in count, and { total: 9, month: 'Feb' } was refused for its total.
+    const zoneCounts: DataSourceSpec = { type: 'csv', outputTableName: 'zones', csvObject: [['zone', 'count'], [1, 10], [2, 20]] };
+    const sales: DataSourceSpec = { type: 'csv', outputTableName: 'sales', csvObject: [['month', 'total'], ['Jan', 3], ['Feb', 5]] };
+    /** The table's rows in autk-db once the update ran, or the run's message when it was refused. */
+    const updated = (source: DataSourceSpec, dataRef: string, idColumn: string, jsonObject: Array<Record<string, unknown>>) =>
+        runSpec(page, { data: [source, { type: 'update', dataRef, strategy: 'update', idColumn, jsonObject }] })
+            .then(() => page.evaluate((table) => window.dbRows(`SELECT * FROM ${table} ORDER BY 1`), dataRef), (error: Error) => error.message);
+    expect([
+        await updated(zoneCounts, 'zones', 'zone', [{ count: 25, zone: 2 }]),
+        await updated(sales, 'sales', 'month', [{ total: 9, month: 'Feb' }]),
+        // autk-db writes a given row as a whole row of the table, so one without a column of it, or with another, is refused.
+        await updated(sales, 'sales', 'month', [{ month: 'Feb' }]),
+        await updated(sales, 'sales', 'month', [{ month: 'Feb', total: 9, note: 'late' }]),
+    ]).toEqual([
+        [{ zone: 1, count: 10 }, { zone: 2, count: 25 }],
+        [{ month: 'Feb', total: 9 }, { month: 'Jan', total: 3 }],
+        expect.stringContaining('Update of "sales": jsonObject[0] has no "total"; autk-db writes each given row as a whole row of the table, so it gives every column: "month", "total".'),
+        expect.stringContaining('Update of "sales": jsonObject[0] has "note", which is not a column of the table: "month", "total".'),
+    ]);
+});
+
 test('drops a table with a drop source, so data no longer lists it and a map no longer finds it', async ({ page }) => {
     const dropped: UrbanSpec = { data: [area, zones, blocks, { type: 'drop', dataRef: 'blocks' }] };
     const { tables } = await runSpec(page, { ...dropped, map: { layerRefs: [{ dataRef: 'zones' }] } });

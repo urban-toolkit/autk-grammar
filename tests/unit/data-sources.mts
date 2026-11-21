@@ -277,6 +277,34 @@ test('a layer update whose keys match no row leaves autk-db alone, and one of ro
     assert.deepEqual(anonymous.calls, [['getLayer', 'zones']]);
 });
 
+// autk-db 4.1.1 stages the rows of an update of a table without a geometry with DuckDB's read_json_auto, whose columns
+// follow a row's keys in the order they come, then inserts them with `INSERT INTO <table> SELECT * FROM <staging>`, by
+// position: a row given as { count: 25, zone: 2 } to a table of (zone, count) wrote 25 in zone and 2 in count.
+const zoneCounts = { name: 'zones', columns: [{ name: 'zone', type: 'BIGINT' }, { name: 'count', type: 'BIGINT' }] };
+
+test("an update of a table without a geometry hands autk-db each given row with its columns in the table's order", async () => {
+    const jsonObject = [{ count: 25, zone: 2 }, { zone: 3, count: 30 }];
+    const calls = await callsFor({ type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'zone', jsonObject }, [zoneCounts]);
+    assert.deepEqual(calls, [['updateTable', { tableName: 'zones', data: [{ zone: 2, count: 25 }, { zone: 3, count: 30 }], strategy: 'update', idColumn: 'zone' }]]);
+    // deepEqual compares no key order, so the order is compared apart.
+    const { data } = calls[0][1] as { data: Array<Record<string, unknown>> };
+    assert.deepEqual(data.map((row) => Object.keys(row)), [['zone', 'count'], ['zone', 'count']]);
+    // replace makes the table of the given rows, by their keys' names, so they reach autk-db as they are given.
+    const replaced = [{ count: 7, zone: 9, note: 'new' }];
+    const [replace] = await callsFor({ type: 'update', dataRef: 'zones', strategy: 'replace', jsonObject: replaced }, [zoneCounts]);
+    assert.equal((replace[1] as { data: unknown }).data, replaced);
+});
+
+test('refuses an update row of a table without a geometry that lacks a column of the table or has another, naming it, before autk-db runs', async () => {
+    const refused = async (jsonObject: unknown[], message: string) => {
+        const { db, calls } = fakeDb([zoneCounts]);
+        await assert.rejects(createDataAdapter().resolveSource(db, { type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'zone', jsonObject } as DataSourceSpec), { message });
+        assert.deepEqual(calls, []);
+    };
+    await refused([{ zone: 2, count: 25 }, { zone: 3 }], 'Update of "zones": jsonObject[1] has no "count"; autk-db writes each given row as a whole row of the table, so it gives every column: "zone", "count".');
+    await refused([{ zone: 2, count: 25, extra: 1 }], 'Update of "zones": jsonObject[0] has "extra", which is not a column of the table: "zone", "count".');
+});
+
 // drop sources: a table dropped.
 test('a drop source removes its table from autk-db, and from the cache the plots read first', async () => {
     const cache = new Map([['blocks', emptyCollection()], ['west/blocks', emptyCollection()]]);
