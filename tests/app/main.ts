@@ -104,6 +104,7 @@ declare global {
         featureExtents: (table: string) => Promise<number[][]>;
         dbRows: (query: string) => Promise<Array<Record<string, unknown>>>;
         dbLayer: (table: string, osmElements?: boolean) => Promise<FeatureCollection>;
+        dbBands: (table: string) => Promise<Array<{ id: string; label?: string }>>;
         hostDb?: AutkDb;
         runOnHostDb: (spec: UrbanSpec, names: string[]) => Promise<HostRun>;
         hostRows: (query: string) => Promise<Array<Record<string, unknown>>>;
@@ -340,6 +341,12 @@ window.dbRows = async (query: string) => rowsOf(lastDb(), query);
 
 /** A table as autk-db exports it, not as the grammar's caches hold it; with `osmElements`, one feature per OSM element. */
 window.dbLayer = (table: string, osmElements?: boolean) => lastDb().getLayer(table, osmElements ? { osmElements: true } : undefined);
+
+/** The bands of a raster table of the last run, each band's id and label, as autk-db's `getRaster` gives them. */
+window.dbBands = async (table: string) => {
+    const raster = await lastDb().getRaster(table) as unknown as { features: Array<{ properties?: { bands?: Array<{ id: string; label?: string }> } }> };
+    return raster.features[0]?.properties?.bands ?? [];
+};
 
 /**
  * Runs a spec's workspaces, data sources and compute passes on an autk-db database the page makes and owns, through the
