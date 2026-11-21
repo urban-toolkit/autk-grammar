@@ -736,8 +736,9 @@ export type CameraMotionStep = {
 }
 
 /**
- * The ground of a map in 3D, raised to the heights a raster band gives. Read by the Autark adapter; the deck.gl adapter
- * ignores it.
+ * The ground of a map in 3D, raised to the heights a raster band gives. The map's `camera` looks at that ground, at its
+ * height, and keeps the eye's distance above it, and a camera tour turns the view around it. Read by the Autark adapter;
+ * the deck.gl adapter ignores it.
  */
 export type TerrainSpec = {
     /**

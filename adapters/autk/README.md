@@ -488,6 +488,13 @@ A map's `terrain` raises its ground to the heights a raster band gives, through 
 
 A run refuses a `dataRef` that names no raster table of the map's workspace, and a `band` that names none of the bands of a raster of several.
 
+On a map with a terrain, the `camera` looks at the ground: the point it looks at lies at the terrain's height there, and `zoom` sets the eye's distance from that point, so the eye stays above ground high above z = 0. Each step of a camera tour turns the view around the ground its line of sight meets as the step starts. `applyCamera` and `playCameraMotion` measure from the terrain of a map the grammar drew; on a map whose terrain a host raised itself, they measure from z = 0.
+
+autk-map 4.1.1 measures from z = 0 in two places of its own:
+
+- **The ground its layers are draped over:** it finds the part of the terrain its layers' overlay covers with rays to z = 0, so a view close over high ground and tilted far from straight down can draw nothing.
+- **Its fit of the view to the terrain:** it also measures from z = 0, so on a small raster high above z = 0, a map without a `camera` can start with its eye under the ground.
+
 ```ts
 data: [
   { type: 'geojson', outputTableName: 'neighborhoods', geojsonFileUrl: '/data/mnt_neighs.geojson' },
