@@ -13,7 +13,7 @@ import { AutkDb } from '@urban-toolkit/autk-db';
 import { extentOf } from './data';
 import { checkPointSize, planarPointSize } from '../point-size';
 import { HEX_COLOR, buildDomainSpec, colorMapRangeRefusal } from '../color-keys';
-import { centerOnMap, centerRefusal, motionRefusal, playCameraMotion, resolveCameraCenter } from '../camera';
+import { centerOnMap, centerRefusal, groundHeight, keepTerrainGround, motionRefusal, playCameraMotion, resolveCameraCenter } from '../camera';
 
 /** The id a layer has in its map: its `title`, else its `dataRef`. */
 export function layerIdOf(layerRef: MapLayerSpec): string {
@@ -361,7 +361,8 @@ function cameraRefusal(camera: CameraSpec): string | undefined {
 /**
  * Moves a map's camera as `camera` says, from the view that fits the map's layers. The camera reports each change,
  * so the map redraws without a request. It refuses a pitch that is not at least 0 and less than 90 degrees, and a
- * `center` that `resolveCameraCenter` has not put on the map.
+ * `center` that `resolveCameraCenter` has not put on the map. On a map whose terrain the grammar raised, it looks at
+ * the ground, at the terrain's height under the point it looks at, and keeps the eye's distance above it.
  *
  * The map adapter calls it once the map's layers are loaded and before the map's first `draw()`. A host that builds
  * its own map from a spec's `map` entry calls it at the same point, so the map looks from where the grammar's would.
@@ -377,19 +378,22 @@ export function applyCamera(map: AutkMap, camera: CameraSpec): void {
     // `bearing` the compass heading of the view, clockwise from north.
     const view = map.camera;
     const [x, y] = center ?? view.getLookAt();
-    const distance = camera.zoom !== undefined ? 10000 / Math.pow(2, camera.zoom - 10) : Math.abs(view.getEye()[2]);
+    // autk-map draws a terrain at its raw elevation, which can lie kilometres above z = 0: the point looked at is on the
+    // ground, and the eye's distance is measured from it.
+    const ground = groundHeight(map, x, y);
+    const distance = camera.zoom !== undefined ? 10000 / Math.pow(2, camera.zoom - 10) : Math.abs(view.getEye()[2] - ground);
     const pitch = (camera.pitch ?? 0) * Math.PI / 180;
     const bearing = (camera.bearing ?? 0) * Math.PI / 180;
     const eye = [
         x - distance * Math.sin(pitch) * Math.sin(bearing),
         y - distance * Math.sin(pitch) * Math.cos(bearing),
-        distance * Math.cos(pitch),
+        ground + distance * Math.cos(pitch),
     ];
     // The view's up direction: across the line of sight at any pitch, toward the far side of the view, as autk-map's own
     // tilt leaves it. autk-map's pan, tilt and zoom at the cursor move along it and take it to be across the line of
     // sight; a horizontal one is not, beyond a pitch of 0. The view itself is the same either way.
     const up = [Math.cos(pitch) * Math.sin(bearing), Math.cos(pitch) * Math.cos(bearing), Math.sin(pitch)];
-    view.resetCamera(up, [x, y, 0], eye);
+    view.resetCamera(up, [x, y, ground], eye);
 }
 
 /**
@@ -411,6 +415,8 @@ async function loadTerrain(map: AutkMap, context: AutkDb, terrain: TerrainSpec, 
     } catch (error) {
         throw refuse(`"${terrain.dataRef}": ${error instanceof Error ? error.message : String(error)}`);
     }
+    // The ground the map's camera and its tours are measured from.
+    keepTerrainGround(map, collection, band);
 }
 
 /**
