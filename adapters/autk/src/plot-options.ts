@@ -61,10 +61,11 @@ function columnTitle(column: string): string {
 
 /**
  * Why a plot refuses its `axisLabels`, or `undefined` when it takes them: titles that are not strings, more titles than
- * `axis` has columns, which a table would show as headers over no cells, two titles alike, and a title that an axis
- * without one keeps (see {@link columnTitle}), since a table finds the column a click on a header sorts by its title.
+ * `axis` has columns, which a table would show as headers over no cells, two titles alike, and, on a table, a title
+ * that a column without one keeps (see {@link columnTitle}), since a table finds the column a click on a header sorts
+ * by its title. A chart only draws each title by its axis, so it takes such a title.
  */
-function axisLabelsRefusal(axisLabels: unknown, axis: readonly string[]): string | undefined {
+function axisLabelsRefusal(axisLabels: unknown, axis: readonly string[], mark: PlotSpec['mark']): string | undefined {
     if (axisLabels === undefined) return undefined;
     if (!Array.isArray(axisLabels) || !axisLabels.every((title) => typeof title === 'string'))
         return 'axisLabels must be a list of titles, one for each column of axis.';
@@ -73,6 +74,7 @@ function axisLabelsRefusal(axisLabels: unknown, axis: readonly string[]): string
     const twice = axisLabels.find((title, at) => axisLabels.indexOf(title) !== at);
     if (twice !== undefined)
         return `axisLabels gives two axes the title ${JSON.stringify(twice)}.`;
+    if (mark !== 'table') return undefined;
     const untitled = axis.slice(axisLabels.length);
     for (let at = 0; at < axisLabels.length; at++) {
         const kept = untitled.find((column) => columnTitle(column) === axisLabels[at]);
@@ -105,7 +107,7 @@ export function checkPlotKeys(spec: PlotSpec): void {
         ?? schemeRefusal('categoricalColorMapInterpolator', spec.categoricalColorMapInterpolator, true)
         ?? colorMapRangeRefusal(spec.colorMapRange, spec.colorMapDomain)
         ?? tickFormatsRefusal(spec.tickFormats)
-        ?? axisLabelsRefusal(spec.axisLabels, spec.axis)
+        ?? axisLabelsRefusal(spec.axisLabels, spec.axis, spec.mark)
         ?? selectionRefusal(spec.selection)
         ?? hexColorRefusal('markColor', spec.markColor)
         ?? hexColorRefusal('highlightColor', spec.highlightColor);
