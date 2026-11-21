@@ -135,6 +135,7 @@ declare global {
         plotAxisTitles: (target?: string) => string[];
         schemeColor: (value: number, interpolator: string, domain: number[]) => ColorRGB;
         domainLabels: (domain: number[]) => string[];
+        pageReady?: boolean;
     }
 }
 
@@ -714,3 +715,6 @@ window.schemeColor = (value: number, interpolator: string, domain: number[]) =>
 
 /** autk-core's legend labels for a domain. */
 window.domainLabels = (domain: number[]) => ColorMap.computeLabels(domain);
+
+// Set last, once every helper above is defined: openTestPage (tests/grammar.spec.ts) waits for it before a test calls one.
+window.pageReady = true;

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type Request, type Response } from '@playwright/test';
 import { PNG } from 'pngjs';
 import type {
     CameraMotionStep, CameraSpec, ColorMapInterpolator, ComputeSpec, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec,
@@ -21,7 +21,51 @@ test.beforeEach(async ({ page }) => {
     page.on('pageerror', (error) => pageErrors.push(error.message));
     // DuckDB's extensions come from the tests' copy (tests/duckdb-extensions.ts), never from extensions.duckdb.org.
     extensionRequests = await serveExtensions(page);
-    await page.goto('/');
+    await openTestPage(page);
+});
+
+test.afterEach(() => {
+    expect(pageErrors, 'uncaught errors in the page').toEqual([]);
+    expect(extensionRequests.missing, 'DuckDB asked for extensions the tests\' copy does not hold: add them to EXTENSIONS in tests/duckdb-extensions.ts').toEqual([]);
+});
+
+/**
+ * Opens the test page once tests/app/main.ts has defined its helpers, which it says by setting `window.pageReady` last,
+ * and waits for a WebGPU adapter. main.ts is a module script, which runs before the page's load event, so a page that
+ * has loaded without the flag never ran main.ts to its end. When a request failed and no page error was seen, as when a
+ * request of its module graph fails, the page is opened again, at most twice, and the requests that failed are logged.
+ * Otherwise, as when main.ts throws, the test fails at once with an error that names the page error.
+ */
+async function openTestPage(page: Page) {
+    const failedRequests: string[] = [];
+    const errors: string[] = [];
+    const onRequestFailed = (request: Request) => failedRequests.push(`${request.url()} (${request.failure()?.errorText})`);
+    const onResponse = (response: Response) => {
+        if (response.status() >= 400) failedRequests.push(`${response.url()} (HTTP ${response.status()})`);
+    };
+    const onPageError = (error: Error) => errors.push(error.message);
+    page.on('requestfailed', onRequestFailed);
+    page.on('response', onResponse);
+    page.on('pageerror', onPageError);
+    try {
+        for (let load = 1; ; load++) {
+            failedRequests.length = 0;
+            errors.length = 0;
+            await page.goto('/');
+            // goto waits for the load event, so this waits only for a page whose load event has not fired yet.
+            await page.waitForFunction(() => window.pageReady === true || document.readyState === 'complete', undefined, { polling: 100 });
+            if (await page.evaluate(() => window.pageReady === true)) break;
+            const notRun = 'The test page loaded without running tests/app/main.ts';
+            if (errors.length) throw new Error(`${notRun}, after a page error: ${errors.join('; ')}`);
+            if (!failedRequests.length) throw new Error(`${notRun}, though no request failed and no page error was seen.`);
+            if (load === 3) throw new Error(`${notRun} ${load} times; the last time these requests failed: ${failedRequests.join('; ')}`);
+            console.log(`${notRun}; these requests failed: ${failedRequests.join('; ')}. Opening it again.`);
+        }
+    } finally {
+        page.off('requestfailed', onRequestFailed);
+        page.off('response', onResponse);
+        page.off('pageerror', onPageError);
+    }
     // A freshly launched Chrome can answer requestAdapter() with null until its GPU process has
     // started (about a second on the Linux GPU runner), so wait for an adapter before running specs.
     const adapter = await page.evaluate(async () => {
@@ -35,12 +79,7 @@ test.beforeEach(async ({ page }) => {
     expect(adapter, 'this browser has no WebGPU adapter').not.toBeNull();
     if (!adapterLogged) console.log(`WebGPU adapter: ${adapter}`);
     adapterLogged = true;
-});
-
-test.afterEach(() => {
-    expect(pageErrors, 'uncaught errors in the page').toEqual([]);
-    expect(extensionRequests.missing, 'DuckDB asked for extensions the tests\' copy does not hold: add them to EXTENSIONS in tests/duckdb-extensions.ts').toEqual([]);
-});
+}
 
 function run(page: Page, example: string): Promise<RunSummary> {
     return page.evaluate((name) => window.runExample(name), example);
@@ -3813,6 +3852,16 @@ test('charts the ten largest blocks of largest-blocks, counted in autk-db after 
     const [yTicks] = await page.evaluate(() => window.plotTicks('plot', '#axisY'));
     expect(yTicks.some(([value]) => !Number.isInteger(value)), 'a tick between whole numbers').toBe(true);
     for (const [value, text] of yTicks) expect(text).toBe(String(value));
+});
+
+test('opens the test page again when a request of its module fails, and runs largest-blocks on it', async ({ page }) => {
+    // The page's request for its module fails once, so the page loads without running tests/app/main.ts and has none of
+    // its helpers: the state in which first tries of the test above failed on its first line on the GPU runner, with
+    // "window.runExample is not a function".
+    await page.route((url) => url.pathname === '/main.ts', (route) => route.abort(), { times: 1 });
+    await openTestPage(page);
+    const { tables } = await run(page, 'largest-blocks');
+    expect(tables.largest_blocks.features).toBe(10);
 });
 
 test('links the plot of linked-views to its map by their ids: a click in the plot highlights the layer, a pick selects in the plot', async ({ page }) => {
