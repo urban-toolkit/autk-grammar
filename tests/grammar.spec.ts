@@ -2291,6 +2291,37 @@ test("runs passes written back and sources after compute on a database the host 
     ranWidths.forEach((width, i) => expect(width as number).toBeCloseTo(widths[i] as number, 3));
 });
 
+test("leaves the host's table as it was, and no empty table, when autk-db refuses the rows a pass writes back as a new table", async ({ page }) => {
+    // Readings whose id column repeats, which autk-db's export gives each row as its feature id: autk-db keeps no two
+    // rows of a layer with one feature id.
+    const readings: DataSourceSpec = {
+        type: 'csv', outputTableName: 'readings', geometryColumns: true,
+        csvObject: [['id', 'v', 'Latitude', 'Longitude'], [3, 1, 40.751, -73.985], [3, 2, 40.752, -73.984], [4, 3, 40.753, -73.983]],
+    };
+    // A table of the name the pass writes, which the host's database already holds: two points.
+    const scored: DataSourceSpec = {
+        type: 'csv', outputTableName: 'scored', geometryColumns: true,
+        csvObject: [['name', 'Latitude', 'Longitude'], ['first', 40.754, -73.982], ['second', 40.755, -73.981]],
+    };
+    const pass: ComputeSpec = { type: 'clusters', dataRef: 'readings', outputColumnName: 'cluster', outputTableName: 'scored', writeBack: true };
+    /** Runs a spec's steps on a database the page makes, and gives the refusal of the step that failed. */
+    const refusal = (spec: UrbanSpec) => page.evaluate((s) => window.runOnHostDb(s, []), spec).then(() => 'no refusal', (error: Error) => error.message);
+    const tablesNamed = () => page.evaluate(() => window.hostRows("SELECT table_name AS name FROM information_schema.tables WHERE table_name LIKE '%scored%' ORDER BY name"));
+    const refused = /Clusters pass over "readings": autk-db could not keep "scored": Duplicate GeoJSON feature ID: "?3"?/;
+
+    // Without a table of that name, the refusal leaves none: neither an empty one nor any other.
+    const alone = await refusal({ data: [area, readings], compute: [pass] });
+    expect(await tablesNamed()).toEqual([]);
+    expect(alone).toMatch(refused);
+
+    // With one, the refusal leaves it as it was.
+    const over = await refusal({ data: [area, scored, readings], compute: [pass] });
+    expect(await page.evaluate(() => window.hostRows('SELECT count(*) AS n FROM scored'))).toEqual([{ n: 2 }]);
+    expect(await tablesNamed()).toEqual([{ name: 'scored' }]);
+    expect(over).toMatch(refused);
+    expect(await page.evaluate(() => window.hostRows('SELECT name FROM scored ORDER BY name'))).toEqual([{ name: 'first' }, { name: 'second' }]);
+});
+
 // A host made AutkGrammar with adapters of its own around the grammar's (wrapDataAdapter and wrapComputeAdapter), which
 // every run calls instead. window.runWrapped makes them: they record what goes through them and hand it on, the data
 // adapter handing the grammar's a database the page made.
