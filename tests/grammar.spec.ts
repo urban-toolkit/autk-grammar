@@ -291,6 +291,64 @@ test('draws and plots an OSM table as one feature per OSM element with osmElemen
     await expectDrawn(page, 'map0');
 });
 
+test('refuses a link or a mapRef between a plot and a layer of which one reads OSM elements and the other rows, and links them read alike', async ({ page }) => {
+    const box = {
+        type: 'osm', outputTableName: 'box', pbfFileUrl: '/data/lower_mnt.osm.pbf', queryArea: { bbox: BOX },
+        autoLoadLayers: { layers: ['roads'] },
+    } as DataSourceSpec;
+    const roads = (fields: Record<string, unknown>) => plotOf({
+        id: 'roads', dataRef: 'box_roads', mark: 'table', axis: ['osm_type', 'osm_id', 'highway'], events: ['click'], ...fields,
+    });
+
+    // A plot and a layer that both read the road elements: a click on a row of the table lights that element.
+    await runSpec(page, {
+        data: [box],
+        map: { layerRefs: [{ dataRef: 'box_roads', title: 'Roads', osmElements: true }] },
+        plot: roads({ osmElements: true, mapRef: 'box_roads' }),
+    });
+    const drawn = await page.evaluate(() => window.drawnRows('map0', 'Roads'));
+    expect(drawn.length).toBeGreaterThan(0);
+    const clicked = await page.evaluate((osmId) => {
+        type Row = Element & { __data__?: { osm_id?: unknown } };
+        const row = [...document.querySelectorAll<Row>('#plot tr.autkMark')].find((candidate) => candidate.__data__?.osm_id === osmId);
+        row?.dispatchEvent(new MouseEvent('click'));
+        return row?.__data__?.osm_id;
+    }, drawn[0]?.osm_id);
+    expect(clicked).toBe(drawn[0]?.osm_id);
+    const lit = (await layerById(page)).Roads.highlightedIds ?? [];
+    expect(lit.length).toBeGreaterThan(0);
+    expect(lit.filter((position) => drawn[position]?.osm_id !== clicked)).toEqual([]);
+
+    // One reads the road elements and the other, without osmElements, the table's rows. autk-db names an element
+    // "way/<id>" and a row by a number, so the link found no row in either view: a click on a row lit nothing, and a pick
+    // selected nothing. Refused by a mapRef and in links.
+    const refusal = (spec: UrbanSpec) => runSpec(page, spec).then(() => 'linked', (error: Error) => error.message);
+    expect.soft(await refusal({
+        data: [box],
+        map: { layerRefs: [{ dataRef: 'box_roads', title: 'Roads' }] },
+        plot: roads({ osmElements: true, mapRef: 'box_roads' }),
+    })).toContain('Plot "roads" and layer "Roads", linked by its mapRef, disagree on osmElements: the plot reads its table one feature per OpenStreetMap element, named such as "way/123", and the layer one feature per row, named by a number, so neither finds the other\'s rows. Set osmElements on both, or on neither.');
+    expect.soft(await refusal({
+        data: [box],
+        map: { id: 'm', layerRefs: [{ dataRef: 'box_roads', title: 'Roads', osmElements: true }] },
+        plot: roads({}),
+        links: [{ source: 'roads', target: 'm', layer: 'Roads' }],
+    })).toContain('Plot "roads" and layer "Roads", linked in links, disagree on osmElements: the layer reads its table one feature per OpenStreetMap element, named such as "way/123", and the plot one feature per row, named by a number, so neither finds the other\'s rows. Set osmElements on both, or on neither.');
+
+    // osmElements reads a table that is not an OSM layer row by row, so a plot with it and a layer without it read the
+    // same rows of the zones, and stay linked.
+    await runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones', title: 'Zones' }] },
+        plot: plotOf({ id: 'z', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], osmElements: true, mapRef: 'zones' }),
+    });
+    await page.evaluate(() => window.grammar.setPlotSelection('z', [2]));
+    const zone = await page.evaluate(() => window.grammar.plotCollection('z')?.features[2]?.properties?.id);
+    const litZones = (await layerById(page)).Zones.highlightedIds ?? [];
+    const drawnZones = await page.evaluate(() => window.drawnRows('map0', 'Zones'));
+    expect(litZones.map((position) => drawnZones[position]?.id)).toEqual([zone]);
+});
+
 test('refuses tag sets with a PBF extract, naming the source', async ({ page }) => {
     // autk-db reads tag sets from the Overpass API only, and refused them with a PBF extract without naming the source.
     await expect(runSpec(page, { data: [taggedSource({ pbfFileUrl: '/data/lower_mnt.osm.pbf' })] }))
