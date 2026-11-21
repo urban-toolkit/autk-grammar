@@ -52,9 +52,17 @@ function tickFormatsRefusal(tickFormats: unknown): string | undefined {
 }
 
 /**
+ * The title of an axis without one: its column's name, and `value`, autk-plot's own title, for the axis that holds a
+ * transform's output, `@transform`.
+ */
+function columnTitle(column: string): string {
+    return column === '@transform' ? 'value' : column;
+}
+
+/**
  * Why a plot refuses its `axisLabels`, or `undefined` when it takes them: titles that are not strings, more titles than
- * `axis` has columns, which a table would show as headers over no cells, and two titles alike, since a table finds the
- * column a click on a header sorts by its title.
+ * `axis` has columns, which a table would show as headers over no cells, two titles alike, and a title that an axis
+ * without one keeps (see {@link columnTitle}), since a table finds the column a click on a header sorts by its title.
  */
 function axisLabelsRefusal(axisLabels: unknown, axis: readonly string[]): string | undefined {
     if (axisLabels === undefined) return undefined;
@@ -65,6 +73,12 @@ function axisLabelsRefusal(axisLabels: unknown, axis: readonly string[]): string
     const twice = axisLabels.find((title, at) => axisLabels.indexOf(title) !== at);
     if (twice !== undefined)
         return `axisLabels gives two axes the title ${JSON.stringify(twice)}.`;
+    const untitled = axis.slice(axisLabels.length);
+    for (let at = 0; at < axisLabels.length; at++) {
+        const kept = untitled.find((column) => columnTitle(column) === axisLabels[at]);
+        if (kept !== undefined)
+            return `axisLabels gives the axis of ${JSON.stringify(axis[at])} the title ${JSON.stringify(axisLabels[at])}, which the axis of ${JSON.stringify(kept)} keeps without a title.`;
+    }
     return undefined;
 }
 
@@ -164,7 +178,7 @@ function domainSpecOf(spec: PlotSpec, rows: readonly (Feature | null | undefined
  * headers too, so the list holds a title for every column.
  */
 function axisTitles(spec: PlotSpec): string[] {
-    return spec.axis.map((column, at) => spec.axisLabels?.[at] ?? (column === '@transform' ? 'value' : column));
+    return spec.axis.map((column, at) => spec.axisLabels?.[at] ?? columnTitle(column));
 }
 
 /**
