@@ -1990,6 +1990,41 @@ test('writes a pass back in place into an OSM table, which keeps its buildings, 
     expect(await exported(true)).toEqual(written);
 });
 
+test("writes a pass back in place into a CSV or JSON layer and a sql source's table, whose columns are plain, with or without a feature id", async ({ page }) => {
+    // Three readings: p and q at one point, so in one cluster, and r apart.
+    const readings = [['p', 1, 40.751, -73.985], ['q', 2, 40.751, -73.985], ['r', 3, 40.753, -73.983]];
+    const layers: Array<[table: string, sources: DataSourceSpec[], rows: string[]]> = [
+        // A CSV layer: its rows have no feature id.
+        ['readings', [{ type: 'csv', outputTableName: 'readings', csvObject: [['name', 'v', 'Latitude', 'Longitude'], ...readings], geometryColumns: true }],
+            ['p 1 0', 'q 2 0', 'r 3 1']],
+        // A JSON layer with an id column, which autk-db's export gives each row as its feature id.
+        ['stations', [{
+            type: 'json', outputTableName: 'stations', geometryColumns: true,
+            jsonObject: readings.map(([name, v, Latitude, Longitude], i) => ({ id: i + 1, name, v, Latitude, Longitude })),
+        }], ['p 1 0', 'q 2 0', 'r 3 1']],
+        // A sql source's table of plain columns, autk-db's row id among them.
+        ['plain', [fourSquares, { type: 'sql', outputTableName: 'plain', query: "SELECT id, properties->>'name' AS name, geometry FROM squares", layerType: 'polygons' }],
+            ['a 0', 'b 0', 'c 1', 'd 1']],
+    ];
+    /** Each row of `table` as its name, its value and its cluster, in the grammar's cache and in autk-db's export of it. */
+    const written = (table: string) => page.evaluate(async (name) => {
+        const [cached, kept] = [await window.grammar.data[name], await window.dbLayer(name)].map((collection) => collection.features
+            .map((feature) => [feature.properties?.name, feature.properties?.v, feature.properties?.compute?.cluster].filter((value) => value !== undefined).join(' '))
+            .sort());
+        return { cached, kept };
+    }, table);
+
+    // autk-db holds the pass's cluster on every row of each table, as the cache does; a refused write-back gives its reason.
+    const outcomes: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const [table, sources, rows] of layers) {
+        expected[table] = { cached: rows, kept: rows };
+        outcomes[table] = await runSpec(page, { data: [area, ...sources], compute: [{ type: 'clusters', dataRef: table, outputColumnName: 'cluster', writeBack: true }] })
+            .then(() => written(table), (error: Error) => error.message.split('\n')[0]);
+    }
+    expect(outcomes).toEqual(expected);
+});
+
 test('draws and plots the OSM elements of a table a pass changed in place with osmElements, as autk-db holds them', async ({ page }) => {
     // A pass in place keeps its result in the grammar's cache, which maps and plots read first, and leaves autk-db's
     // records of the table's elements as they were. osmElements read the pass's rows: a plot of the elements refused
