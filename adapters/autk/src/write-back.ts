@@ -19,9 +19,12 @@ export function stagingTable(name: string): string {
  * The column autk-db's update by feature id matches the rows of the layer `table` on: the one its export gives each row
  * as its feature id, `geojson_id`, else `id`. That update sets each row's `properties`, so it cannot change a table that
  * keeps its values in columns of their own, without a `properties` column, such as a CSV or JSON layer or a `sql`
- * source's table of plain columns: undefined for such a table, and for one without either id column.
+ * source's table of plain columns: undefined for such a table, and for one without either id column. autk-db lists
+ * every column of a table it holds, so a table listed without any, as a host's stand-in database may list it, is not
+ * taken for one: it is updated by `id`.
  */
 export function updateIdColumn(table: Table): 'geojson_id' | 'id' | undefined {
+    if (table.columns.length === 0) return 'id';
     const columns = new Set(table.columns.map((column) => column.name));
     if (!columns.has('properties')) return undefined;
     if (columns.has('geojson_id')) return 'geojson_id';
