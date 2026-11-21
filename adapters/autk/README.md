@@ -86,7 +86,7 @@ await grammar.run({
 - **Without `groupBy`,** a heatmap's one band counts the rows near each cell, as `[{ column: '*', aggregateFn: 'count' }]` does: the grammar hands autk-db that count, where autk-db 4.1.1 left to itself drew 0 in every cell.
 - **An entry of `groupBy` without `aggregateFn` is refused,** as `collect` is, since a cell holds one value: autk-db would list the column's values near each cell, and 4.1.1 drew that band as 0 in every cell, with no error.
 - **`count` and `weighted` bands** are right on every autk-db release.
-- **`avg`, `sum`, `min` and `max` bands read 0 in every cell on npm's autk-db 4.1.1,** for any column. Autark's next autk-db release fixes it (our urban-toolkit/autark#132), and Curio's vendored autk-db already carries the fix.
+- **`avg`, `sum`, `min` and `max` bands read 0 in every cell on autk-db 4.1.1,** for any column. urban-toolkit/autark#132, merged into Autark's main, fixes them.
 
 ### Heatmap `normalize`
 
@@ -165,7 +165,7 @@ data: [
 
 A workspace is an isolated set of tables with its own extent. The first source loaded into a workspace sets its extent, and later sources are cut to it, so two areas that must not clip each other go in two workspaces. A table is found by its name inside its workspace, so two workspaces may hold tables of the same name.
 
-`workspace` names one, on a source (where its table goes), a compute pass (where it reads and writes), a map or a plot (where it reads its tables). An entry without one uses the default workspace.
+`workspace` names one, on a source (where its table goes), a compute pass (where it reads and writes), a map or a plot (where it reads its tables). An entry without one uses the default workspace, which autk-db names `autk`.
 
 ### `workspaces`
 
@@ -368,11 +368,12 @@ map: { layerRefs: [{ dataRef: 'fidi_blocks', getFnv: 'compute.block', colorMapIn
 
 A pass of any type with `writeBack: true` also keeps its result in autk-db, in the pass's workspace, so that autk-db's own operations read it: a source that runs after compute, such as a join, a heatmap, a `sql` source or an update, and a host that reads autk-db after the run, or runs the passes on a database of its own (see [Compute steps on a host's database](#compute-steps-on-a-hosts-database)). Later passes, maps and plots read the result as they do without it.
 
-- **A new table**, a pass's `outputTableName` (a render or windows pass always has one): autk-db holds every row of the result, with its feature id and its properties, as a layer of the type a map draws it as. autk-db cuts a source it loads to the workspace's extent and crop layer, but not a result written back, so the windows of a building that reaches past the crop layer stay.
+- **A new table**, a pass's `outputTableName` (a render or windows pass always has one): autk-db holds every row of the result, with its feature id and its properties, as a layer of the type a map draws it as. The rows take the place of a table of that name only once autk-db holds them all. autk-db cuts a source it loads to the workspace's extent and crop layer, but not a result written back, so the windows of a building that reaches past the crop layer stay.
 - **In place**, a GPGPU or clusters pass without `outputTableName`: each row of autk-db's table takes the result's properties, matched by its feature id. The table keeps its other columns, and each building its parts. autk-db clears its records of an OSM table's elements, as it does on any update, so `osmElements` on that table then gives its rows.
+- **In place into a table of plain columns,** such as a CSV or JSON layer, or a `sql` source's table that selects plain columns: the table is written whole, as a new one is. Its rows are the result's, each row's values in its `properties`, as a GeoJSON layer keeps them, so a `sql` source after compute reads a column as `properties->>'<column>'`. So is a table whose rows have no feature id.
 - autk-db puts each coordinate on the workspace's precision grid, as it does for every table, and keeps a point's height. A polygon's ring may then start at another of its vertices.
 
-A run refuses `writeBack` on a raster, and on a new table whose layer type it cannot tell, naming the pass. It also refuses a result autk-db does not then hold row for row.
+A run refuses `writeBack` on a raster, and on a new table whose layer type it cannot tell, naming the pass. It also refuses a result autk-db does not then hold row for row. When autk-db refuses the rows, such as rows that share a feature id, the run names the pass and autk-db's reason, and autk-db's tables stay as they were.
 
 ```ts
 compute: [{ type: 'clusters', dataRef: 'fidi_buildings', outputColumnName: 'block', outputTableName: 'fidi_blocks', writeBack: true }],
@@ -382,7 +383,7 @@ compute: [{ type: 'clusters', dataRef: 'fidi_buildings', outputColumnName: 'bloc
 
 A source with `after: 'compute'` runs once every compute pass has run, instead of before them, so it reads what passes kept in autk-db with `writeBack`: a join or a heatmap over a pass's result, a `sql` source that queries it, an update or a drop. Every type of source takes it. The sources with it run in the order of `data`, after all those without it, wherever they stand in `data`; the maps and plots are drawn once they have run.
 
-- **A source after compute that reads a table a pass writes without `writeBack` is refused,** naming both, since autk-db holds that table without the pass's result. A `sql` source's query is not checked.
+- **A source after compute that reads a table whose last pass writes it without `writeBack` is refused,** naming both, since autk-db then holds that table without that pass's result. A `sql` source's query is not checked. An earlier pass without it is no reason to refuse: each pass reads a table as the passes before it left it, so autk-db then holds the table as the maps and plots draw it.
 - **A source that writes a table a pass wrote,** such as a join into it, an update, a `sql` source saved under its name or a drop, changes autk-db's table, and the maps, plots and `grammar.data` then read that table: the pass's columns and the source's together.
 - **A join's or a heatmap's `groupBy` reads a compute column by its path,** `compute.<column>`. A join writes an aggregate of it under the key `<joinDataRef>.<column>`, which a layer's `getFnv` reads as a path: `sjoin.max.squares.compute.cluster`.
 
@@ -848,7 +849,7 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 | `createComputeSteps()` | A run's workspaces, sources and compute passes, one call at a time, on an autk-db database the host owns: a data adapter and a compute adapter wired to one another as `AutkGrammar` wires its own, and each pass's result as the grammar holds it (see [Compute steps on a host's database](#compute-steps-on-a-hosts-database)). |
 | `AutkGrammar`'s options `wrapComputeAdapter` and `wrapDataAdapter` (`AutkGrammarOptions`) | A host's own adapters around the grammar's, which every run of the grammar calls instead: a check around each pass, a kind of source of its own, or a database of its own for the run (see [A host's own adapters around a run's](#a-hosts-own-adapters-around-a-runs)). |
 | `AutkGrammar`'s `mapLayers(dataRef, mapId?)` and `plotCollection(plotId)` | What the last run handed each view: each layer's `collection`, the one autk-map was handed for it (the features of its table that have a geometry, or a raster's one), and each plot's collection, its rows (see [Interactions](#interactions)). Each is the collection itself, not a copy, to read and leave as it is; `destroy()` and the next run let them go. |
-| `dataPhases(spec)` | The entries of a spec's `data` in the order the grammar runs them: `before`, the sources it runs before the compute passes, and `after`, those it runs after them (see [`after`](#after)). It refuses an `after` other than `'compute'`, and a source after compute that reads a table a pass writes without `writeBack`. A host that loads the data on a server and runs the passes in a browser loads `before` on the server, and runs `after` in the browser once the passes have run, with the compute adapter's caches handed to the data adapter. |
+| `dataPhases(spec)` | The entries of a spec's `data` in the order the grammar runs them: `before`, the sources it runs before the compute passes, and `after`, those it runs after them (see [`after`](#after)). It refuses an `after` other than `'compute'`, and a source after compute that reads a table whose last pass writes it without `writeBack`. A host that loads the data on a server and runs the passes in a browser loads `before` on the server, and runs `after` in the browser once the passes have run, with the compute adapter's caches handed to the data adapter. |
 | `enterWorkspace(db, workspace?)` | Makes an entry's workspace (the default one without a name) the one autk-db works in, and switches only when another is current. Every adapter calls it before it reads or writes an entry's tables. |
 | `tableKey(workspace, name)` | The key of a table in those caches: its name in the default workspace, `<workspace>/<name>` in another. |
 | `applyCamera(map, camera)` | Moves an `AutkMap`'s camera as a map's `camera` says, from the view that fits its layers, and refuses a `pitch` that is not at least 0 and less than 90. The map adapter calls it once the layers are loaded, before the map's first `draw()`. It looks at a `center` that `resolveCameraCenter` put on the map, and refuses any other, so a host's later turns of a map the grammar drew keep its center. |
