@@ -728,7 +728,7 @@ plot: { dataRef: 'parcels', mark: 'bar', axis: ['area', '@transform'], transform
 | `markColor` | The color of the marks that are neither colored by value nor selected, `#rrggbb`. autk-plot's is `#bfbfbf`. |
 | `highlightColor` | The color of the selected marks, and of a table's selected rows, `#rrggbb`. autk-plot's is `#5dade2`. |
 
-autk-plot keeps one mark color and one highlight color for the whole page, which every plot on it reads as it draws and as it shows a selection. So the plots of one spec cannot differ: a run refuses two plots that set different ones, and a plot that sets neither takes the others'. A run sets them for the page, other specs' plots too, and a run whose plots set neither gives back autk-plot's own: each run draws in the colors its spec gives. A run that draws no plot leaves them as they are, and a page whose specs never set them keeps the colors autk-plot has.
+autk-plot keeps one mark color and one highlight color for the whole page, which every plot on it reads as it draws and as it shows a selection. So the plots of one spec cannot differ: a run refuses two plots that set different ones, and a plot that sets neither takes the others'. A run sets them for the page as its plots draw, other specs' plots too, and a run whose plots set neither gives back autk-plot's own: each run draws in the colors its spec gives, though another run on the page draws its plots while this one loads its data. A run that draws no plot, or fails before it draws one, leaves them as they are, and a page whose specs never set them keeps the colors autk-plot has.
 
 ```ts
 plot: [
