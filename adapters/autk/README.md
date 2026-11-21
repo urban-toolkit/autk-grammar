@@ -362,7 +362,7 @@ map: { layerRefs: [{ dataRef: 'fidi_blocks', getFnv: 'compute.block', colorMapIn
 
 ### `writeBack`
 
-A pass of any type with `writeBack: true` also keeps its result in autk-db, in the pass's workspace, so that autk-db's own operations read it: a source that runs after compute, such as a join, a heatmap, a `sql` source or an update, and a host that reads autk-db after the run. Later passes, maps and plots read the result as they do without it.
+A pass of any type with `writeBack: true` also keeps its result in autk-db, in the pass's workspace, so that autk-db's own operations read it: a source that runs after compute, such as a join, a heatmap, a `sql` source or an update, and a host that reads autk-db after the run, or runs the passes on a database of its own (see [Compute steps on a host's database](#compute-steps-on-a-hosts-database)). Later passes, maps and plots read the result as they do without it.
 
 - **A new table**, a pass's `outputTableName` (a render or windows pass always has one): autk-db holds every row of the result, with its feature id and its properties, as a layer of the type a map draws it as. autk-db cuts a source it loads to the workspace's extent and crop layer, but not a result written back, so the windows of a building that reaches past the crop layer stay.
 - **In place**, a GPGPU or clusters pass without `outputTableName`: each row of autk-db's table takes the result's properties, matched by its feature id. The table keeps its other columns, and each building its parts. autk-db clears its records of an OSM table's elements, as it does on any update, so `osmElements` on that table then gives its rows.
@@ -840,6 +840,7 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 |---|---|
 | `createDataAdapter(targets?, cache?, computeCache?, computeTypes?)` | The data adapter. Its `resolveWorkspaces(db, workspaces)` sets up a spec's `workspaces` before the first source loads, and its `resolveSource(db, source)` loads one `data` entry. Each takes an autk-db database, a new one when `db` is undefined, and returns it. `cache` receives each GeoJSON table and each table a join or an update wrote. `computeCache` and `computeTypes` are the compute adapter's `cache` and `types`: each table a source writes leaves them, so the maps and plots read what a source after compute wrote. |
 | `createComputeAdapter(cache?, types?, sources?)` | The compute adapter. Its `resolveCompute(db, pass)` runs one `compute` entry, on the GPU or, for a windows or clusters pass, on the CPU. The results are kept in `cache`, and in autk-db too for a pass with `writeBack`; `types` receives the layer type of each table a pass wrote under its own `outputTableName`. `sources` is the cache `createDataAdapter` fills, from which a pass reads a `fromFeature` table a GeoJSON source loaded in its workspace's CRS. |
+| `createComputeSteps()` | A run's workspaces, sources and compute passes, one call at a time, on an autk-db database the host owns: a data adapter and a compute adapter wired to one another as `AutkGrammar` wires its own, and each pass's result as the grammar holds it (see [Compute steps on a host's database](#compute-steps-on-a-hosts-database)). |
 | `dataPhases(spec)` | The entries of a spec's `data` in the order the grammar runs them: `before`, the sources it runs before the compute passes, and `after`, those it runs after them (see [`after`](#after)). It refuses an `after` other than `'compute'`, and a source after compute that reads a table a pass writes without `writeBack`. A host that loads the data on a server and runs the passes in a browser loads `before` on the server, and runs `after` in the browser once the passes have run, with the compute adapter's caches handed to the data adapter. |
 | `enterWorkspace(db, workspace?)` | Makes an entry's workspace (the default one without a name) the one autk-db works in, and switches only when another is current. Every adapter calls it before it reads or writes an entry's tables. |
 | `tableKey(workspace, name)` | The key of a table in those caches: its name in the default workspace, `<workspace>/<name>` in another. |
@@ -861,6 +862,48 @@ for (const source of dataPhases(spec).before) db = await adapter.resolveSource(d
 ```
 
 The data adapter of either entry notes the coordinate system of each GeoJSON source it puts in its cache, and the two entries keep their notes in one place on the page. So a host may load a spec's tables with the data adapter of `./data` and run its passes with the compute adapter of the main entry, handing it that cache as `sources`: its passes read the sources' features as the grammar's do.
+
+### Compute steps on a host's database
+
+`createComputeSteps()` runs a spec's workspaces, sources and compute passes on an autk-db database the host made and owns, one call at a time, as `AutkGrammar.run` runs them, and draws no map or plot. The steps share their caches as `AutkGrammar`'s adapters do, so a host hands no cache from one adapter to another: a pass reads a `fromFeature` table as a GeoJSON source of the steps gave it, keeps its result in the host's database with `writeBack`, and a source after compute reads it there. A host calls the steps in the order a run takes, and can do work of its own between them, such as a check around each pass:
+
+```ts
+import { AutkDb } from '@urban-toolkit/autk-db';
+import { createComputeSteps, dataPhases, enterWorkspace } from '@urban-toolkit/autk-grammar';
+
+const db = new AutkDb();
+await db.init();
+const steps = createComputeSteps();
+const { before, after } = dataPhases(spec); // what a run refuses is refused here, before anything runs
+if (spec.workspaces) await steps.resolveWorkspaces(db, spec.workspaces);
+for (const source of before) await steps.resolveSource(db, source);
+for (const pass of spec.compute ?? []) await steps.resolveCompute(db, pass);
+for (const source of after) await steps.resolveSource(db, source);
+
+const blocks = steps.computed('fidi_blocks'); // a pass's result: { collection, layerType }
+await enterWorkspace(db); // any other table is autk-db's, in the workspace it was made in
+const counts = await db.getTable('largest_blocks');
+```
+
+| Call | Effect |
+|---|---|
+| `resolveWorkspaces(db, workspaces)` | Sets up each workspace of a spec's `workspaces`, as a run does before its first source, and leaves the default workspace current. |
+| `resolveSource(db, source)` | Loads one `data` entry into `db`, in the entry's workspace: a source before the passes, or one with `after: 'compute'` once they have run. A table it writes leaves `computed`. |
+| `resolveCompute(db, pass)` | Runs one `compute` entry on `db`, in the pass's workspace. Its result is kept for `computed` and for later passes, and with `writeBack` in `db` too. |
+| `computed(name, workspace?)` | The table as a pass left it, which maps, plots and later passes read before autk-db's table: `collection`, the grammar's own collection rather than a copy, and `layerType`, how a map draws a table a pass wrote under its own `outputTableName`. Undefined when no pass wrote the table, or a source wrote it since: autk-db's table is then the one to read. |
+
+- **Each call takes the host's database and returns it,** and leaves the workspace of the entry it ran current. A call without a database is refused before anything runs.
+- **One set of steps runs one spec:** a new run takes `createComputeSteps()` again.
+- **The main entry alone exports it,** since a pass runs on autk-compute or autk-core, which `./data` never imports. So a module that runs a spec's passes on its own database takes the main entry only.
+
+A host that reached into an `AutkGrammar` for its adapters and caches calls the steps instead, and the grammar's fields stay its own:
+
+| `AutkGrammar`'s private field | With the steps |
+|---|---|
+| `dataAdapter` | `steps.resolveWorkspaces(db, workspaces)` and `steps.resolveSource(db, source)`. |
+| `computeAdapter` | `steps.resolveCompute(db, pass)`. The steps have the compute adapter's shape, so a host that checks each pass wraps them. |
+| `_computeCache` | `steps.computed(name, workspace)?.collection`, and `steps.computed(name, workspace) !== undefined` for whether a pass's result is held. |
+| `_computeTypes` | `steps.computed(name, workspace)?.layerType`. |
 
 ### Arranging the views
 
