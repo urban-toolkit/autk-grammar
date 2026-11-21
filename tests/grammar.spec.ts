@@ -2519,14 +2519,92 @@ test("updates a table without a geometry by the names of its columns, whatever t
     expect([
         await updated(zoneCounts, 'zones', 'zone', [{ count: 25, zone: 2 }]),
         await updated(sales, 'sales', 'month', [{ total: 9, month: 'Feb' }]),
-        // autk-db writes a given row as a whole row of the table, so one without a column of it, or with another, is refused.
+        // A column a row leaves out is null in it, and a key the table lacks is refused.
         await updated(sales, 'sales', 'month', [{ month: 'Feb' }]),
         await updated(sales, 'sales', 'month', [{ month: 'Feb', total: 9, note: 'late' }]),
     ]).toEqual([
         [{ zone: 1, count: 10 }, { zone: 2, count: 25 }],
         [{ month: 'Feb', total: 9 }, { month: 'Jan', total: 3 }],
-        expect.stringContaining('Update of "sales": jsonObject[0] has no "total"; autk-db writes each given row as a whole row of the table, so it gives every column: "month", "total".'),
+        [{ month: 'Feb', total: null }, { month: 'Jan', total: 3 }],
         expect.stringContaining('Update of "sales": jsonObject[0] has "note", which is not a column of the table: "month", "total".'),
+    ]);
+});
+
+test('autk-db 4.1.1, handed the jsonObject rows of an update as 5.6.0 handed them, writes a key a row leaves out as null and matches names without regard to case', async ({ page }) => {
+    // This test encodes autk-db 4.1.1, run as 5.6.0's data adapter ran it: an update of a table without a geometry handed
+    // its jsonObject to updateTable unchanged (window.dbUpdate). autk-db stages the rows with DuckDB's read_json_auto,
+    // deletes the table's rows whose idColumn value a staged row has, then inserts every staged row by position. The
+    // grammar writes such rows as autk-db wrote these, each with its keys in the table's column order (the next test).
+    // Both E2E legs run autk-db 4.1.1, the newest on npm, so a later autk-db that writes them otherwise fails here.
+    const zoneCounts = (zone: string, count: string): DataSourceSpec => ({ type: 'csv', outputTableName: 'zones', csvObject: [[zone, count], [1, 10], [2, 20]] });
+    const sales: DataSourceSpec = { type: 'csv', outputTableName: 'sales', csvObject: [['month', 'total'], ['Jan', 3], ['Feb', 5]] };
+    /** The table's rows once autk-db's update ran on the rows as given, or autk-db's refusal. */
+    const written = async (source: DataSourceSpec, table: string, idColumn: string, data: Array<Record<string, unknown>>) => {
+        await runSpec(page, { data: [source] });
+        return page.evaluate(async ([table, idColumn, data]) => {
+            try {
+                await window.dbUpdate({ tableName: table, data, strategy: 'update', idColumn });
+            } catch (error) {
+                return `refused: ${error instanceof Error ? error.message : String(error)}`;
+            }
+            return window.dbRows(`SELECT * FROM ${table} ORDER BY 1`);
+        }, [table, idColumn, data] as const);
+    };
+    const refused = expect.stringMatching(/^refused: /);
+    expect([
+        // A key one row gives and another leaves out: null in the row that leaves it out.
+        await written(zoneCounts('zone', 'count'), 'zones', 'zone', [{ zone: 2, count: 25 }, { zone: 3 }]),
+        // Keys in another case than the table's columns.
+        await written(zoneCounts('Zone', 'Count'), 'zones', 'zone', [{ zone: 2, count: 25 }]),
+        // A null in a column no row gives a value, as the grammar hands autk-db a key a row leaves out.
+        await written(sales, 'sales', 'month', [{ month: 'Feb', total: null }]),
+        // A column no row gives: the staged rows have one column fewer than the table.
+        await written(sales, 'sales', 'month', [{ month: 'Feb' }]),
+        // A key the table lacks, in place of one of its columns: its value goes into that column.
+        await written(zoneCounts('zone', 'count'), 'zones', 'zone', [{ zone: 2, note: 5 }]),
+        // A key the table lacks, beside all of its columns: the staged rows have one column more than the table.
+        await written(zoneCounts('zone', 'count'), 'zones', 'zone', [{ zone: 2, count: 25, note: 'late' }]),
+        // Two keys that name one column, in two cases.
+        await written(zoneCounts('zone', 'count'), 'zones', 'zone', [{ zone: 2, Zone: 3, count: 25 }]),
+    ]).toEqual([
+        [{ zone: 1, count: 10 }, { zone: 2, count: 25 }, { zone: 3, count: null }],
+        [{ Zone: 1, Count: 10 }, { Zone: 2, Count: 25 }],
+        [{ month: 'Feb', total: null }, { month: 'Jan', total: 3 }],
+        refused,
+        [{ zone: 1, count: 10 }, { zone: 2, count: 5 }],
+        refused,
+        refused,
+    ]);
+});
+
+test('updates a table without a geometry as autk-db 4.1.1 wrote the rows 5.6.0 handed it, each value in the column its key names, and refuses a key the table lacks', async ({ page }) => {
+    // The rows of the test before this one, through the grammar: a column a row leaves out is null in it, and a key names
+    // its column without regard to case. A key the table lacks, which 4.1.1 wrote into another column or refused, is
+    // refused, naming it.
+    const zoneCounts = (zone: string, count: string): DataSourceSpec => ({ type: 'csv', outputTableName: 'zones', csvObject: [[zone, count], [1, 10], [2, 20]] });
+    const lower = zoneCounts('zone', 'count');
+    const upper = zoneCounts('Zone', 'Count');
+    /** The table's rows in autk-db once the update ran, or the run's message when it was refused. */
+    const updated = (source: DataSourceSpec, jsonObject: Array<Record<string, unknown>>) =>
+        runSpec(page, { data: [source, { type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'zone', jsonObject }] })
+            .then(() => page.evaluate(() => window.dbRows('SELECT * FROM zones ORDER BY 1')), (error: Error) => error.message);
+    const notAColumn = expect.stringContaining('Update of "zones": jsonObject[0] has "note", which is not a column of the table: "zone", "count".');
+    expect([
+        await updated(lower, [{ zone: 2, count: 25 }, { zone: 3 }]),
+        await updated(lower, [{ count: 25, zone: 2 }, { zone: 3 }]),
+        await updated(upper, [{ zone: 2, count: 25 }]),
+        await updated(upper, [{ count: 25, zone: 2 }]),
+        await updated(lower, [{ zone: 2, note: 5 }]),
+        await updated(lower, [{ zone: 2, count: 25, note: 'late' }]),
+        await updated(lower, [{ zone: 2, Zone: 3, count: 25 }]),
+    ]).toEqual([
+        [{ zone: 1, count: 10 }, { zone: 2, count: 25 }, { zone: 3, count: null }],
+        [{ zone: 1, count: 10 }, { zone: 2, count: 25 }, { zone: 3, count: null }],
+        [{ Zone: 1, Count: 10 }, { Zone: 2, Count: 25 }],
+        [{ Zone: 1, Count: 10 }, { Zone: 2, Count: 25 }],
+        notAColumn,
+        notAColumn,
+        expect.stringContaining('Update of "zones": jsonObject[0] has "zone" and "Zone", which name one column of the table, "zone".'),
     ]);
 });
 

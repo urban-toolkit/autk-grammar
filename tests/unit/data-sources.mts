@@ -315,14 +315,33 @@ test("an update of a table without a geometry hands autk-db each given row with 
     assert.equal((replace[1] as { data: unknown }).data, replaced);
 });
 
-test('refuses an update row of a table without a geometry that lacks a column of the table or has another, naming it, before autk-db runs', async () => {
+// autk-db 4.1.1 stages the rows with the keys of them all, so a key a row leaves out is null in it, and DuckDB matches a
+// key to a column without regard to case: 5.6.0, which handed autk-db the rows as given, wrote such rows. A key the table
+// lacks it refused, or wrote into another column.
+test('an update row of a table without a geometry gets null in a column it leaves out and matches columns without regard to case, and one with a key the table lacks is refused, naming it, before autk-db runs', async () => {
+    /** Each row of the update autk-db is handed, as its keys and values in order. */
+    const handed = async (jsonObject: unknown[], table = zoneCounts) => {
+        const [[, params]] = await callsFor({ type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'zone', jsonObject }, [table]) as Array<[string, { data: Array<Record<string, unknown>> }]>;
+        return params.data.map((row) => Object.entries(row));
+    };
+    assert.deepEqual(await handed([{ zone: 2, count: 25 }, { zone: 3 }, { zone: 4, count: undefined }]), [
+        [['zone', 2], ['count', 25]],
+        [['zone', 3], ['count', null]],
+        [['zone', 4], ['count', null]],
+    ]);
+    const capitalized = { name: 'zones', columns: [{ name: 'Zone', type: 'BIGINT' }, { name: 'Count', type: 'BIGINT' }] };
+    assert.deepEqual(await handed([{ count: 25, zone: 2 }, { ZONE: 3 }], capitalized), [
+        [['Zone', 2], ['Count', 25]],
+        [['Zone', 3], ['Count', null]],
+    ]);
     const refused = async (jsonObject: unknown[], message: string) => {
         const { db, calls } = fakeDb([zoneCounts]);
         await assert.rejects(createDataAdapter().resolveSource(db, { type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'zone', jsonObject } as DataSourceSpec), { message });
         assert.deepEqual(calls, []);
     };
-    await refused([{ zone: 2, count: 25 }, { zone: 3 }], 'Update of "zones": jsonObject[1] has no "count"; autk-db writes each given row as a whole row of the table, so it gives every column: "zone", "count".');
     await refused([{ zone: 2, count: 25, extra: 1 }], 'Update of "zones": jsonObject[0] has "extra", which is not a column of the table: "zone", "count".');
+    await refused([{ zone: 2 }, { zone: 3, note: 5 }], 'Update of "zones": jsonObject[1] has "note", which is not a column of the table: "zone", "count".');
+    await refused([{ zone: 2, Zone: 3, count: 25 }], 'Update of "zones": jsonObject[0] has "zone" and "Zone", which name one column of the table, "zone".');
 });
 
 // A layer of plain columns, such as a CSV or JSON table loaded with geometryColumns, or a sql source's table drawn as a

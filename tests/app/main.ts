@@ -104,6 +104,7 @@ declare global {
         featureExtents: (table: string) => Promise<number[][]>;
         dbRows: (query: string) => Promise<Array<Record<string, unknown>>>;
         dbLayer: (table: string, osmElements?: boolean) => Promise<FeatureCollection>;
+        dbUpdate: (params: Parameters<AutkDb['updateTable']>[0]) => Promise<void>;
         hostDb?: AutkDb;
         runOnHostDb: (spec: UrbanSpec, names: string[]) => Promise<HostRun>;
         hostRows: (query: string) => Promise<Array<Record<string, unknown>>>;
@@ -340,6 +341,14 @@ window.dbRows = async (query: string) => rowsOf(lastDb(), query);
 
 /** A table as autk-db exports it, not as the grammar's caches hold it; with `osmElements`, one feature per OSM element. */
 window.dbLayer = (table: string, osmElements?: boolean) => lastDb().getLayer(table, osmElements ? { osmElements: true } : undefined);
+
+/**
+ * Runs autk-db's own `updateTable` on the last run's database with the parameters as given, as 5.6.0's data adapter ran
+ * it for an update of a table without a geometry, whose `jsonObject` it handed on unchanged.
+ */
+window.dbUpdate = async (params) => {
+    await lastDb().updateTable(params);
+};
 
 /**
  * Runs a spec's workspaces, data sources and compute passes on an autk-db database the page makes and owns, through the
