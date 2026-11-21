@@ -283,9 +283,9 @@ A GPGPU pass runs a WGSL function once per feature of a table:
 
 A pass reads such a `fromFeature` table as an earlier pass wrote it; else, when a GeoJSON source of the run loaded it with its coordinates in its workspace's CRS, as the source gave its features, as a plot reads its table; else as autk-db keeps it. The pass's own `dataRef` is read as autk-db keeps it, as a map draws it.
 
-A batched entry that reads the geometry, with a path that starts with `geometry.`, packs each polygon as a feature of its own: each polygon of a MultiPolygon, and of a GeometryCollection, with the feature's properties, beside which every other batched value of the feature repeats. autk-db keeps each feature of a `buildings` table in its building model, one GeometryCollection per building with each part's tags in `properties.parts`, so each polygon of a building read as autk-db keeps it also takes its part's tags. A path such as `geometry.coordinates.0` then reads every polygon's outer ring, from a source's own features and from autk-db's buildings alike, and `num_features` counts the polygons.
+A batched entry that reads the geometry, with a path that starts with `geometry.`, packs each polygon as a feature of its own: each polygon of a MultiPolygon, and of a GeometryCollection, with the feature's properties, beside which every other batched value of the feature repeats. autk-db keeps each feature of a `buildings` table in its building model, one GeometryCollection per building with each part's tags in `properties.parts`, so each polygon of a building read as autk-db keeps it also takes its part's tags, over the building's, as autk-core draws the part: a part that sets any of `height`, `building:height`, `levels` and `building:levels` takes none of those four from the building, and a part that sets any of `min_height`, `min_level` and `building:min_level` none of those three. A path such as `geometry.coordinates.0` then reads every polygon's outer ring, from a source's own features and from autk-db's buildings alike, and `num_features` counts the polygons.
 
-When an attribute reads the geometry of the pass's own table, a MultiLineString is handed to autk-compute as one line of its points, in their order: autk-compute packs a matrix attribute row by row, and a MultiLineString's rows are lines. The pass's result keeps each feature's own geometry.
+When an attribute reads the geometry of the pass's own table, a MultiLineString is handed to autk-compute as one line of its points, in their order: autk-compute packs a matrix attribute row by row, and a MultiLineString's rows are lines. The joined line also runs from each line's last point to the next line's first, segments the road does not have, so a function that reads the segments between consecutive points reads those too. The pass's result keeps each feature's own geometry.
 
 A render pass renders tables on the GPU from each viewpoint, in several directions, and counts what each frame shows: a visibility or sky-view metric. Its result is a new table: the viewpoints' features, with the metrics in `feature.properties.compute.render`: `sampleCount`, the frames rendered from the feature, and `classes` or `objects`.
 
@@ -914,21 +914,26 @@ const counts = await db.getTable('largest_blocks');
 | `wrapDataAdapter(adapter)` | Returns the data adapter the `workspaces` and every source of every run go through, those before compute and those after. It keeps `resolveWorkspaces`: `{ ...adapter, resolveSource }` keeps the grammar's. A host that loads a kind of source of its own, such as a raster it holds as bytes, loads it there and hands every other source to the given adapter. |
 
 - **Each function is called once, as the grammar is made,** with the grammar's own adapter, already wired to the grammar's caches, so the maps and plots read what the host's adapters run.
-- **Each call of a data adapter takes the run's database,** undefined until the workspaces or the first source make one, and returns the database the run goes on with.
+- **Each call of a data adapter takes the run's database,** undefined until the workspaces or the first source make one, and returns the database the run goes on with. Each run starts with none, so its first call is handed none.
 - **A function that returns an adapter without those calls is refused** as the grammar is made. A grammar made without the options runs as before.
 
-A host that keeps the run's database in hand, to read its tables or to end its worker, hands the grammar's data adapter its own database where it is given none:
+A host that keeps the run's database in hand, to read its tables or to end its worker, hands the grammar's data adapter a database of its own where it is given none: a new one for each run, as the grammar makes one. A database made once and handed to every run would hold the last run's tables, and autk-db keeps its workspace's extent and crop for every table loaded after them. It also refuses an OpenStreetMap source once the workspace holds another table, such as one a pass of the last run wrote back, and a `workspaces` entry that changes the CRS or grid of a workspace that holds tables.
 
 ```ts
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkGrammar } from '@urban-toolkit/autk-grammar';
 
-const db = new AutkDb();
-await db.init();
+let db: AutkDb | undefined; // the database of the last run
+// A new database, for the first call of a run, which is handed none.
+const newDb = async () => {
+  db = new AutkDb();
+  await db.init();
+  return db;
+};
 const grammar = new AutkGrammar({ map: 'map' }, {
   wrapDataAdapter: (adapter) => ({
-    resolveWorkspaces: (context, workspaces) => adapter.resolveWorkspaces(context ?? db, workspaces),
-    resolveSource: (context, source) => adapter.resolveSource(context ?? db, source),
+    resolveWorkspaces: async (context, workspaces) => adapter.resolveWorkspaces(context ?? await newDb(), workspaces),
+    resolveSource: async (context, source) => adapter.resolveSource(context ?? await newDb(), source),
   }),
   wrapComputeAdapter: (adapter) => ({
     resolveCompute: async (context, pass) => {
@@ -939,6 +944,7 @@ const grammar = new AutkGrammar({ map: 'map' }, {
   }),
 });
 await grammar.run(spec); // db holds the run's tables, and stays in the host's hands whether the run ends or fails
+await grammar.run(spec); // run again: this run makes a database of its own, and db now names it
 ```
 
 ### Instead of `AutkGrammar`'s private fields
@@ -953,7 +959,7 @@ A host that reached into an `AutkGrammar` for its adapters, its caches, its data
 | Read `_computeTypes` | `steps.computed(name, workspace)?.layerType`. |
 | Replaced `computeAdapter` to wrap the passes of a run | `new AutkGrammar(targets, { wrapComputeAdapter })`. |
 | Replaced `dataAdapter` to wrap the sources of a run | `new AutkGrammar(targets, { wrapDataAdapter })`. |
-| Read the run's database from `grammarEngine.context` | Its own database, handed to the grammar's data adapter through `wrapDataAdapter`, as above. |
+| Read the run's database from `grammarEngine.context` | Its own database, a new one for each run, handed to the grammar's data adapter through `wrapDataAdapter`, as above. |
 | Read `_exports` for the features a run handed a map | `grammar.mapLayer(dataRef, mapId)?.collection`, what the run handed autk-map for the layer, and `grammar.plotCollection(plotId)` for a plot. |
 
 ### Arranging the views
