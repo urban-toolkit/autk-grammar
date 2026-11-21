@@ -553,7 +553,7 @@ Besides `dataRef`, a layer of `map.layerRefs` takes these styling options:
 
 On a raster layer, `getFnv` names the band to draw: by its id, such as a GeoTIFF's `band_24`, or by its label, such as `count.noise` for a heatmap's `count_noise`. Without it, the layer draws the first band. A run refuses a `getFnv` that names none of the bands of a raster of several, and a raster of one band draws that band.
 
-After a run, `grammar.mapLayer(dataRef)` finds the layer a map draws for a table: the `AutkMap` and the layer's id in it, the last map's when several maps draw the table. `grammar.mapLayers(dataRef)` lists every layer that draws it, in every map. `highlightOnMap`, `clearHighlightOnMap` and a plot's `mapRef` also name layers by their `dataRef` (see [Interactions](#interactions)).
+After a run, `grammar.mapLayer(dataRef)` finds the layer a map draws for a table: the `AutkMap`, the layer's id in it, and the collection the run handed autk-map for it, the last map's when several maps draw the table. `grammar.mapLayers(dataRef)` lists every layer that draws it, in every map. `highlightOnMap`, `clearHighlightOnMap` and a plot's `mapRef` also name layers by their `dataRef` (see [Interactions](#interactions)).
 
 ```ts
 await grammar.run({
@@ -755,8 +755,9 @@ An app sets selections with these calls, which take feature ids as the events gi
 
 | Call | Effect |
 |---|---|
-| `mapLayers(dataRef, mapId?)` | Every layer that draws the table, each as `{ map, layerId }`: the maps in the spec's order, each map's layers bottom first. |
+| `mapLayers(dataRef, mapId?)` | Every layer that draws the table, each as `{ map, layerId, collection }`: the maps in the spec's order, each map's layers bottom first. `collection` is what the run handed autk-map for the layer: the features of its table that have a geometry, in the table's order, or a raster's one feature. |
 | `mapLayer(dataRef, mapId?)` | The last of those: the last map's layer when several maps draw the table. |
+| `plotCollection(plotId)` | The collection the run handed the plot (its `id`, else its `dataRef`): the table's rows, in the order it draws them, so the ids of its `plot:selection` events are positions in its features. |
 | `highlightOnMap(dataRef, featureIds, mapId?)` | Highlights the features on each of those layers, and selects the same rows in the plots linked to the layers. |
 | `clearHighlightOnMap(dataRef, mapId?)` | Clears those highlights, and the linked plots' selections. |
 | `setPlotSelection(plotId, featureIds, mapId?)` | Selects the features in the plot (its `id`, else its `dataRef`), and highlights the same rows on the layers it is linked to. |
@@ -842,6 +843,7 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 | `createComputeAdapter(cache?, types?, sources?)` | The compute adapter. Its `resolveCompute(db, pass)` runs one `compute` entry, on the GPU or, for a windows or clusters pass, on the CPU. The results are kept in `cache`, and in autk-db too for a pass with `writeBack`; `types` receives the layer type of each table a pass wrote under its own `outputTableName`. `sources` is the cache `createDataAdapter` fills, from which a pass reads a `fromFeature` table a GeoJSON source loaded in its workspace's CRS. |
 | `createComputeSteps()` | A run's workspaces, sources and compute passes, one call at a time, on an autk-db database the host owns: a data adapter and a compute adapter wired to one another as `AutkGrammar` wires its own, and each pass's result as the grammar holds it (see [Compute steps on a host's database](#compute-steps-on-a-hosts-database)). |
 | `AutkGrammar`'s options `wrapComputeAdapter` and `wrapDataAdapter` (`AutkGrammarOptions`) | A host's own adapters around the grammar's, which every run of the grammar calls instead: a check around each pass, a kind of source of its own, or a database of its own for the run (see [A host's own adapters around a run's](#a-hosts-own-adapters-around-a-runs)). |
+| `AutkGrammar`'s `mapLayers(dataRef, mapId?)` and `plotCollection(plotId)` | What the last run handed each view: each layer's `collection`, the one autk-map was handed for it (the features of its table that have a geometry, or a raster's one), and each plot's collection, its rows (see [Interactions](#interactions)). Each is the collection itself, not a copy, to read and leave as it is; `destroy()` and the next run let them go. |
 | `dataPhases(spec)` | The entries of a spec's `data` in the order the grammar runs them: `before`, the sources it runs before the compute passes, and `after`, those it runs after them (see [`after`](#after)). It refuses an `after` other than `'compute'`, and a source after compute that reads a table a pass writes without `writeBack`. A host that loads the data on a server and runs the passes in a browser loads `before` on the server, and runs `after` in the browser once the passes have run, with the compute adapter's caches handed to the data adapter. |
 | `enterWorkspace(db, workspace?)` | Makes an entry's workspace (the default one without a name) the one autk-db works in, and switches only when another is current. Every adapter calls it before it reads or writes an entry's tables. |
 | `tableKey(workspace, name)` | The key of a table in those caches: its name in the default workspace, `<workspace>/<name>` in another. |
@@ -936,7 +938,7 @@ await grammar.run(spec); // db holds the run's tables, and stays in the host's h
 
 ### Instead of `AutkGrammar`'s private fields
 
-A host that reached into an `AutkGrammar` for its adapters, its caches or its database calls these instead, and the grammar's fields stay its own:
+A host that reached into an `AutkGrammar` for its adapters, its caches, its database or what its views were handed calls these instead, and the grammar's fields stay its own:
 
 | What the host did | Instead |
 |---|---|
@@ -947,6 +949,7 @@ A host that reached into an `AutkGrammar` for its adapters, its caches or its da
 | Replaced `computeAdapter` to wrap the passes of a run | `new AutkGrammar(targets, { wrapComputeAdapter })`. |
 | Replaced `dataAdapter` to wrap the sources of a run | `new AutkGrammar(targets, { wrapDataAdapter })`. |
 | Read the run's database from `grammarEngine.context` | Its own database, handed to the grammar's data adapter through `wrapDataAdapter`, as above. |
+| Read `_exports` for the features a run handed a map | `grammar.mapLayer(dataRef, mapId)?.collection`, what the run handed autk-map for the layer, and `grammar.plotCollection(plotId)` for a plot. |
 
 ### Arranging the views
 
