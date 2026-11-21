@@ -122,9 +122,10 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
         const workspaceCrs = db.getWorkspaceConfiguration().coordinateFormat;
         for (const name of computeLayerNames(spec)) {
             const key = tableKey(spec.workspace, name);
-            // A `fromFeature` table a GeoJSON source loaded is read as the source gave it, as the plots read theirs:
-            // autk-db keeps each feature of a buildings table in its building model, the geometry inside a
-            // GeometryCollection, where `geometry.coordinates.0` finds no outline. The pass's own table is read as autk-db
+            // A `fromFeature` table a GeoJSON source loaded is read as the source gave it, as the plots read theirs,
+            // each feature with its own tags. autk-db keeps each feature of a buildings table in its building model,
+            // the parts' geometries inside a GeometryCollection, whose polygons a batched entry that reads the geometry
+            // packs one by one with their parts' tags (buildBatchedUniforms). The pass's own table is read as autk-db
             // keeps it, as a map draws it, so its result holds the rows the map draws.
             const cached = cache?.get(key) ?? (name === spec.dataRef ? undefined : inWorkspaceCrs(sources?.get(key), workspaceCrs));
             if (cached) layers[name] = cached;

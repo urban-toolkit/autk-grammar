@@ -3577,9 +3577,9 @@ test('colors the ten noisiest neighborhoods of plot-colors alike on its map and 
 
 test("reads each building part's outline in a pass's fromFeature table, as a GeoJSON source in its workspace's CRS gave it", async ({ page }) => {
     // Three building parts, each 20 m wide, and four spots south of them, written in World Mercator meters, the
-    // workspace's CRS, as a host that hands its own tables writes them. autk-db keeps each feature of a buildings table
-    // in its building model, the geometry inside a GeometryCollection, where geometry.coordinates.0 finds no outline:
-    // the pass packed three empty boxes, and every spot read a width of 0.
+    // workspace's CRS, as a host that hands its own tables writes them. The pass reads them as the source gave them,
+    // each part with its own outline, not as autk-db keeps them in its building model: read so before, they packed
+    // three empty boxes, and every spot read a width of 0.
     const [x0, y0] = [-8235000, 4946000];
     const square = (x: number, y: number, size: number) =>
         ({ type: 'Polygon', coordinates: [[[x, y], [x + size, y], [x + size, y + size], [x, y + size], [x, y]]] });
@@ -3611,6 +3611,117 @@ test("reads each building part's outline in a pass's fromFeature table, as a Geo
     const widths = await page.evaluate(() => Promise.all([0, 1, 2, 3].map((i) => window.valueAt('spots', i, 'compute.width'))));
     expect(widths).toHaveLength(4);
     for (const width of widths) expect(width as number).toBeCloseTo(60, 3);
+});
+
+// A noon shadow pass over roads: each building, packed as the box of its outline, casts its shadow north as far as it
+// is tall, and a road whose first point lies in a shadow is shaded. Every coordinate is measured from the road's first
+// point, since an f32 holds World Mercator's coordinates, near 1e7 m, only to about a meter.
+const NOON_SHADOWS: ComputeSpec = {
+    dataRef: 'roads',
+    attributes: { seg: 'geometry.coordinates' },
+    attributeMatrices: { seg: { rows: 'auto', cols: 2 } },
+    uniforms: { h: { fromFeature: { layer: 'parts', path: 'properties.height', iterate: 'batched', required: true } } },
+    uniformMatrices: { o: { fromFeature: { layer: 'parts', path: 'geometry.coordinates.0', iterate: 'batched' }, cols: 2 } },
+    outputColumnName: 'shaded',
+    wgslFunction: [
+        'let ox = seg[0u]; let oy = seg[1u];',
+        'var shaded = 0.0;',
+        'for (var i = 0u; i < u32(num_features); i++) {',
+        '    let x0 = o[i * 8u] - ox; let y0 = o[i * 8u + 1u] - oy;',
+        '    let x1 = o[i * 8u + 4u] - ox; let y1 = o[i * 8u + 5u] - oy;',
+        '    if (x0 <= 0.0 && 0.0 <= x1 && y0 <= 0.0 && 0.0 <= y1 + h[i]) { shaded = 1.0; }',
+        '}',
+        'return shaded;',
+    ],
+} as unknown as ComputeSpec;
+
+/**
+ * A scene of the shadow pass, laid out in meters east and north of a corner: the ground first, since autk-db cuts each
+ * table to the first polygon table it loads, then building parts 60 m tall and named roads. Written in World Mercator
+ * meters, the workspace's CRS, a pass reads the parts as the source gave them; written in degrees, as autk-db keeps
+ * them, one GeometryCollection per building with each part's tags in `properties.parts`.
+ */
+function shadowScene(crs: 'meters' | 'degrees', parts: Array<{ polygons: number[][]; height?: number }>,
+    roads: Array<{ name: string; lines: number[][][] }>): DataSourceSpec[] {
+    const [x0, y0, lon0, lat0] = [-8235000, 4946000, -71.1, 42.35];
+    const at = ([dx, dy]: number[]) => (crs === 'meters'
+        ? [x0 + dx, y0 + dy]
+        : [lon0 + dx / (111320 * Math.cos((lat0 * Math.PI) / 180)), lat0 + dy / 110574]);
+    // A rectangle `width` by `depth` meters with its south-west corner at (x, y), as a polygon's rings.
+    const rectangle = (x: number, y: number, width: number, depth: number) =>
+        [[[x, y], [x + width, y], [x + width, y + depth], [x, y + depth], [x, y]].map(at)];
+    // A square of `side` meters at (x, 0).
+    const square = ([x, side]: number[]) => rectangle(x, 0, side, side);
+    const table = (outputTableName: string, features: Array<{ properties: Record<string, unknown>; geometry: unknown }>, layerType?: string) => ({
+        type: 'geojson', outputTableName, ...(crs === 'meters' && { coordinateFormat: 'EPSG:3395' }), ...(layerType && { layerType }),
+        geojsonObject: { type: 'FeatureCollection', features: features.map((feature) => ({ type: 'Feature', ...feature })) },
+    });
+    return [
+        table('ground', [{ properties: {}, geometry: { type: 'Polygon', coordinates: rectangle(-500, -500, 2000, 1000) } }]),
+        table('parts', parts.map(({ polygons, height = 60 }) => ({
+            properties: { height },
+            geometry: polygons.length === 1
+                ? { type: 'Polygon', coordinates: square(polygons[0]) }
+                : { type: 'MultiPolygon', coordinates: polygons.map(square) },
+        })), 'buildings'),
+        table('roads', roads.map(({ name, lines }) => ({
+            properties: { name },
+            geometry: lines.length === 1
+                ? { type: 'LineString', coordinates: lines[0].map(at) }
+                : { type: 'MultiLineString', coordinates: lines.map((line) => line.map(at)) },
+        })), 'roads'),
+    ] as unknown as DataSourceSpec[];
+}
+
+/** Each road's `compute.shaded`, by its name. */
+async function shadedRoads(page: Page): Promise<Record<string, unknown>> {
+    return page.evaluate(async () => {
+        const roads = await window.grammar.data.roads;
+        return Object.fromEntries(roads.features.map((feature) => [String(feature.properties?.name), (feature.properties?.compute as Record<string, unknown> | undefined)?.shaded]));
+    });
+}
+
+for (const crs of ['meters', 'degrees'] as const) {
+    test(`a building part of two polygons shades the road by each of them, as a part of one polygon does (written in ${crs})`, async ({ page }) => {
+        // A part OpenStreetMap maps as one element of two polygons, 40 m squares 400 m apart, a tower of the same
+        // square 400 m further east, a road 10 m north of each square, and a road in the open. Its MultiPolygon's
+        // geometry.coordinates.0 is its first polygon, not a ring: the pass packed it as a box of zeros, and neither
+        // road by it was shaded. Read as autk-db keeps it, every part packed one.
+        await runSpec(page, {
+            data: shadowScene(crs, [{ polygons: [[0, 40], [400, 40]] }, { polygons: [[800, 40]] }], [
+                { name: 'by the first polygon', lines: [[[20, 50], [40, 50]]] },
+                { name: 'by the second polygon', lines: [[[420, 50], [440, 50]]] },
+                { name: 'by the tower', lines: [[[820, 50], [840, 50]]] },
+                { name: 'in the open', lines: [[[1220, 50], [1240, 50]]] },
+            ]),
+            compute: [NOON_SHADOWS],
+        } as unknown as UrbanSpec);
+        expect(await shadedRoads(page)).toEqual({
+            'by the first polygon': 1, 'by the second polygon': 1, 'by the tower': 1, 'in the open': 0,
+        });
+    });
+}
+
+test('a road of two lines is shaded by the building beside its first line, and keeps both lines', async ({ page }) => {
+    // autk-compute packs a matrix attribute row by row from geometry.coordinates, and a MultiLineString's rows are
+    // lines, not points: it packed the road as zeros, a road at World Mercator's origin, which nothing shades.
+    await runSpec(page, {
+        data: shadowScene('meters', [{ polygons: [[0, 40]] }], [
+            { name: 'two lines', lines: [[[20, 50], [40, 50]], [[300, 50], [320, 50]]] },
+            { name: 'one line', lines: [[[10, 55], [30, 55]]] },
+            { name: 'in the open', lines: [[[1220, 50], [1240, 50]]] },
+        ]),
+        compute: [NOON_SHADOWS],
+    } as unknown as UrbanSpec);
+    expect(await shadedRoads(page)).toEqual({ 'two lines': 1, 'one line': 1, 'in the open': 0 });
+    // The pass's result keeps the road's two lines as autk-db keeps them, which a map draws.
+    const geometries = await page.evaluate(async () => {
+        const named = (collection: { features: Array<{ properties: Record<string, unknown> | null; geometry: unknown }> }) =>
+            collection.features.find((feature) => feature.properties?.name === 'two lines')?.geometry;
+        return { result: named(await window.grammar.data.roads), kept: named(await window.dbLayer('roads')) };
+    });
+    expect((geometries.result as { type: string }).type).toBe('MultiLineString');
+    expect(geometries.result).toEqual(geometries.kept);
 });
 
 test('draws the Financial District of map-style in the colors of its night style, without the floating menu and legend', async ({ page }) => {
