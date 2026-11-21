@@ -4,7 +4,7 @@ import type {
     CameraMotionStep, CameraSpec, ColorMapInterpolator, ComputeSpec, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec,
     MapSpec, PlotSpec, RenderComputeSpec, TerrainSpec, UrbanSpec,
 } from '@urban-toolkit/the-urban-grammar';
-import type { CameraView, DrawnMark, LayerState, PaneBox, RunSummary } from './app/main';
+import type { CameraView, DrawnMark, LayerState, PaneBox, RunSummary, TerrainState } from './app/main';
 import { serveExtensions, type ExtensionRequests } from './duckdb-extensions';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
 import { spec as heatmapGeojson } from '../gallery/src/examples/heatmap-vis-geojson';
@@ -2881,6 +2881,114 @@ test('raises a map on the heights of the raster band its terrain names, and refu
         .rejects.toThrow('Map 0: terrain dataRef "area" names a polygons table, and a terrain takes its heights from a raster table');
     await expect(runSpec(page, withTerrain({ dataRef: 'elevation' })))
         .rejects.toThrow(`Map 0: terrain dataRef "elevation" names no table of the map's workspace.`);
+});
+
+/**
+ * A GeoTIFF made by the test, as a data URL a geotiff source loads: one band of 32-bit floats, `columns` cells across and
+ * `rows` down over `[west, south, east, north]` in degrees, the value of each cell `valueAt(column, row)` with its row
+ * counted from the south, as autk-db lays out a raster's band. Uncompressed, in one strip, placed by its pixel scale and
+ * its tie point.
+ */
+function geotiffUrl(columns: number, rows: number, [west, south, east, north]: number[], valueAt: (column: number, row: number) => number): string {
+    const [SHORT, LONG, DOUBLE] = [3, 4, 12];
+    const entries: Array<[tag: number, type: number, values: number[]]> = [
+        [256, LONG, [columns]], [257, LONG, [rows]], [258, SHORT, [32]], [259, SHORT, [1]], [262, SHORT, [1]],
+        [273, LONG, [0]], [277, SHORT, [1]], [278, LONG, [rows]], [279, LONG, [columns * rows * 4]], [284, SHORT, [1]],
+        [339, SHORT, [3]], [33550, DOUBLE, [(east - west) / columns, (north - south) / rows, 0]], [33922, DOUBLE, [0, 0, 0, west, north, 0]],
+    ];
+    // The header, then the one directory of entries; the doubles, too long for an entry, after it; then the cells.
+    const align = (offset: number) => Math.ceil(offset / 8) * 8;
+    let extra = align(8 + 2 + entries.length * 12 + 4);
+    const cells = align(extra + 8 * entries.reduce((count, [, type, values]) => count + (type === DOUBLE ? values.length : 0), 0));
+    entries[5][2] = [cells];
+    const view = new DataView(new ArrayBuffer(cells + columns * rows * 4));
+    view.setUint16(0, 0x4949, true);
+    view.setUint16(2, 42, true);
+    view.setUint32(4, 8, true);
+    view.setUint16(8, entries.length, true);
+    entries.forEach(([tag, type, values], i) => {
+        const at = 10 + i * 12;
+        view.setUint16(at, tag, true);
+        view.setUint16(at + 2, type, true);
+        view.setUint32(at + 4, values.length, true);
+        if (type === SHORT) view.setUint16(at + 8, values[0], true);
+        else if (type === LONG) view.setUint32(at + 8, values[0], true);
+        else {
+            view.setUint32(at + 8, extra, true);
+            values.forEach((value, k) => view.setFloat64(extra + 8 * k, value, true));
+            extra += 8 * values.length;
+        }
+    });
+    view.setUint32(10 + entries.length * 12, 0, true);
+    // A GeoTIFF's rows run from the north.
+    for (let row = 0; row < rows; row++) {
+        for (let column = 0; column < columns; column++)
+            view.setFloat32(cells + 4 * (row * columns + column), valueAt(column, rows - 1 - row), true);
+    }
+    return `data:image/tiff;base64,${Buffer.from(view.buffer).toString('base64')}`;
+}
+
+test("looks at a terrain map's ground at its height, and keeps the eye and the camera's tour above that ground", async ({ page }) => {
+    // Ground about 2 km high, as in Denver, made here: 41 by 41 heights over about 860 by 890 m, rising 60 m from west to
+    // east and 40 m from south to north. The camera looked at z = 0 and set the eye's distance from there, so at zoom 15
+    // the eye stood about 1.7 km under the ground, and the map showed only its background.
+    const [columns, rows] = [41, 41];
+    const heightAt = (column: number, row: number) => 1950 + (60 * column) / (columns - 1) + (40 * row) / (rows - 1);
+    const dem: DataSourceSpec = {
+        type: 'geotiff', outputTableName: 'dem', geotiffFileUrl: geotiffUrl(columns, rows, [-104.995, 39.736, -104.985, 39.744], heightAt),
+    };
+    const onDem = (camera: CameraSpec): UrbanSpec => ({
+        data: [dem],
+        map: {
+            terrain: { dataRef: 'dem' },
+            camera,
+            layerRefs: [{ dataRef: 'dem', colorMapInterpolator: scheme('interpolateViridis'), transferFunction: { opacityMin: 1, opacityMax: 1 } }],
+        },
+    });
+    const view = () => page.evaluate(() => window.cameraView('map0'));
+    const terrainOf = async () => (await page.evaluate(() => window.terrain('map0')))!;
+    // The ground's height at a point of the map's world, as autk-map raises it: between the band's cells, which stand
+    // from the first corner of the terrain's bounds to the last.
+    const groundAt = (terrain: TerrainState, x: number, y: number) => {
+        const [minX, minY, maxX, maxY] = terrain.bounds;
+        return heightAt(((x - minX) * (columns - 1)) / (maxX - minX), ((y - minY) * (rows - 1)) / (maxY - minY));
+    };
+    // Checks that the eye is above the ground under it, and that the camera looks at the ground, `distance` from the eye
+    // and `tilt` degrees from straight down.
+    const expectOnGround = (name: string, terrain: TerrainState, at: CameraView, distance: number, tilt: number) => {
+        const under = groundAt(terrain, at.eye[0], at.eye[1]);
+        expect(at.eye[2], `${name}: the eye's height, over ground ${under.toFixed(1)} m high`).toBeGreaterThan(under);
+        const ground = groundAt(terrain, at.lookAt[0], at.lookAt[1]);
+        expect(Math.abs(at.lookAt[2] - ground), `${name}: the point looked at, ${at.lookAt[2]} m high, on ground ${ground.toFixed(1)} m high`).toBeLessThan(0.05);
+        const offset = at.eye.map((value, i) => value - at.lookAt[i]);
+        expect(Math.hypot(offset[0], offset[1], offset[2]), `${name}: the eye's distance from the point looked at`).toBeCloseTo(distance, 1);
+        expect(offset[2], `${name}: the eye's height above the point looked at`).toBeCloseTo(distance * Math.cos((tilt * Math.PI) / 180), 1);
+    };
+
+    // From the view that fits the ground, tilted 20 degrees: the eye 312.5 m from the middle of the ground.
+    await runSpec(page, onDem({ zoom: 15, pitch: 20 }));
+    const terrain = await terrainOf();
+    expect(terrain.minHeight).toBeCloseTo(1950, 1);
+    expect(terrain.maxHeight).toBeCloseTo(2050, 1);
+    expectOnGround('zoom 15, pitch 20', terrain, await view(), 312.5, 20);
+    await expectDrawn(page, 'map0');
+
+    // A tour turns the view around the ground its line of sight meets: a zoom level in halves the eye's distance from it.
+    await page.evaluate(async () => {
+        window.playTour('map0', [{ type: 'zoom', amount: 1, seconds: 0.25 }]);
+        await window.tour?.done;
+    });
+    expectOnGround('a tour of a zoom level in', terrain, await view(), 156.25, 20);
+    await expectDrawn(page, 'map0');
+
+    // The README's camera, around a center of the ground about 2017 m high: the center is the point looked at.
+    const center: [number, number] = [-104.988, 39.741];
+    await runSpec(page, onDem({ center, zoom: 15, pitch: 50, bearing: 30 }));
+    const turned = await view();
+    const [x, y] = worldMercator(...center);
+    expect(Math.abs(turned.lookAt[0] + turned.origin[0] - x), 'x of the point looked at, in World Mercator meters').toBeLessThan(0.01);
+    expect(Math.abs(turned.lookAt[1] + turned.origin[1] - y), 'y of the point looked at, in World Mercator meters').toBeLessThan(0.01);
+    expectOnGround('the README camera at a center', await terrainOf(), turned, 312.5, 50);
 });
 
 test('draws the second run of a reused grammar from its own table, though the first run loaded a GeoJSON table of that name', async ({ page }) => {
