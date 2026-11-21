@@ -305,6 +305,39 @@ test('refuses an update row of a table without a geometry that lacks a column of
     await refused([{ zone: 2, count: 25, extra: 1 }], 'Update of "zones": jsonObject[0] has "extra", which is not a column of the table: "zone", "count".');
 });
 
+// A layer of plain columns, such as a CSV or JSON table loaded with geometryColumns, or a sql source's table drawn as a
+// layer whose query returns no properties, has no properties column and no feature id. autk-db 4.1.1 updates a row of
+// a layer by setting its properties column, so the update strategy never changed such a table: a key
+// `properties.<name>` found no feature id, a plain column failed to bind, and jsonObject is refused for a layer.
+const plainColumns = 'on a layer, the update strategy sets the properties column of each row it matches, and this layer has none: it keeps its values in plain columns, as a CSV or JSON layer or a sql source\'s table of plain columns does. Use strategy \'replace\', with every row in geojsonObject.';
+
+test('refuses the update strategy on a layer of plain columns, before autk-db runs, and hands autk-db its replace', async () => {
+    const column = (name: string, type: string) => ({ name, type });
+    const tables = [
+        { name: 'noise', type: 'points', columns: [column('key', 'BIGINT'), column('level', 'BIGINT'), column('Latitude', 'DOUBLE'), column('Longitude', 'DOUBLE'), column('geometry', 'GEOMETRY')] },
+        { name: 'noisiest', type: 'polygons', columns: [column('name', 'VARCHAR'), column('complaints', 'INTEGER'), column('geometry', 'GEOMETRY')] },
+    ];
+    const point = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [0, 0] }, properties: { key: 2, level: 75 } }] };
+    const updates: Array<[string, object]> = [
+        ['noise', { idColumn: 'properties.key', geojsonObject: point }],
+        ['noise', { idColumn: 'key', geojsonObject: point }],
+        ['noise', { idColumn: 'key', jsonObject: [{ key: 2, level: 75 }] }],
+        ['noisiest', { idColumn: 'properties.name', geojsonObject: point }],
+    ];
+    for (const [dataRef, fields] of updates) {
+        const { db, calls } = fakeDb(tables);
+        await assert.rejects(
+            createDataAdapter().resolveSource(db, { type: 'update', dataRef, strategy: 'update', ...fields } as DataSourceSpec),
+            { message: `Update of "${dataRef}": ${plainColumns}` },
+            JSON.stringify(fields),
+        );
+        assert.deepEqual(calls, [], JSON.stringify(fields));
+    }
+    assert.deepEqual(await callsFor({ type: 'update', dataRef: 'noise', strategy: 'replace', geojsonObject: point }, tables), [
+        ['updateTable', { tableName: 'noise', data: point, strategy: 'replace' }],
+    ]);
+});
+
 // drop sources: a table dropped.
 test('a drop source removes its table from autk-db, and from the cache the plots read first', async () => {
     const cache = new Map([['blocks', emptyCollection()], ['west/blocks', emptyCollection()]]);

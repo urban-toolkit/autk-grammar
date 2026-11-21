@@ -2508,6 +2508,43 @@ test("updates a table without a geometry by the names of its columns, whatever t
     ]);
 });
 
+test('replaces the rows of a layer of plain columns, and refuses the update strategy on it, which autk-db 4.1.1 cannot run there', async ({ page }) => {
+    // A CSV table of points keeps each value in a column of its own beside its geometry: it has no properties column,
+    // which autk-db's update of a layer sets, and no feature id.
+    const noise: DataSourceSpec = {
+        type: 'csv', outputTableName: 'noise', geometryColumns: true,
+        csvObject: [['key', 'level', 'Latitude', 'Longitude'], [1, 50, 40.75, -73.98], [2, 70, 40.76, -73.97]],
+    };
+    await runSpec(page, { data: [noise] });
+    const exported = await page.evaluate(async () => (await window.grammar.data.noise).features);
+    expect(exported).toHaveLength(2);
+    const edited = {
+        type: 'FeatureCollection',
+        features: exported.map((feature) => ({ ...feature, properties: { ...feature.properties, level: feature.properties?.key === 2 ? 75 : feature.properties?.level } })),
+    };
+    // replace swaps its rows for its own export, edited.
+    await runSpec(page, { data: [noise, { type: 'update', dataRef: 'noise', strategy: 'replace', geojsonObject: edited } as DataSourceSpec] });
+    expect(await page.evaluate(async () => (await window.grammar.data.noise).features.map((feature) => Number(feature.properties?.level)).sort((a, b) => a - b)))
+        .toEqual([50, 75]);
+
+    // The update strategy is refused, by a property, by a column or with rows without a geometry, before autk-db runs; so
+    // is an update of a sql source's table of plain columns drawn as a layer.
+    const outcome = (spec: UrbanSpec) => runSpec(page, spec).then(() => 'ran', (error: Error) => error.message);
+    const update = (dataRef: string, fields: object) => ({ type: 'update', dataRef, strategy: 'update', ...fields }) as DataSourceSpec;
+    const zoneValues: DataSourceSpec = {
+        type: 'sql', outputTableName: 'zone_values', layerType: 'polygons',
+        query: "SELECT CAST(properties->>'id' AS INTEGER) AS zone, CAST(properties->>'v' AS INTEGER) AS v, geometry FROM zones",
+    };
+    const zoneTwo = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: null, properties: { zone: 2, v: 99 } }] };
+    const refused = (table: string) => expect.stringContaining(`Update of "${table}": on a layer, the update strategy sets the properties column of each row it matches, and this layer has none`);
+    expect([
+        await outcome({ data: [noise, update('noise', { idColumn: 'properties.key', geojsonObject: edited })] }),
+        await outcome({ data: [noise, update('noise', { idColumn: 'key', geojsonObject: edited })] }),
+        await outcome({ data: [noise, update('noise', { idColumn: 'key', jsonObject: [{ key: 2, level: 75 }] })] }),
+        await outcome({ data: [area, zones, zoneValues, update('zone_values', { idColumn: 'properties.zone', geojsonObject: zoneTwo })] }),
+    ]).toEqual([refused('noise'), refused('noise'), refused('noise'), refused('zone_values')]);
+});
+
 test('drops a table with a drop source, so data no longer lists it and a map no longer finds it', async ({ page }) => {
     const dropped: UrbanSpec = { data: [area, zones, blocks, { type: 'drop', dataRef: 'blocks' }] };
     const { tables } = await runSpec(page, { ...dropped, map: { layerRefs: [{ dataRef: 'zones' }] } });
