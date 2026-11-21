@@ -715,7 +715,7 @@ plot: { dataRef: 'parcels', mark: 'scatter', axis: ['area', 'share'], tickFormat
 
 ### `axisLabels`
 
-The titles of a plot's axes, in the order of `axis`, in place of the column names: the x and y titles of a scatter plot, a bar chart, a line chart and a heat matrix, each axis's title of parallel coordinates, and a table's column headers. An axis without a title keeps its column's name, and an axis that holds a transform's output, `@transform`, is titled `value`. A run refuses more titles than `axis` has columns, and two titles alike.
+The titles of a plot's axes, in the order of `axis`, in place of the column names: the x and y titles of a scatter plot, a bar chart, a line chart and a heat matrix, each axis's title of parallel coordinates, and a table's column headers. An axis without a title keeps its column's name, and an axis that holds a transform's output, `@transform`, is titled `value`. A run refuses more titles than `axis` has columns, two titles alike, and a title that an axis without one keeps, since a table finds the column a click on a header sorts by its title.
 
 ```ts
 plot: { dataRef: 'parcels', mark: 'bar', axis: ['area', '@transform'], transform: { preset: 'binning-1d' }, axisLabels: ['Area (m²)', 'Parcels'] }
