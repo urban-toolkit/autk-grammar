@@ -456,7 +456,9 @@ export interface UpdateSourceSpec {
     /**
      * The rows of a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`. With
      * `update`, a row's keys name the table's columns, in any case and in any order, each once, and a column a row leaves
-     * out is null in it; a run refuses a key that names no column of the table.
+     * out is null in it; a run refuses a key that names no column of the table. A run refuses `update` on a table whose
+     * columns named as whole numbers, such as `2020`, do not all come first, smallest first: use `replace` with every row
+     * of the table, or rename those columns.
      * @minItems 1
      */
     jsonObject?: Array<Record<string, unknown>>;

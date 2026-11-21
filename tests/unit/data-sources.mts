@@ -348,6 +348,30 @@ test('an update row of a table without a geometry gets null in a column it leave
     await refused([{ zone: 2 }, null], notAnObject(1));
 });
 
+// The rows of an update reach autk-db as JSON objects, which put the keys named as whole numbers, such as "2020", first
+// and in ascending order, and autk-db 4.1.1 inserts them by position: a table whose columns named so do not come first
+// and in that order took a row's values in other columns. replace makes the table of the given rows, by their keys' names.
+test('refuses the update strategy on a table whose column named as a whole number comes after another, before autk-db runs', async () => {
+    const table = (names: string[]) => ({ name: 'zones', columns: names.map((name) => ({ name, type: 'BIGINT' })) });
+    const update = (jsonObject: unknown[], strategy = 'update') => ({ type: 'update', dataRef: 'zones', strategy, ...(strategy === 'update' && { idColumn: 'zone' }), jsonObject });
+    const refused = async (names: string[], name: string, after: string) => {
+        const { db, calls } = fakeDb([table(names)]);
+        await assert.rejects(createDataAdapter().resolveSource(db, update([{ zone: 2 }]) as DataSourceSpec), {
+            message: `Update of "zones": the update strategy cannot change a table whose column "${name}", named as a whole number, comes after "${after}". Use strategy 'replace' with every row of the table, or rename the column.`,
+        }, names.join());
+        assert.deepEqual(calls, [], names.join());
+    };
+    await refused(['zone', '2020'], '2020', 'zone');
+    await refused(['2021', '2020', 'zone'], '2020', '2021');
+    await refused(['2020', 'zone', '2021'], '2021', 'zone');
+    // Columns named as whole numbers that come first, in ascending order, keep their places.
+    const [[, ordered]] = await callsFor(update([{ zone: 2, '2021': 5 }]), [table(['2020', '2021', 'zone'])]) as Array<[string, { data: Array<Record<string, unknown>> }]>;
+    assert.deepEqual(ordered.data.map((row) => Object.entries(row)), [[['2020', null], ['2021', 5], ['zone', 2]]]);
+    const replaced = [{ zone: 9, '2020': 7 }];
+    const [[, replace]] = await callsFor(update(replaced, 'replace'), [table(['zone', '2020'])]) as Array<[string, { data: unknown }]>;
+    assert.equal(replace.data, replaced);
+});
+
 // A layer of plain columns, such as a CSV or JSON table loaded with geometryColumns, or a sql source's table drawn as a
 // layer whose query returns no properties, has no properties column and no feature id. autk-db 4.1.1 updates a row of
 // a layer by setting its properties column, so the update strategy never changed such a table: a key

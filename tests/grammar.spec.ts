@@ -2608,6 +2608,18 @@ test('updates a table without a geometry as autk-db 4.1.1 wrote the rows 5.6.0 h
     ]);
 });
 
+test('refuses the update strategy on a table whose column named as a whole number comes after another, and leaves its rows as they were', async ({ page }) => {
+    // The rows of an update reach autk-db as JSON objects, which put a key named as a whole number, such as "2020", before
+    // the others, and autk-db 4.1.1 inserts them by position: zone 2's row below wrote 25 in zone and 2 in "2020". The run
+    // refuses such an update before autk-db runs. A refused run leaves the grammar no database to read, so the run goes
+    // through runWrapped, whose database hostRows reads back.
+    const zones: DataSourceSpec = { type: 'csv', outputTableName: 'zones', csvObject: [['zone', '2020'], [1, 10], [2, 20]] };
+    const spec = { data: [zones, { type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'zone', jsonObject: [{ zone: 2, '2020': 25 }] }] } as UrbanSpec;
+    const outcome = await page.evaluate((spec) => window.runWrapped(spec), spec).then(() => 'ran', (error: Error) => error.message);
+    expect(await page.evaluate(() => window.hostRows('SELECT * FROM zones ORDER BY 1'))).toEqual([{ zone: 1, '2020': 10 }, { zone: 2, '2020': 20 }]);
+    expect(outcome).toContain(`Update of "zones": the update strategy cannot change a table whose column "2020", named as a whole number, comes after "zone". Use strategy 'replace' with every row of the table, or rename the column.`);
+});
+
 test('replaces the rows of a layer of plain columns, and refuses the update strategy on it, which autk-db 4.1.1 cannot run there', async ({ page }) => {
     // A CSV table of points keeps each value in a column of its own beside its geometry: it has no properties column,
     // which autk-db's update of a layer sets, and no feature id.

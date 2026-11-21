@@ -137,10 +137,21 @@ async function updateByFeatureId(db: AutkDb, table: Table, rows: FeatureCollecti
  * 4.1.1 wrote a key another row gave. A key the table lacks, which 4.1.1 wrote into another column or refused on the
  * count of values, is refused, and so are two keys that name one column. autk-db lists every column of a table it
  * holds, so the rows of a table listed without any, as a host's stand-in database may list it, go as they are given.
+ *
+ * A row reaches autk-db as a JSON object, and an object lists its keys named as whole numbers, such as "2020", first,
+ * in ascending order, whatever order they were set in. A table whose columns do not come in that order would take every
+ * row's values in other columns, as 4.1.1 wrote them, so its update is refused, naming the column that comes too late.
  */
 function inColumnOrder(rows: Array<Record<string, unknown>>, table: Table): Array<Record<string, unknown>> {
     const columns = table.columns.map((column) => column.name);
     if (columns.length === 0) return rows;
+    const written = Object.keys(Object.fromEntries(columns.map((column) => [column, null])));
+    const moved = written.findIndex((key, index) => key !== columns[index]);
+    if (moved !== -1) {
+        // The first key out of the table's order is named as a whole number and comes after another column.
+        const name = written[moved];
+        throw new Error(`the update strategy cannot change a table whose column "${name}", named as a whole number, comes after "${columns[columns.indexOf(name) - 1]}". Use strategy 'replace' with every row of the table, or rename the column.`);
+    }
     const listed = columns.map((column) => `"${column}"`).join(', ');
     return rows.map((row, index) => {
         // The schema refuses a row that is not an object, but a spec that was not checked against it reaches here.
