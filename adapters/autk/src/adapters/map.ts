@@ -261,24 +261,38 @@ function drawnType(layerRef: MapLayerSpec, tableType: LayerType | undefined, lay
 }
 
 /**
- * Why autk-map made no layer of the `count` features it was handed for a layer: autk-map logs such a layer and goes on
- * without it, so a run that went on would name a layer the map lacks, whose links and picks do nothing. autk-core 4.1.1
- * raises a building part only from `height`, `building:height`, `levels` or `building:levels`, to a height above the
- * part's minimum (`TriangulatorBuildings.computeBuildingHeights`), and autk-map makes no buildings layer of features it
- * raises no part of.
+ * Why the map has no layer of a layer of the spec, autk-map having been handed `count` features for it: autk-map logs
+ * such a layer and goes on without it. autk-core 4.1.1 raises a building part only from `height`, `building:height`,
+ * `levels` or `building:levels`, to a height above the part's minimum (`TriangulatorBuildings.computeBuildingHeights`),
+ * and autk-map makes no buildings layer of features it raises no part of.
  */
-function layerNotMade(layerRef: MapLayerSpec, layerId: string, type: LayerType | undefined, count: number): string {
+function layerNotMade(layerRef: MapLayerSpec, type: LayerType | undefined, count: number): string {
+    if (count === 0) return `the table "${layerRef.dataRef}" has no feature to draw, so the map has no layer of it.`;
     const features = `${count} feature${count === 1 ? '' : 's'}`;
     if (type === 'buildings') {
         const remedy = layerRef.buildingsZeroHeight === true
             ? 'Each part has one of them, with a height not above its minimum.'
             : 'Give the features one of those keys, or set buildingsZeroHeight: true to raise each part without them to a random height.';
-        return `Layer "${layerId}": autk-map drew no building of the ${features} of the table "${layerRef.dataRef}", so the map has no layer of them: `
+        return `autk-map drew no building of the ${features} of the table "${layerRef.dataRef}", so the map has no layer of them: `
             + `autk-core raises a building part only from height, building:height, levels or building:levels, to a height above the part's minimum. ${remedy}`;
     }
     if (type === 'raster')
-        return `Layer "${layerId}": autk-map drew nothing of the raster table "${layerRef.dataRef}", so the map has no layer of it.`;
-    return `Layer "${layerId}": autk-map drew none of the ${features} of the table "${layerRef.dataRef}"${type ? ` as ${type}` : ''}, so the map has no layer of them.`;
+        return `autk-map drew nothing of the raster table "${layerRef.dataRef}", so the map has no layer of it.`;
+    return `autk-map drew none of the ${features} of the table "${layerRef.dataRef}"${type ? ` as ${type}` : ''}, so the map has no layer of them.`;
+}
+
+/**
+ * Leaves out a layer the map has no layer of, as autk-map leaves it out, so the run goes on with the others, as 5.6.0
+ * did: it warns why when autk-map was handed features for the layer, and refuses the keys that need the layer, `legend`
+ * and `pickedComps`. The run's lookup and its links do not name the layer.
+ */
+function leaveOut(layerRef: MapLayerSpec, layerId: string, type: LayerType | undefined, count: number): void {
+    const cause = layerNotMade(layerRef, type, count);
+    const needs = layerRef.legend === true ? 'legend' : layerRef.pickedComps !== undefined ? 'pickedComps' : undefined;
+    if (needs)
+        throw new Error(`Layer "${layerId}": ${needs} needs the layer, and ${cause}`);
+    if (count > 0)
+        console.warn(`Layer "${layerId}": ${cause}`);
 }
 
 /** Refuses a list of feature positions that is not whole numbers from 0, as `key` of a layer. */
@@ -482,15 +496,15 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
 
     /**
      * Loads each layer of `spec` on `map`, and gives, in the order of the layers, the keys of the rows each draws and the
-     * collection it handed autk-map for it.
+     * collection it handed autk-map for it, or `undefined` for a layer the map has no layer of (see `leaveOut`).
      */
-    async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<Array<{ rows: string[]; collection: FeatureCollection }>> {
+    async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<Array<{ rows: string[]; collection: FeatureCollection } | undefined>> {
         let tableToTypeMap: {[tableName: string]: string} = {};
         for(const table of context.getTablesMetadata()) {
             if(table.type !== undefined) tableToTypeMap[table.name] = table.type;
         }
 
-        const drawn: Array<{ rows: string[]; collection: FeatureCollection }> = [];
+        const drawn: Array<{ rows: string[]; collection: FeatureCollection } | undefined> = [];
         for(const layerRef of spec.layerRefs){
             const name     = layerRef.dataRef;
             const layerId  = layerIdOf(layerRef);
@@ -520,10 +534,11 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 const zeroHeight = type === 'buildings' && layerRef.buildingsZeroHeight === true;
                 map.loadCollection(layerId, { collection: data, type, ...(zeroHeight ? { loadConfig: { buildingsZeroHeight: true } } : {}) });
             }
-            // A table with no feature to draw makes no layer, and is not refused.
-            const handed = data.features?.length ?? 0;
-            if(!map.layerManager.searchByLayerId(layerId) && handed > 0)
-                throw new Error(layerNotMade(layerRef, layerId, type, handed));
+            if(!map.layerManager.searchByLayerId(layerId)) {
+                leaveOut(layerRef, layerId, type, data.features?.length ?? 0);
+                drawn.push(undefined);
+                continue;
+            }
 
             if(layerRef.opacity != null)
                 map.updateRenderInfo(layerId, { opacity: layerRef.opacity });
@@ -678,7 +693,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
 
                 // A map is known to the grammar, which destroys it, once its layers are loaded. One that fails before
                 // is destroyed here, so its controls, event handlers and GPU buffers do not outlive the failed run.
-                let drawn: Array<{ rows: string[]; collection: FeatureCollection }>;
+                let drawn: Array<{ rows: string[]; collection: FeatureCollection } | undefined>;
                 try {
                     applyMapColors(map, spec);
 
@@ -702,10 +717,13 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 }
 
                 const mapId = mapIdOf(spec, index);
-                spec.layerRefs.forEach((layerRef, at) => layers?.push({
-                    map, mapIndex: index, mapId, layerId: layerIdOf(layerRef), dataRef: layerRef.dataRef,
-                    rows: drawn[at].rows, collection: drawn[at].collection,
-                }));
+                spec.layerRefs.forEach((layerRef, at) => {
+                    const loaded = drawn[at];
+                    if(loaded) layers?.push({
+                        map, mapIndex: index, mapId, layerId: layerIdOf(layerRef), dataRef: layerRef.dataRef,
+                        rows: loaded.rows, collection: loaded.collection,
+                    });
+                });
 
                 if(maps)
                     maps[index] = map;

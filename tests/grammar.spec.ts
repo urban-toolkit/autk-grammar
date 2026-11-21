@@ -227,12 +227,17 @@ async function answerOverpassLayers(page: Page, layers: { roads: object[]; build
 test('draws the other OSM layers when autk-map raises no building of the buildings, and warns why, naming the keys autk-core raises a part from', async ({ page }) => {
     // Three buildings tagged building=yes alone, as many OSM buildings are, between two roads inside BOX. autk-map raises
     // none of them and makes no buildings layer: the run refused the whole spec, where 5.6.0 drew the surface and the roads.
-    const way = (id: number, tags: object, points: number[][]) =>
-        ({ type: 'way', id, tags, nodes: points.map((_, i) => id + i + 1), geometry: points.map(([lon, lat]) => ({ lat, lon })) });
+    // A way through `points`, `[lon, lat]`, its nodes numbered from id + 1. A closed way ends on its first node, as OSM
+    // closes one: autk-db reads a way as an area only when its first and last nodes are one.
+    const way = (id: number, tags: object, points: number[][], closed = false) => {
+        const nodes = points.map((_, i) => id + i + 1);
+        const ring = closed ? [...points, points[0]] : points;
+        return { type: 'way', id, tags, nodes: closed ? [...nodes, nodes[0]] : nodes, geometry: ring.map(([lon, lat]) => ({ lat, lon })) };
+    };
     const road = (id: number, lat: number) => way(id, { highway: 'residential' }, [[-74.012, lat], [-74.0085, lat]]);
     const building = (id: number, i: number) => {
         const [west, east] = [-74.0115 + i * 0.0012, -74.0109 + i * 0.0012];
-        return way(id, { building: 'yes' }, [[west, 40.7068], [east, 40.7068], [east, 40.7074], [west, 40.7074], [west, 40.7068]]);
+        return way(id, { building: 'yes' }, [[west, 40.7068], [east, 40.7068], [east, 40.7074], [west, 40.7074]], true);
     };
     await answerOverpassLayers(page, { roads: [road(100, 40.706), road(110, 40.708)], buildings: [building(200, 0), building(210, 1), building(220, 2)] });
     const warnings: string[] = [];

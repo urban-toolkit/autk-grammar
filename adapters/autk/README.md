@@ -631,7 +631,7 @@ A layer draws its table as the table's own type, which its source or compute pas
 | Points | `points` |
 | A raster | `raster` |
 
-A run refuses a type of another kind of geometry, for which autk-map would draw nothing. It also refuses a layer whose features autk-map makes nothing of, naming the cause: as `buildings`, features none of which has `height`, `building:height`, `levels` or `building:levels`, the four keys autk-core raises a building part from (or with `buildingsZeroHeight`, none of which has a height above its minimum). A table with no feature to draw is not refused. autk-map draws surface, parks, water and roads layers below every other layer, in that order, whatever the order of `layerRefs`.
+A run refuses a type of another kind of geometry, for which autk-map would draw nothing. A layer autk-map draws nothing of, such as `buildings` none of which has `height`, `building:height`, `levels` or `building:levels`, is left out of the map, with a warning that says why, and the map draws its other layers. So is a table with no feature to draw, without a warning. `mapLayer` and links do not find a layer left out, and a run refuses its `legend` and `pickedComps`. autk-map draws surface, parks, water and roads layers below every other layer, in that order, whatever the order of `layerRefs`.
 
 ```ts
 map: {
