@@ -42,8 +42,12 @@ export interface AutkGrammarOptions {
      * `adapter.resolveSource(context ?? await newDb(), source)`, where `newDb` makes an `AutkDb` and keeps it. One
      * database made once and handed to every run would hold the last run's tables, extent and crop, and autk-db refuses
      * an OpenStreetMap source once the workspace holds another table.
+     *
+     * The adapter it returns needs `resolveSource` and `resolveWorkspaces`, which a run calls and the grammar checks for
+     * as it is made. Any other call `DataAdapter` has is optional in it, as in `DataAdapter`, so a call a later release
+     * adds there asks nothing new of a host's adapter.
      */
-    wrapDataAdapter?: (adapter: Required<DataAdapter>) => Required<DataAdapter>;
+    wrapDataAdapter?: (adapter: Required<DataAdapter>) => DataAdapter & Required<Pick<DataAdapter, 'resolveSource' | 'resolveWorkspaces'>>;
 }
 
 /**
