@@ -1036,6 +1036,25 @@ test('draws the buildings that have no height with buildingsZeroHeight, each 3 t
     expect(sixRoofs, `six roofs cover ${sixRoofs} pixels, three ${threeRoofs}`).toBeGreaterThan(threeRoofs * 1.6);
 });
 
+test('refuses a buildings layer autk-map raises no building of, naming the keys autk-core raises a part from', async ({ page }) => {
+    // The zones have an id and a v, and none of height, building:height, levels and building:levels. autk-map logged
+    // "Invalid Building Layer." and made no layer, and the run went on as if the map drew one: the layer's lookup named a
+    // layer the map lacks, and its links and picks did nothing.
+    const zonesAsBuildings = (options: Partial<MapLayerSpec>): UrbanSpec => ({
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones', title: 'Zones', layerType: 'buildings', ...options }] },
+    });
+    await expect(runSpec(page, zonesAsBuildings({}))).rejects.toThrow('Layer "Zones": autk-map drew no building of the 4 features of the table "zones", '
+        + 'so the map has no layer of them: autk-core raises a building part only from height, building:height, levels or building:levels');
+    // The map that failed is destroyed, so it leaves nothing on the page.
+    expect(await page.evaluate(() => window.grammar.maps.length)).toBe(0);
+
+    // With buildingsZeroHeight, each zone stands at a random height, and the map draws the layer.
+    await runSpec(page, zonesAsBuildings({ buildingsZeroHeight: true }));
+    expect((await layerById(page)).Zones?.type).toBe('buildings');
+    expect(await page.evaluate(() => window.grammar.mapLayer('zones')?.layerId)).toBe('Zones');
+});
+
 test('draws a map in the colors of its style, and its picked features and the values it cannot color in its own colors', async ({ page }) => {
     // Four squares whose layer is colored by v, the third without one.
     const square = (i: number) => {
