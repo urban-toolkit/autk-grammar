@@ -3025,7 +3025,7 @@ function geotiffUrl(columns: number, rows: number, [west, south, east, north]: n
     return `data:image/tiff;base64,${Buffer.from(view.buffer).toString('base64')}`;
 }
 
-test("looks at a terrain map's ground at its height, and keeps the eye and the camera's tour above that ground", async ({ page }) => {
+test("looks at a terrain map's ground at its height, keeps the eye and the camera's tour above that ground, and keeps the fitted view's distance without zoom", async ({ page }) => {
     // Ground about 2 km high, as in Denver, made here: 41 by 41 heights over about 860 by 890 m, rising 60 m from west to
     // east and 40 m from south to north. The camera looked at z = 0 and set the eye's distance from there, so at zoom 15
     // the eye stood about 1.7 km under the ground, and the map showed only its background.
@@ -3086,6 +3086,15 @@ test("looks at a terrain map's ground at its height, and keeps the eye and the c
     expect(Math.abs(turned.lookAt[0] + turned.origin[0] - x), 'x of the point looked at, in World Mercator meters').toBeLessThan(0.01);
     expect(Math.abs(turned.lookAt[1] + turned.origin[1] - y), 'y of the point looked at, in World Mercator meters').toBeLessThan(0.01);
     expectOnGround('the README camera at a center', await terrainOf(), turned, 312.5, 50);
+
+    // Without zoom, the eye keeps the distance of the view that fits the ground, from the point it looks at on the
+    // ground. autk-map measures that view from z = 0, so the eye's height above z = 0 less the ground's, about 2 km, set
+    // the distance.
+    await runSpec(page, onDem({}));
+    const fitted = await view();
+    const fit = Math.hypot(...fitted.eye.map((value, i) => value - fitted.lookAt[i]));
+    await runSpec(page, onDem({ pitch: 50 }));
+    expectOnGround('pitch 50 without zoom', await terrainOf(), await view(), fit, 50);
 });
 
 test('draws the second run of a reused grammar from its own table, though the first run loaded a GeoJSON table of that name', async ({ page }) => {
