@@ -11,9 +11,14 @@ import { motionRefusal, playCameraMotion, tourOf, viewAngles } from '../../adapt
 // callbacks, each called with the time of its frame; here a frame is drawn every 16 ms, when the test says.
 let now = 0;
 let frames: Array<(time: number) => void> = [];
+/** How many frames have been asked for. */
+let asked = 0;
 Object.defineProperty(globalThis, 'performance', { value: { now: () => now }, configurable: true, writable: true });
 Object.defineProperty(globalThis, 'requestAnimationFrame', {
-    value: (callback: (time: number) => void) => frames.push(callback),
+    value: (callback: (time: number) => void) => {
+        asked++;
+        return frames.push(callback);
+    },
     configurable: true,
     writable: true,
 });
@@ -155,6 +160,28 @@ function expectView(map: AutkMap, name: string, view: { tilt: number; heading: n
     await tour.done;
     await runTo(start + 2048);
     expectView(map, 'bearing stopped at a quarter', { tilt: 30, heading: 11.25, distance: 1000, x: 0, y: 0 });
+}
+
+// A stopped tour asks for no more frames, though its steps had an hour left. autk-core's CameraMotion cannot be stopped:
+// each of its steps asked for a frame at every frame until its seconds were up, and so kept the map's camera, and the map
+// with it, in memory long after the map was destroyed.
+{
+    const map = mapAt(30, 0, 1000);
+    const start = now;
+    const tour = playCameraMotion(map, [
+        { type: 'bearing', amount: 360, seconds: 3600 },
+        { type: 'zoom', amount: 1, seconds: 3600 },
+    ]);
+    await runTo(start + 256);
+    assert.equal(frames.length, 1, 'the tour waits for its next frame');
+    tour.stop();
+    await tour.done;
+    const before = asked;
+    await runTo(start + 2048);
+    assert.equal(asked - before, 0, `the stopped tour asked for ${asked - before} frames`);
+    assert.equal(frames.length, 0, 'no frame is due');
+    // 256 ms into an hour, the bearing had barely turned the view, and it stays where the tour had it.
+    expectView(map, 'an hour of bearing stopped at 256 ms', { tilt: 30, heading: 0, distance: 1000, x: 0, y: 0 });
 }
 
 // A tour played on a map stops the one it plays, and starts from its view.
