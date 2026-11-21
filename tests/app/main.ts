@@ -74,11 +74,12 @@ export type ComputedRows = { layerType: string | null; rows: Array<Record<string
 export type HostRun = { afterPasses: Record<string, ComputedRows>; atEnd: Record<string, ComputedRows> };
 
 /**
- * What a host's own adapters around the grammar's saw of a run (`window.runWrapped`): each call of the wrap functions,
- * each workspace, source and pass the run sent through them, in order, and whether the run went on with the database
- * the host's data adapter handed the grammar's.
+ * What a host's own adapters around the grammar's saw of a run (`window.runWrapped`, `window.runWrappedAgain`): each
+ * call of the wrap functions since the grammar was made, each workspace, source and pass the run sent through them, in
+ * order, whether the run went on with the database the host's data adapter handed the grammar's, and how many databases
+ * the host's data adapter has made over the grammar's runs.
  */
-export type WrappedRun = { wrapped: string[]; steps: string[]; onHostDb: boolean };
+export type WrappedRun = { wrapped: string[]; steps: string[]; onHostDb: boolean; databases: number };
 
 const examples = import.meta.glob<{ spec: UrbanSpec }>('../../gallery/src/examples/*.ts');
 
@@ -104,11 +105,13 @@ declare global {
         featureExtents: (table: string) => Promise<number[][]>;
         dbRows: (query: string) => Promise<Array<Record<string, unknown>>>;
         dbLayer: (table: string, osmElements?: boolean) => Promise<FeatureCollection>;
+        dbBands: (table: string) => Promise<Array<{ id: string; label?: string }>>;
         dbUpdate: (params: Parameters<AutkDb['updateTable']>[0]) => Promise<void>;
         hostDb?: AutkDb;
         runOnHostDb: (spec: UrbanSpec, names: string[]) => Promise<HostRun>;
         hostRows: (query: string) => Promise<Array<Record<string, unknown>>>;
         runWrapped: (spec: UrbanSpec) => Promise<WrappedRun>;
+        runWrappedAgain: (spec: UrbanSpec) => Promise<WrappedRun>;
         handedToLayer: (canvasId: string, dataRef: string, layerId: string) => boolean;
         readMap: (canvasId: string) => Promise<string>;
         mapLayers: (canvasId: string) => LayerState[];
@@ -342,6 +345,12 @@ window.dbRows = async (query: string) => rowsOf(lastDb(), query);
 /** A table as autk-db exports it, not as the grammar's caches hold it; with `osmElements`, one feature per OSM element. */
 window.dbLayer = (table: string, osmElements?: boolean) => lastDb().getLayer(table, osmElements ? { osmElements: true } : undefined);
 
+/** The bands of a raster table of the last run, each band's id and label, as autk-db's `getRaster` gives them. */
+window.dbBands = async (table: string) => {
+    const raster = await lastDb().getRaster(table) as unknown as { features: Array<{ properties?: { bands?: Array<{ id: string; label?: string }> } }> };
+    return raster.features[0]?.properties?.bands ?? [];
+};
+
 /**
  * Runs autk-db's own `updateTable` on the last run's database with the parameters as given, as 5.6.0's data adapter ran
  * it for an update of a table without a geometry, whose `jsonObject` it handed on unchanged.
@@ -386,56 +395,80 @@ window.hostRows = async (query: string) => {
 };
 
 /**
+ * The grammar `runWrapped` made last, with each call of its wrap functions, the steps of its last run, and each database
+ * its host's data adapter made, in order.
+ */
+type WrappedHost = { grammar?: AutkGrammar; wrapped: string[]; steps: string[]; databases: AutkDb[] };
+let wrappedHost: WrappedHost | undefined;
+
+/**
  * Runs a spec as `runSpec` does, on a grammar made with a host's own adapters around its own (`wrapDataAdapter` and
  * `wrapComputeAdapter`): they record each call of the wrap functions and each workspace, source and pass the run sends
  * through them, then hand it to the grammar's adapter. The data adapter hands the grammar's an autk-db database the page
- * makes where it is given none, as a host that keeps the run's database does; the database stays in `window.hostDb`, for
+ * makes where it is given none, as the README's example of a host's adapters does: a new one for each run of the
+ * grammar, at its first call (`runWrappedAgain` runs it again). The last run's database stays in `window.hostDb`, for
  * `hostRows`. A step names its entry by its type and the table it writes.
  */
 window.runWrapped = async (spec: UrbanSpec) => {
-    const seen: WrappedRun = { wrapped: [], steps: [], onHostDb: false };
-    let db: AutkDb | undefined;
+    const host: WrappedHost = { wrapped: [], steps: [], databases: [] };
     const hostDb = async (): Promise<AutkDb> => {
-        if (!db) {
-            db = new AutkDb();
-            await db.init();
-            window.hostDb = db;
-        }
+        const db = new AutkDb();
+        await db.init();
+        host.databases.push(db);
+        window.hostDb = db;
         return db;
     };
     const named = (entry: { type?: string; outputTableName?: string; dataRef?: string }) =>
         `${entry.type ?? 'gpgpu'} ${entry.outputTableName ?? entry.dataRef}`;
     const options: AutkGrammarOptions = {
         wrapDataAdapter: (adapter) => {
-            seen.wrapped.push('data');
+            host.wrapped.push('data');
             return {
                 ...adapter,
                 async resolveWorkspaces(context, workspaces) {
-                    seen.steps.push('workspaces');
+                    host.steps.push('workspaces');
                     return adapter.resolveWorkspaces(context ?? await hostDb(), workspaces);
                 },
                 async resolveSource(context, source) {
-                    seen.steps.push(`source ${named(source as { type?: string; outputTableName?: string; dataRef?: string })}`);
+                    host.steps.push(`source ${named(source as { type?: string; outputTableName?: string; dataRef?: string })}`);
                     return adapter.resolveSource(context ?? await hostDb(), source);
                 },
             };
         },
         wrapComputeAdapter: (adapter) => {
-            seen.wrapped.push('compute');
+            host.wrapped.push('compute');
             return {
                 async resolveCompute(context, pass) {
-                    seen.steps.push(`pass ${named(pass)}`);
+                    host.steps.push(`pass ${named(pass)}`);
                     return adapter.resolveCompute(context, pass);
                 },
             };
         },
     };
-    const grammar = new AutkGrammar(freshStage(spec, 'one'), options);
-    window.grammar = grammar;
-    await grammar.run(spec);
-    seen.onHostDb = db !== undefined && lastDb() === db;
-    return seen;
+    host.grammar = new AutkGrammar(freshStage(spec, 'one'), options);
+    window.grammar = host.grammar;
+    wrappedHost = host;
+    return runOnWrappedHost(spec);
 };
+
+/**
+ * Runs a spec again on the grammar `runWrapped` made, in the elements it made, as a host that keeps one grammar does:
+ * the plot elements are emptied first, as `runAgain` does. Returns what the host's adapters saw of this run.
+ */
+window.runWrappedAgain = async (spec: UrbanSpec) => {
+    if (!wrappedHost?.grammar || window.grammar !== wrappedHost.grammar) throw new Error('No grammar runWrapped made is the page\'s: call runWrapped first.');
+    document.querySelectorAll('#stage [id^="plot"]').forEach((element) => { element.innerHTML = ''; });
+    return runOnWrappedHost(spec);
+};
+
+/** Runs a spec on the grammar `runWrapped` made, and gives what its host's adapters saw of the run. */
+async function runOnWrappedHost(spec: UrbanSpec): Promise<WrappedRun> {
+    const host = wrappedHost!;
+    host.steps.length = 0;
+    await host.grammar!.run(spec);
+    const db = host.databases[host.databases.length - 1];
+    return { wrapped: [...host.wrapped], steps: [...host.steps], onHostDb: db !== undefined && lastDb() === db, databases: host.databases.length };
+}
 
 /**
  * Reads a map canvas as a PNG data URL, in the animation frame that draws the map.
@@ -605,14 +638,19 @@ window.mapUi = (canvasId: string) => {
 };
 
 /**
- * The terrain of the map on #canvasId, or null when it draws none (see `TerrainState`). autk-map 4.1.1 gives no public
- * getter for a terrain's heightfield, so this reads the one its terrain render path keeps (`_terrainRenderPath`).
+ * The terrain of the map on #canvasId, or null when it draws none (see `TerrainState`). autk-map gives no public
+ * getter for a terrain's heightfield, so this reads the one its terrain render path keeps (`_terrainRenderPath`): its
+ * `heightfield` in 4.1.1, and on Autark's main the `heightfield` of its `heightSource`, which a raster's heights become.
  */
 window.terrain = (canvasId: string) => {
     const map = mapOn(canvasId);
-    const path = (map as unknown as { _terrainRenderPath?: { heightfield?: Omit<TerrainState, 'band' | 'bandMin' | 'bandMax'> } | null })._terrainRenderPath;
+    type Heightfield = Omit<TerrainState, 'band' | 'bandMin' | 'bandMax'>;
+    const path = (map as unknown as {
+        _terrainRenderPath?: { heightfield?: Heightfield; heightSource?: { heightfield?: Heightfield } } | null;
+    })._terrainRenderPath;
+    const heightfield = path?.heightfield ?? path?.heightSource?.heightfield;
     const handedTerrain = terrains.get(map);
-    if (!path?.heightfield || !handedTerrain) return null;
+    if (!heightfield || !handedTerrain) return null;
     const values = (handedTerrain.collection.features[0]?.properties as Record<string, ArrayLike<number>> | null)?.[handedTerrain.property] ?? [];
     let bandMin = Infinity;
     let bandMax = -Infinity;
@@ -621,7 +659,7 @@ window.terrain = (canvasId: string) => {
         bandMin = Math.min(bandMin, values[i]);
         bandMax = Math.max(bandMax, values[i]);
     }
-    const { width, height, minHeight, maxHeight, bounds } = path.heightfield;
+    const { width, height, minHeight, maxHeight, bounds } = heightfield;
     return { band: handedTerrain.property, bandMin, bandMax, width, height, minHeight, maxHeight, bounds: [...bounds] };
 };
 

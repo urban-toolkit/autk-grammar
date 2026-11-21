@@ -6,7 +6,7 @@ import { DataSourceType, LayerType, ColorMapInterpolator, PlotEvent, PlotTransfo
  * Name of a workspace: an isolated set of tables with its own extent. The first source loaded into a workspace sets its
  * extent and later sources are cut to it, so two areas that must not clip each other go in two workspaces. A table is
  * found by its name inside its workspace, so two workspaces may hold tables of the same name. Entries without a
- * workspace use the default one. Read by the Autark adapter only.
+ * workspace use the default one, which autk-db names `'autk'`. Read by the Autark adapter only.
  * @minLength 1
  */
 export type WorkspaceName = string;
@@ -36,8 +36,8 @@ export type WorkspaceSpec = {
 /**
  * When a source runs: `'compute'` runs it once every compute pass has run, instead of before them, so it reads the
  * tables passes kept in autk-db with `writeBack`. The sources with it run in the order of `data`, after those without
- * it. A run refuses a source after compute that reads a table a compute pass writes without `writeBack`, since autk-db
- * holds that table without the pass's result. Read by the Autark adapter only.
+ * it. A run refuses a source after compute that reads a table whose last compute pass writes it without `writeBack`,
+ * since autk-db then holds that table without that pass's result. Read by the Autark adapter only.
  */
 export type SourcePhase = 'compute';
 
@@ -1104,7 +1104,9 @@ type ComputeOutput = {
      * Also keep the result in autk-db, in the pass's workspace: as the table `outputTableName`, else in place of the
      * `dataRef` table. autk-db keeps every row, each coordinate on the workspace's precision grid, so the sources that
      * run after compute (`after: 'compute'`), such as a join, a heatmap, a `sql` source or an update, read the result
-     * there. Later passes, maps and plots read the result as they do without it. Read by the Autark adapter only.
+     * there. In place, a table that keeps its values in columns of their own, such as a CSV or JSON layer, is written
+     * whole, each row's values in its `properties`. Later passes, maps and plots read the result as they do without it.
+     * Read by the Autark adapter only.
      */
     writeBack?: boolean,
 }

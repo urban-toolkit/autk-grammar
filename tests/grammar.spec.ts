@@ -1990,6 +1990,41 @@ test('writes a pass back in place into an OSM table, which keeps its buildings, 
     expect(await exported(true)).toEqual(written);
 });
 
+test("writes a pass back in place into a CSV or JSON layer and a sql source's table, whose columns are plain, with or without a feature id", async ({ page }) => {
+    // Three readings: p and q at one point, so in one cluster, and r apart.
+    const readings = [['p', 1, 40.751, -73.985], ['q', 2, 40.751, -73.985], ['r', 3, 40.753, -73.983]];
+    const layers: Array<[table: string, sources: DataSourceSpec[], rows: string[]]> = [
+        // A CSV layer: its rows have no feature id.
+        ['readings', [{ type: 'csv', outputTableName: 'readings', csvObject: [['name', 'v', 'Latitude', 'Longitude'], ...readings], geometryColumns: true }],
+            ['p 1 0', 'q 2 0', 'r 3 1']],
+        // A JSON layer with an id column, which autk-db's export gives each row as its feature id.
+        ['stations', [{
+            type: 'json', outputTableName: 'stations', geometryColumns: true,
+            jsonObject: readings.map(([name, v, Latitude, Longitude], i) => ({ id: i + 1, name, v, Latitude, Longitude })),
+        }], ['p 1 0', 'q 2 0', 'r 3 1']],
+        // A sql source's table of plain columns, autk-db's row id among them.
+        ['plain', [fourSquares, { type: 'sql', outputTableName: 'plain', query: "SELECT id, properties->>'name' AS name, geometry FROM squares", layerType: 'polygons' }],
+            ['a 0', 'b 0', 'c 1', 'd 1']],
+    ];
+    /** Each row of `table` as its name, its value and its cluster, in the grammar's cache and in autk-db's export of it. */
+    const written = (table: string) => page.evaluate(async (name) => {
+        const [cached, kept] = [await window.grammar.data[name], await window.dbLayer(name)].map((collection) => collection.features
+            .map((feature) => [feature.properties?.name, feature.properties?.v, feature.properties?.compute?.cluster].filter((value) => value !== undefined).join(' '))
+            .sort());
+        return { cached, kept };
+    }, table);
+
+    // autk-db holds the pass's cluster on every row of each table, as the cache does; a refused write-back gives its reason.
+    const outcomes: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const [table, sources, rows] of layers) {
+        expected[table] = { cached: rows, kept: rows };
+        outcomes[table] = await runSpec(page, { data: [area, ...sources], compute: [{ type: 'clusters', dataRef: table, outputColumnName: 'cluster', writeBack: true }] })
+            .then(() => written(table), (error: Error) => error.message.split('\n')[0]);
+    }
+    expect(outcomes).toEqual(expected);
+});
+
 test('draws and plots the OSM elements of a table a pass changed in place with osmElements, as autk-db holds them', async ({ page }) => {
     // A pass in place keeps its result in the grammar's cache, which maps and plots read first, and leaves autk-db's
     // records of the table's elements as they were. osmElements read the pass's rows: a plot of the elements refused
@@ -2089,6 +2124,24 @@ test("joins after compute into a table a pass wrote back, and from one by a comp
     expect(zoneClusters.sort()).toEqual([[0, 0], [1, 1], [2, null], [3, null]]);
     const zoneLayer = (await mapLayers(page, 'map1')).find((layer) => layer.id === 'zones');
     expect([zoneLayer?.isColorMap, zoneLayer?.domain]).toEqual([true, [0, 1]]);
+});
+
+test("joins after compute by the column of an earlier pass without writeBack, which a later pass in place keeps in autk-db with it", async ({ page }) => {
+    // The second pass reads the first's result from the grammar's cache, and its write-back sets each zone's properties
+    // whole, so autk-db holds both passes' columns.
+    await runSpec(page, {
+        data: [area, zones, { type: 'join', dataRef: 'area', joinDataRef: 'zones', groupBy: [{ column: 'compute.twice', aggregateFn: 'sum' }], after: 'compute' }],
+        compute: [
+            { dataRef: 'zones', attributes: { v: 'v' }, outputColumnName: 'twice', wgslFunction: 'return v * 2.0;' },
+            { type: 'clusters', dataRef: 'zones', outputColumnName: 'block', writeBack: true },
+        ],
+    });
+    const kept = await page.evaluate(async () => (await window.dbLayer('zones')).features
+        .map((feature) => [feature.properties?.id, feature.properties?.compute?.twice, feature.properties?.compute?.block])
+        .sort((a, b) => a[0] - b[0]));
+    expect(kept).toEqual([[0, 0, 0], [1, 20, 1], [2, 40, 2], [3, 60, 3]]);
+    // The join summed the first pass's column over the four zones: 0 + 20 + 40 + 60.
+    expect(await page.evaluate(async () => (await window.dbLayer('area')).features[0]?.properties?.sjoin?.sum?.['zones.compute.twice'])).toBe(120);
 });
 
 test('builds a heatmap after compute from the windows a pass wrote back', async ({ page }) => {
@@ -2238,9 +2291,63 @@ test("runs passes written back and sources after compute on a database the host 
     ranWidths.forEach((width, i) => expect(width as number).toBeCloseTo(widths[i] as number, 3));
 });
 
+// A pass writes back a new table `scored`, which the host's database may already hold. window.runOnHostDb runs the steps
+// on a database the page makes, which window.hostRows reads, after a refusal too.
+
+/** Three readings with the ids `ids`, which autk-db's export gives each row as its feature id, valued 1, 2 and 3. */
+function readingsWithIds(ids: [number, number, number]): DataSourceSpec {
+    return {
+        type: 'csv', outputTableName: 'readings', geometryColumns: true,
+        csvObject: [['id', 'v', 'Latitude', 'Longitude'], [ids[0], 1, 40.751, -73.985], [ids[1], 2, 40.752, -73.984], [ids[2], 3, 40.753, -73.983]],
+    };
+}
+
+/** A table of the name the pass writes, which the host's database already holds: two points. */
+const hostScored: DataSourceSpec = {
+    type: 'csv', outputTableName: 'scored', geometryColumns: true,
+    csvObject: [['name', 'Latitude', 'Longitude'], ['first', 40.754, -73.982], ['second', 40.755, -73.981]],
+};
+
+const scoredPass: ComputeSpec = { type: 'clusters', dataRef: 'readings', outputColumnName: 'cluster', outputTableName: 'scored', writeBack: true };
+
+/** The tables of the host's database whose names hold `scored`: the table itself, and any table aside. */
+function scoredTables(page: Page): Promise<Array<Record<string, unknown>>> {
+    return page.evaluate(() => window.hostRows("SELECT table_name AS name FROM information_schema.tables WHERE table_name LIKE '%scored%' ORDER BY name"));
+}
+
+test("leaves the host's table as it was, and no empty table, when autk-db refuses the rows a pass writes back as a new table", async ({ page }) => {
+    // Readings whose id column repeats: autk-db keeps no two rows of a layer with one feature id.
+    const readings = readingsWithIds([3, 3, 4]);
+    /** Runs a spec's steps on a database the page makes, and gives the refusal of the step that failed. */
+    const refusal = (spec: UrbanSpec) => page.evaluate((s) => window.runOnHostDb(s, []), spec).then(() => 'no refusal', (error: Error) => error.message);
+    const refused = /Clusters pass over "readings": autk-db could not keep "scored": Duplicate GeoJSON feature ID: "?3"?/;
+
+    // Without a table of that name, the refusal leaves none: neither an empty one nor any other.
+    const alone = await refusal({ data: [area, readings], compute: [scoredPass] });
+    expect(await scoredTables(page)).toEqual([]);
+    expect(alone).toMatch(refused);
+
+    // With one, the refusal leaves it as it was.
+    const over = await refusal({ data: [area, hostScored, readings], compute: [scoredPass] });
+    expect(await page.evaluate(() => window.hostRows('SELECT count(*) AS n FROM scored'))).toEqual([{ n: 2 }]);
+    expect(await scoredTables(page)).toEqual([{ name: 'scored' }]);
+    expect(over).toMatch(refused);
+    expect(await page.evaluate(() => window.hostRows('SELECT name FROM scored ORDER BY name'))).toEqual([{ name: 'first' }, { name: 'second' }]);
+});
+
+test("puts the rows a pass writes back as a new table in place of the host's table of that name, and leaves no table aside", async ({ page }) => {
+    await page.evaluate((spec) => window.runOnHostDb(spec, []), { data: [area, hostScored, readingsWithIds([3, 4, 5])], compute: [scoredPass] } as UrbanSpec);
+    expect(await scoredTables(page)).toEqual([{ name: 'scored' }]);
+    // The pass's three readings, each at a point of its own, so in a cluster of its own; the host's two rows are gone.
+    expect(await page.evaluate(() => window.hostRows(
+        "SELECT CAST(properties->>'v' AS INTEGER) AS v, CAST(properties->'compute'->>'cluster' AS INTEGER) AS cluster FROM scored ORDER BY v")))
+        .toEqual([{ v: 1, cluster: 0 }, { v: 2, cluster: 1 }, { v: 3, cluster: 2 }]);
+});
+
 // A host made AutkGrammar with adapters of its own around the grammar's (wrapDataAdapter and wrapComputeAdapter), which
 // every run calls instead. window.runWrapped makes them: they record what goes through them and hand it on, the data
-// adapter handing the grammar's a database the page made.
+// adapter handing the grammar's a database the page made, as the README's example does. window.runWrappedAgain runs
+// that grammar again.
 
 test("sends a run's workspaces, every source and every pass through a host's own adapters around the grammar's, on the host's database", async ({ page }) => {
     const spec: UrbanSpec = {
@@ -2286,6 +2393,44 @@ test("sends a run's workspaces, every source and every pass through a host's own
     const unwrapped = await page.evaluate(() => window.drawnRows('map0', 'squares').map((row) =>
         `${row?.name} ${(row?.compute as { cluster?: number } | undefined)?.cluster} ${(row?.sjoin as { count?: { pins?: number } } | undefined)?.count?.pins}`));
     expect(unwrapped.sort()).toEqual(drawn);
+});
+
+test("runs the README's after example twice on one grammar, each run on a database of the host's own that wrapDataAdapter hands it", async ({ page }) => {
+    // The README's example of a source after compute: an OpenStreetMap area, a clusters pass written back, and a sql
+    // source that counts the buildings of each block the pass kept in autk-db, plotted.
+    const spec: UrbanSpec = {
+        data: [
+            { type: 'osm', outputTableName: 'fidi', pbfFileUrl: '/data/lower_mnt.osm.pbf', queryArea: { bbox: [-74.0132, 40.7032, -74.0072, 40.7088] }, autoLoadLayers: { layers: ['buildings'] } },
+            {
+                type: 'sql',
+                outputTableName: 'largest_blocks',
+                query: "SELECT CAST(properties->'compute'->>'block' AS INTEGER) AS block, CAST(count(*) AS INTEGER) AS buildings FROM fidi_blocks GROUP BY block ORDER BY buildings DESC, block LIMIT 10",
+                after: 'compute',
+            },
+        ],
+        compute: [{ type: 'clusters', dataRef: 'fidi_buildings', outputColumnName: 'block', outputTableName: 'fidi_blocks', writeBack: true }],
+        plot: { dataRef: 'largest_blocks', mark: 'bar', axis: ['block', 'buildings'], tickFormats: [',~f', ',~f'] },
+    };
+    const largest = 'SELECT block, buildings FROM largest_blocks ORDER BY buildings DESC, block';
+    const bars = () => page.evaluate(() => document.querySelectorAll('#plot rect.autkMark').length);
+
+    const first = await page.evaluate((s) => window.runWrapped(s), spec);
+    expect([first.onHostDb, first.databases]).toEqual([true, 1]);
+    const blocks = await page.evaluate((query) => window.hostRows(query), largest);
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(await bars()).toBe(blocks.length);
+
+    // The same grammar runs the spec again, as a host that keeps one grammar does. autk-db keeps a database's tables, its
+    // workspace's extent and crop, and its grid: it refuses an OpenStreetMap source once the workspace holds another
+    // table, such as the blocks the first run's pass wrote back.
+    const second = await page.evaluate((s) => window.runWrappedAgain(s), spec);
+    // The wrap functions were called once, as the grammar was made, and the run went through them as the first did.
+    expect([...second.wrapped].sort()).toEqual(['compute', 'data']);
+    expect(second.steps).toEqual(first.steps);
+    // The run went on a database of its own, the second the host made, which holds this run's tables: the same blocks.
+    expect([second.onHostDb, second.databases]).toEqual([true, 2]);
+    expect(await page.evaluate((query) => window.hostRows(query), largest)).toEqual(blocks);
+    expect(await bars()).toBe(blocks.length);
 });
 
 // What a run handed each view, which a host reads with the collection of each layer mapLayers gives and with
@@ -2404,20 +2549,32 @@ test('accepts useCentroid on a heatmap', async ({ page }) => {
     expect((await heatmapLayer(page)).finite).toEqual(byDefault.finite);
 });
 
-test('builds a heatmap band with normalize, which autk-db 4.1.1 draws from the raw counts', async ({ page }) => {
-    // This test encodes autk-db 4.1.1. urban-toolkit/autark#132 rescales a normalized band from 0 to 1 and adds _norm to
-    // its label; once an autk-db with it is released, the `latest` leg fails here, and the test moves to those values.
+test('builds a heatmap band with normalize: from the raw counts on autk-db 4.1.1, rescaled from 0 to 1 with autark#132', async ({ page }) => {
+    // autk-db 4.1.1 builds a normalized band from the values as they are, under the label it has without normalize.
+    // urban-toolkit/autark#132, on Autark's main, rescales it from 0 to 1 across the cells and adds _norm to its label.
+    // The label tells which of the two built the band, since autark's main still calls itself 4.1.1: the `locked` leg
+    // checks 4.1.1's band, and a run on an autk-db with #132 checks the rescaled one.
     const [neighborhoods, noise, source] = heatmapGeojson.data!;
     const heatmap = source as HeatmapSourceSpec;
     await runSpec(page, heatmapGeojson);
     const raw = (await heatmapLayer(page)).finite;
+    expect(Math.max(...raw), 'the busiest cell counts many complaints').toBeGreaterThan(1);
     await runSpec(page, {
         ...heatmapGeojson,
         data: [neighborhoods, noise, { ...heatmap, groupBy: heatmap.groupBy!.map((group) => ({ ...group, normalize: true })) }],
     });
     const normalized = (await heatmapLayer(page)).finite;
-    expect(Math.max(...raw), 'the busiest cell counts many complaints').toBeGreaterThan(1);
-    expect(normalized).toEqual(raw);
+    const bands = await page.evaluate(() => window.dbBands('heatmap'));
+    expect(bands.map((band) => band.id)).toEqual(['band_1']);
+    if (bands[0].label === 'count_noise') {
+        expect(normalized).toEqual(raw);
+    } else {
+        expect(bands[0].label).toBe('count_noise_norm');
+        const low = Math.min(...raw);
+        const high = Math.max(...raw);
+        expect(normalized).toHaveLength(raw.length);
+        normalized.forEach((value, cell) => expect(value, `cell ${cell}`).toBeCloseTo((raw[cell] - low) / (high - low), 5));
+    }
 });
 
 test('saves the rows of a sql source as a table, drawn as its layerType says, or plotted without one', async ({ page }) => {

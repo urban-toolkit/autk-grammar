@@ -3,6 +3,7 @@
 // refuses. Run with
 //   npm run test:unit
 import assert from 'node:assert/strict';
+import { DEFAULT_WORKSPACE_NAME } from '@urban-toolkit/autk-db';
 import type { ComputeSpec, DataSourceSpec, UrbanSpec } from '../../grammar/src/types.ts';
 import { dataPhases } from '../../grammar/src/phases.ts';
 import { createEngine } from '../../grammar/src/main.ts';
@@ -61,6 +62,31 @@ test('takes a source after compute that reads what passes kept in autk-db, or a 
     takes({ data: [{ type: 'sql', outputTableName: 's', query: 'SELECT * FROM blocks', ...after } as DataSourceSpec], compute: [clusters('blocks')] });
     // A source before compute reads the table as it was loaded, as before.
     takes({ data: [csv('blocks'), join('blocks', 'pins')], compute: [clusters('blocks')] });
+});
+
+test("takes a source after compute that reads a table whose last pass writes it with writeBack, which keeps the earlier passes' columns", () => {
+    // Passes chain through the grammar's cache, and a write-back in place sets each row's properties whole, so the last
+    // pass that writes a table decides what autk-db holds.
+    const takes = (spec: UrbanSpec) => assert.deepEqual(dataPhases(spec).after, (spec.data ?? []).filter((source) => (source as { after?: string }).after));
+    // A GPGPU pass in place without writeBack, then a clusters pass in place with it, which reads the first's result: a
+    // join after compute reads the first's column in autk-db.
+    const shade = { dataRef: 'fidi_buildings', attributes: { h: 'height' }, outputColumnName: 'shade', wgslFunction: 'return h;' } as ComputeSpec;
+    takes({
+        data: [join('zones', 'fidi_buildings', { groupBy: [{ column: 'compute.shade', aggregateFn: 'avg' }], ...after })],
+        compute: [shade, clusters('fidi_buildings', { outputColumnName: 'block', writeBack: true })],
+    });
+    // A new table a pass wrote without writeBack, then a pass in place over it with writeBack.
+    takes({ data: [join('blocks', 'w', after)], compute: [windows('buildings', 'w'), clusters('w', { writeBack: true })] });
+});
+
+test("reads the default workspace by autk-db's name for it as the one an entry without a workspace is in, as a run does", () => {
+    const refused = (spec: UrbanSpec) => assert.throws(() => dataPhases(spec), {
+        message: 'Data source 1 (join) runs after compute and reads "squares", which compute pass 0 writes without writeBack, so autk-db holds "squares" without that pass\'s result. Set writeBack: true on the pass.',
+    });
+    // The pass names the default workspace, and the join after compute names none.
+    refused({ data: [csv('squares'), join('squares', 'pins', after)], compute: [clusters('squares', { workspace: DEFAULT_WORKSPACE_NAME })] });
+    // The join names it, and the pass names none.
+    refused({ data: [csv('squares'), join('squares', 'pins', { ...after, workspace: DEFAULT_WORKSPACE_NAME })], compute: [clusters('squares')] });
 });
 
 test('the engine runs the sources before compute, then the passes, then the sources after compute, then maps and plots', async () => {
