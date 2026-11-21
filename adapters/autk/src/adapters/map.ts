@@ -260,6 +260,27 @@ function drawnType(layerRef: MapLayerSpec, tableType: LayerType | undefined, lay
     throw new Error(`Layer "${layerId}": layerType "${wanted}" cannot draw the table "${layerRef.dataRef}", a ${tableType} table: ${kind.drawn}.`);
 }
 
+/**
+ * Why autk-map made no layer of the `count` features it was handed for a layer: autk-map logs such a layer and goes on
+ * without it, so a run that went on would name a layer the map lacks, whose links and picks do nothing. autk-core 4.1.1
+ * raises a building part only from `height`, `building:height`, `levels` or `building:levels`, to a height above the
+ * part's minimum (`TriangulatorBuildings.computeBuildingHeights`), and autk-map makes no buildings layer of features it
+ * raises no part of.
+ */
+function layerNotMade(layerRef: MapLayerSpec, layerId: string, type: LayerType | undefined, count: number): string {
+    const features = `${count} feature${count === 1 ? '' : 's'}`;
+    if (type === 'buildings') {
+        const remedy = layerRef.buildingsZeroHeight === true
+            ? 'Each part has one of them, with a height not above its minimum.'
+            : 'Give the features one of those keys, or set buildingsZeroHeight: true to raise each part without them to a random height.';
+        return `Layer "${layerId}": autk-map drew no building of the ${features} of the table "${layerRef.dataRef}", so the map has no layer of them: `
+            + `autk-core raises a building part only from height, building:height, levels or building:levels, to a height above the part's minimum. ${remedy}`;
+    }
+    if (type === 'raster')
+        return `Layer "${layerId}": autk-map drew nothing of the raster table "${layerRef.dataRef}", so the map has no layer of it.`;
+    return `Layer "${layerId}": autk-map drew none of the ${features} of the table "${layerRef.dataRef}"${type ? ` as ${type}` : ''}, so the map has no layer of them.`;
+}
+
 /** Refuses a list of feature positions that is not whole numbers from 0, as `key` of a layer. */
 function checkPositions(positions: unknown, key: string, layerId: string): void {
     if (!Array.isArray(positions) || !positions.every((position) => Number.isInteger(position) && position >= 0))
@@ -479,6 +500,10 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 const zeroHeight = type === 'buildings' && layerRef.buildingsZeroHeight === true;
                 map.loadCollection(layerId, { collection: data, type, ...(zeroHeight ? { loadConfig: { buildingsZeroHeight: true } } : {}) });
             }
+            // A table with no feature to draw makes no layer, and is not refused.
+            const handed = data.features?.length ?? 0;
+            if(!map.layerManager.searchByLayerId(layerId) && handed > 0)
+                throw new Error(layerNotMade(layerRef, layerId, type, handed));
 
             if(layerRef.opacity != null)
                 map.updateRenderInfo(layerId, { opacity: layerRef.opacity });
