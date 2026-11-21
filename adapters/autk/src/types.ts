@@ -59,6 +59,12 @@ export interface GrammarMapLayer {
     map: AutkMap;
     /** The layer's id in that map: its `title`, else its `dataRef`. */
     layerId: string;
+    /**
+     * What the run handed autk-map for the layer: the features of its table that have a geometry, in the table's order,
+     * as the run read them (a pass's result, an OpenStreetMap table's elements, or autk-db's export); for a raster, its
+     * one feature. It is the collection itself, not a copy: read it, and change nothing in it.
+     */
+    readonly collection: FeatureCollection;
 }
 export type GeoJsonCache = Map<string, FeatureCollection>;
 export type ComputeCache = Map<string, FeatureCollection>;

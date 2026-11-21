@@ -18,6 +18,8 @@ export interface DrawnLayer {
     dataRef: string;
     /** The key of the row the layer draws at each of its positions (see `rowKeys`); empty for a raster. */
     rows: readonly string[];
+    /** The collection the map adapter handed autk-map for the layer: the table's features with a geometry, or a raster's one. */
+    collection: FeatureCollection;
 }
 
 /** Every layer the maps of the last run draw, one entry per layer of each map: the maps in order, layers bottom first. */
@@ -28,6 +30,9 @@ export type PlotLinks = Map<string, DrawnLayer[]>;
 
 /** The key of the row each plot draws at each of its positions (see `rowKeys`), keyed by the plot's `id`, else its `dataRef`. */
 export type PlotRows = Map<string, readonly string[]>;
+
+/** The collection the plot adapter handed autk-plot for each plot, keyed by the plot's `id`, else its `dataRef`. */
+export type PlotCollections = Map<string, FeatureCollection>;
 
 /** The export of each table a map or a plot of the last run read, by its `tableKey`. */
 export type LayerExports = Map<string, Promise<FeatureCollection>>;

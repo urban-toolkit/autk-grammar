@@ -2,7 +2,7 @@ import { PlotAdapter, PlotSpec, PlotMark } from '@urban-toolkit/the-urban-gramma
 import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, PlotRegistry, GeoJsonCache, ComputeCache } from '../types';
 import { addPlotLink, exportKey, exportOf, exportOptions, osmElementsOf } from '../drawn';
-import type { DrawnLayer, DrawnLayers, LayerExports, PlotLinks, PlotRows } from '../drawn';
+import type { DrawnLayer, DrawnLayers, LayerExports, PlotCollections, PlotLinks, PlotRows } from '../drawn';
 import { rowKeys, translateIds } from '../rows';
 import { checkPlotSelection, plotKey, plotOptions } from '../plot-options';
 import type { PlotColors } from '../plot-options';
@@ -83,11 +83,11 @@ async function tableRows(db: AutkDb, name: string, key: string, exports?: LayerE
 }
 
 /**
- * The plot adapter `AutkGrammar` runs. Each plot it draws goes in `plotRegistry`, and the keys of the rows it draws in
- * `plotRows`, by the plot's `id`, else its `dataRef`. A table it reads from autk-db is the export the maps of the run
- * draw, from `exports`.
+ * The plot adapter `AutkGrammar` runs. Each plot it draws goes in `plotRegistry`, the keys of the rows it draws in
+ * `plotRows`, and the collection it handed autk-plot in `plotCollections`, by the plot's `id`, else its `dataRef`. A table
+ * it reads from autk-db is the export the maps of the run draw, from `exports`.
  */
-export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotRegistry?: PlotRegistry, plotLinks?: PlotLinks, cache?: GeoJsonCache, computeCache?: ComputeCache, plotRows?: PlotRows, exports?: LayerExports): PlotAdapter {
+export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotRegistry?: PlotRegistry, plotLinks?: PlotLinks, cache?: GeoJsonCache, computeCache?: ComputeCache, plotRows?: PlotRows, exports?: LayerExports, plotCollections?: PlotCollections): PlotAdapter {
 
     return {
         async resolvePlot(context: unknown, spec: PlotSpec, index: number = 0): Promise<void> {
@@ -132,6 +132,7 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
                 plot.setSelection([]);
 
             plotRegistry?.set(plotKey(spec), plot);
+            plotCollections?.set(plotKey(spec), geojson);
             // autk-plot names a row by its position in the collection it draws.
             const rows = rowKeys(geojson.features ?? []);
             plotRows?.set(plotKey(spec), rows);
