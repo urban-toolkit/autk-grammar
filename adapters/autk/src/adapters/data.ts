@@ -133,10 +133,13 @@ async function updateByFeatureId(db: AutkDb, table: Table, rows: FeatureCollecti
  * 4.1.1 stages the given rows with DuckDB's `read_json_auto`, whose columns follow a row's keys in the order they come,
  * then inserts them with `INSERT INTO <table> SELECT * FROM <staging>`, by position: a row given as `{ count, zone }` to
  * a table of (zone, count) wrote its count in zone. autk-db writes each given row as a whole row of the table, so a row
- * that lacks a column of the table, or has one the table does not have, is refused, by that key.
+ * that lacks a column of the table, or has one the table does not have, is refused, by that key. autk-db lists every
+ * column of a table it holds, so the rows of a table listed without any, as a host's stand-in database may list it, go
+ * as they are given.
  */
 function inColumnOrder(rows: Array<Record<string, unknown>>, table: Table): Array<Record<string, unknown>> {
     const columns = table.columns.map((column) => column.name);
+    if (columns.length === 0) return rows;
     const listed = columns.map((column) => `"${column}"`).join(', ');
     return rows.map((row, index) => {
         const keys = Object.keys(row ?? {});
@@ -151,12 +154,14 @@ function inColumnOrder(rows: Array<Record<string, unknown>>, table: Table): Arra
 }
 
 /**
- * Whether a table keeps its rows' values in a `properties` column, as a GeoJSON or an OSM layer does. autk-db's update of
- * a layer sets that column on each row it matches, so it cannot change a layer of plain columns, which keeps each value
- * in a column of its own: a CSV or JSON layer, or a `sql` source's table of plain columns drawn as a layer.
+ * Whether a table keeps each value in a column of its own, without the `properties` column a GeoJSON or an OSM layer
+ * keeps its rows' values in. autk-db's update of a layer sets that column on each row it matches, so it cannot change a
+ * layer of plain columns: a CSV or JSON layer, or a `sql` source's table of plain columns drawn as a layer. autk-db lists
+ * every column of a table it holds, so a table listed without any, as a host's stand-in database may list it, is not
+ * taken for one.
  */
-function hasPropertiesColumn(table: Table): boolean {
-    return table.columns.some((column) => column.name === 'properties');
+function keepsPlainColumns(table: Table): boolean {
+    return table.columns.length > 0 && !table.columns.some((column) => column.name === 'properties');
 }
 
 /** The database a source loads into: `context`, else a new one. */
@@ -462,9 +467,9 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache, compu
                     let idColumn = update.idColumn;
                     try {
                         const table = db.getTablesMetadata().find((candidate) => candidate.name === update.dataRef);
-                        // autk-db cannot update a layer of plain columns (see hasPropertiesColumn): on 4.1.1 such an update
+                        // autk-db cannot update a layer of plain columns (see keepsPlainColumns): on 4.1.1 such an update
                         // failed for want of a feature id or of a column, or on rows that were not a FeatureCollection.
-                        if (update.strategy === 'update' && table && isVectorTable(table) && !hasPropertiesColumn(table))
+                        if (update.strategy === 'update' && table && isVectorTable(table) && keepsPlainColumns(table))
                             throw new Error("on a layer, the update strategy sets the properties column of each row it matches, and this layer has none: it keeps its values in plain columns, as a CSV or JSON layer or a sql source's table of plain columns does. Use strategy 'replace', with every row in geojsonObject.");
                         // autk-db inserts the given rows of a table without a geometry by position, so each comes in the
                         // table's column order. replace makes the table of the given rows, by their keys' names.

@@ -352,6 +352,18 @@ test('refuses the update strategy on a layer of plain columns, before autk-db ru
     ]);
 });
 
+// autk-db lists every column of a table it holds. A host's stand-in database may list none, and then the adapter cannot
+// tell a table's columns: its rows go to autk-db as they are given, and the update strategy is not refused.
+test('hands autk-db the update of a table listed without columns as it is given, neither ordered nor refused', async () => {
+    const jsonObject = [{ total: 9, month: 'Feb' }];
+    const [[, plain]] = await callsFor({ type: 'update', dataRef: 'sales', strategy: 'update', idColumn: 'month', jsonObject }, [{ name: 'sales' }]) as Array<[string, { data: unknown }]>;
+    assert.equal(plain.data, jsonObject);
+    const geojsonObject = { type: 'FeatureCollection', features: [{ type: 'Feature', id: 3, geometry: { type: 'Point', coordinates: [0, 0] }, properties: { v: 1 } }] };
+    assert.deepEqual(await callsFor({ type: 'update', dataRef: 'spots', strategy: 'update', idColumn: 'id', geojsonObject }, [{ name: 'spots', type: 'points' }]), [
+        ['updateTable', { tableName: 'spots', data: geojsonObject, strategy: 'update', idColumn: 'id' }],
+    ]);
+});
+
 // drop sources: a table dropped.
 test('a drop source removes its table from autk-db, and from the cache the plots read first', async () => {
     const cache = new Map([['blocks', emptyCollection()], ['west/blocks', emptyCollection()]]);
