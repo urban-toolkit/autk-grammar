@@ -296,9 +296,10 @@ function queueStep(motion: CameraMotion, step: CameraMotionStep): void {
  * Plays `motion`, a camera tour, on `map` through autk-core's `CameraMotion`, from the view its camera has now, and
  * returns the tour without waiting for it. Each step takes its own `seconds`, easing in and out, and sets the camera at
  * every animation frame, so the map draws each one. The tour stops when the user drags, scrolls or presses a key on the
- * map, which hands the camera to the map's own pan, tilt and zoom, and when another tour is played on the map. It
- * refuses a tour `motionRefusal` refuses from the map's view. On a map whose terrain the grammar raised, each step turns
- * the view around the ground its line of sight meets as the step starts.
+ * map, which hands the camera to the map's own pan, tilt and zoom, and when another tour is played on the map. A stopped
+ * tour lets go of the map at once and asks for no more frames. It refuses a tour `motionRefusal` refuses from the map's
+ * view. On a map whose terrain the grammar raised, each step turns the view around the ground its line of sight meets as
+ * the step starts.
  *
  * The map adapter calls it once a map is drawn, when its `camera` has a `motion`. A host that frames a map itself and
  * then turns it with `applyCamera` calls it after that turn, so the tour starts from the host's view.
@@ -310,47 +311,68 @@ export function playCameraMotion(map: AutkMap, motion: CameraMotionStep[]): Came
     if (refused) throw new Error(refused);
 
     tours.get(map)?.stop();
-    let stopped = false;
     let settle = (): void => {};
     const stopping = new Promise<void>((resolve) => {
         settle = resolve;
     });
-    let unlisten = (): void => {};
-    const stop = (): void => {
-        stopped = true;
-        unlisten();
-        settle();
-    };
-    unlisten = onUserInput((map as { canvas?: HTMLCanvasElement }).canvas, stop);
     // CameraMotion turns the view around the point where its line of sight meets z = 0, which on a terrain the grammar
     // raised lies under the ground. So as each step starts, it reads the view of a world lowered by the height of the
     // ground the line of sight meets (`lift`), and the views it sets are raised back by as much: the step turns the view
     // around that ground.
-    const ground = grounds.get(map);
+    let ground = grounds.get(map);
     let lift = 0;
-    // CameraMotion cannot be stopped, so it turns a stand-in of the map's camera, which stops passing its turns on once
-    // the tour is stopped: the steps it has left run to their end turning nothing.
-    const standIn = new Proxy(map.camera, {
-        get(target, key) {
-            if (stopped && (key === 'resetCamera' || key === 'update')) return () => {};
-            if (ground && key === 'getModelViewMatrix') {
+    // CameraMotion cannot be stopped, so it turns a stand-in of the map's camera, which reaches the camera only while the
+    // tour plays (`view`): a stopped tour lets go of the camera, and of the map with it, at once.
+    let view: Camera | undefined = map.camera;
+    const steps = new CameraMotion();
+    for (const step of motion) queueStep(steps, step);
+    // autk-core 4.1.1's CameraMotion asks for another frame at each frame of a step while the step's progress, its time so
+    // far over its `durationMs`, which it reads at each frame, is below 1. A stopped tour gives each step a `durationMs` of
+    // NaN, so the frame the playing step already asked for ends it, and the next step, which finds no camera as it starts,
+    // ends the tour: a stopped tour asks for no more frames.
+    const queued = (steps as unknown as { steps?: unknown }).steps;
+    let unlisten = (): void => {};
+    const letGo = (): void => {
+        view = undefined;
+        ground = undefined;
+        unlisten();
+        unlisten = () => {};
+    };
+    const stop = (): void => {
+        letGo();
+        if (Array.isArray(queued)) {
+            for (const step of queued) {
+                if (step !== null && typeof step === 'object') (step as { durationMs?: number }).durationMs = NaN;
+            }
+        }
+        settle();
+    };
+    unlisten = onUserInput((map as { canvas?: HTMLCanvasElement }).canvas, stop);
+    const standIn = new Proxy({} as Camera, {
+        get(_, key) {
+            const camera = view;
+            if (!camera) {
+                if (key === 'getModelViewMatrix') return () => { throw new Error('The camera tour was stopped.'); };
+                return () => {};
+            }
+            const terrain = ground;
+            if (terrain && key === 'getModelViewMatrix') {
                 return () => {
-                    const matrix = target.getModelViewMatrix();
-                    lift = sightGround(ground, matrix);
+                    const matrix = camera.getModelViewMatrix();
+                    lift = sightGround(terrain, matrix);
                     return lowered(matrix, lift);
                 };
             }
-            if (ground && key === 'resetCamera') {
+            if (terrain && key === 'resetCamera') {
                 return (up: number[], lookAt: number[], eye: number[]) =>
-                    target.resetCamera(up, [lookAt[0], lookAt[1], lookAt[2] + lift], [eye[0], eye[1], eye[2] + lift]);
+                    camera.resetCamera(up, [lookAt[0], lookAt[1], lookAt[2] + lift], [eye[0], eye[1], eye[2] + lift]);
             }
-            const value: unknown = Reflect.get(target, key);
-            return typeof value === 'function' ? value.bind(target) : value;
+            const value: unknown = Reflect.get(camera, key);
+            return typeof value === 'function' ? value.bind(camera) : value;
         },
     });
-    const steps = new CameraMotion();
-    for (const step of motion) queueStep(steps, step);
-    const done = Promise.race([steps.play(standIn), stopping]).finally(() => unlisten());
+    // A tour that ended lets go of the camera too.
+    const done = Promise.race([steps.play(standIn), stopping]).finally(letGo);
     const tour: CameraTour = { done, stop };
     tours.set(map, tour);
     return tour;
