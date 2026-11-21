@@ -1,7 +1,7 @@
 import { PlotAdapter, PlotSpec, PlotMark } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, PlotRegistry, GeoJsonCache, ComputeCache } from '../types';
-import { addPlotLink, exportKey, exportOf, exportOptions, osmElementsOf } from '../drawn';
+import { addPlotLink, checkLinkedRows, exportKey, exportOf, exportOptions, osmElementsOf } from '../drawn';
 import type { DrawnLayer, DrawnLayers, LayerExports, PlotCollections, PlotLinks, PlotRows } from '../drawn';
 import { rowKeys, translateIds } from '../rows';
 import { checkPlotSelection, plotKey, plotOptions } from '../plot-options';
@@ -115,6 +115,11 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
             const geojson: FeatureCollection = elements ?? computeCache?.get(key) ?? cached ?? await tableRows(db, spec.dataRef, key, exports, spec.osmElements);
             // Refused before the plot is made, so a refused selection leaves no plot on the page.
             checkPlotSelection(spec, geojson.features?.length ?? 0);
+            // mapRef names the table of the layers to link to: every layer that draws it, in every map. The maps are
+            // drawn before the plots. A layer that reads its table otherwise than the plot, by OSM elements or by rows,
+            // is refused before the plot is made too (checkLinkedRows).
+            const linked = spec.mapRef ? (layers ?? []).filter((layer) => layer.dataRef === spec.mapRef) : [];
+            for(const layer of linked) checkLinkedRows(plotKey(spec), geojson, layer, 'by its mapRef');
 
             const events = (spec.events ?? []) as unknown as AutkPlotEvent[];
 
@@ -143,10 +148,7 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
             const rows = rowKeys(geojson.features ?? []);
             plotRows?.set(plotKey(spec), rows);
 
-            // mapRef names the table of the layers to link to: every layer that draws it, in every map. The maps are
-            // drawn before the plots.
-            for(const layer of layers ?? []) {
-                if(!spec.mapRef || layer.dataRef !== spec.mapRef) continue;
+            for(const layer of linked) {
                 linkPlotToLayer(plot, rows, events, layer);
                 addPlotLink(plotLinks, plotKey(spec), layer);
             }

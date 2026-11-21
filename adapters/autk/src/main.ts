@@ -17,7 +17,7 @@ import { tourOf } from "./camera";
 import type { CameraTour } from "./camera";
 import { Targets, PlotRegistry, GeoJsonCache, ComputeCache, ComputeLayerTypes, GrammarEventEmitter } from "./types";
 import type { AutkGrammarOptions, GrammarMapLayer, GrammarPlotSelectionEvent, MapId } from "./types";
-import { DrawnLayer, DrawnLayers, LayerExports, PlotCollections, PlotLinks, PlotRows, addPlotLink, isOnMap, mapIdOf } from "./drawn";
+import { DrawnLayer, DrawnLayers, LayerExports, PlotCollections, PlotLinks, PlotRows, addPlotLink, checkLinkedRows, isOnMap, mapIdOf } from "./drawn";
 import { translateIds } from "./rows";
 
 function asList<T>(value: T[] | T | undefined): T[] {
@@ -399,6 +399,7 @@ export class AutkGrammar {
             // The link names its map, so it is that map's layer that it links, though other maps draw the table too.
             const layer = this._layers.find((drawn) => drawn.mapIndex === mapIndex && drawn.layerId === layerIdOf(layerRef));
             if (!layer) continue;
+            checkLinkedRows(link.source, this._plotCollections.get(link.source), layer, 'in links');
             linkPlotToLayer(plot, this._plotRows.get(link.source) ?? [], (plotSpec.events ?? []) as unknown as PlotEvent[], layer);
             addPlotLink(this._plotLinks, link.source, layer);
         }

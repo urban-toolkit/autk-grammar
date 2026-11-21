@@ -73,9 +73,32 @@ export function exportOf(exports: LayerExports | undefined, key: string, load: (
 export async function osmElementsOf(db: AutkDb, name: string, key: string, exports?: LayerExports): Promise<FeatureCollection | undefined> {
     if (db.getTablesMetadata().find((table) => table.name === name)?.source !== 'osm') return undefined;
     const collection = await exportOf(exports, exportKey(key, true), () => db.getLayer(name, exportOptions(true)));
-    // An element carries its osm_id, which no row of autk-db's export row by row does.
-    const features = collection.features ?? [];
-    return features.length > 0 && features.every((feature) => feature?.properties != null && 'osm_id' in feature.properties) ? collection : undefined;
+    return holdsOsmElements(collection) ? collection : undefined;
+}
+
+/**
+ * Whether a collection is an OpenStreetMap table as autk-db exports it one feature per element, which a map layer or a
+ * plot with `osmElements` reads: each of its features carries its element's `osm_id`, which no row of autk-db's export
+ * row by row does.
+ */
+export function holdsOsmElements(collection: FeatureCollection | undefined): boolean {
+    const features = collection?.features ?? [];
+    return features.length > 0 && features.every((feature) => feature?.properties != null && 'osm_id' in feature.properties);
+}
+
+/**
+ * Refuses a link, `by` the plot's mapRef or in `links`, between the plot `plotId`, which draws `plotRows`, and `layer`,
+ * of which one reads its table one feature per OpenStreetMap element and the other one feature per row. Each finds the
+ * other's rows by their feature ids (see `translateIds`), and autk-db names an element such as `way/123` but a row by a
+ * number, so neither would find the other's rows. The two read their tables so when they disagree on `osmElements` over
+ * a table whose elements autk-db keeps; a table it keeps none of is read row by row with `osmElements` too, and such a
+ * link stands.
+ */
+export function checkLinkedRows(plotId: string, plotRows: FeatureCollection | undefined, layer: DrawnLayer, by: string): void {
+    const plotElements = holdsOsmElements(plotRows);
+    if (plotElements === holdsOsmElements(layer.collection)) return;
+    const [elements, rows] = plotElements ? ['plot', 'layer'] : ['layer', 'plot'];
+    throw new Error(`Plot "${plotId}" and layer "${layer.layerId}", linked ${by}, disagree on osmElements: the ${elements} reads its table one feature per OpenStreetMap element, named such as "way/123", and the ${rows} one feature per row, named by a number, so neither finds the other's rows. Set osmElements on both, or on neither.`);
 }
 
 /** A map's {@link MapId}: its `id`, else its index in the spec's `map` list, which `arrangeViews` gives its pane as its `key`. */
