@@ -171,6 +171,26 @@ test('names the sql source whose query autk-db refuses', async () => {
     );
 });
 
+// autk-db 4.1.1 puts the geometry of a table a query saves on the workspace's grid, read from a column named geometry,
+// with a layerType or without one: a query that returns its geometry under another name fails there, with DuckDB's
+// binder error for a column named geometry. A query that reads a geometry column its table lacks fails with the same
+// error, so the advice holds for both.
+test("tells a sql source that DuckDB finds no geometry column for to name a geometry it returns geometry, and keeps autk-db's reason", async () => {
+    const refused = async (query: string, bindings: string) => {
+        const binder = `Binder Error: Referenced column "geometry" not found in FROM clause!\nCandidate bindings: ${bindings}`;
+        const { db } = fakeDb();
+        Object.assign(db, { rawQuery: async () => { throw new Error(binder); } });
+        await assert.rejects(
+            createDataAdapter().resolveSource(db, { type: 'sql', outputTableName: 'centers', query } as DataSourceSpec),
+            { message: `SQL source "centers": if the query returns a geometry, name it geometry, for example ST_Centroid(geometry) AS geometry. autk-db: ${binder}` },
+        );
+    };
+    // The query returns its geometry under another name.
+    await refused("SELECT properties->>'ntaname' AS name, ST_Centroid(geometry) AS center FROM neighborhoods", '"center", "name"');
+    // The query reads a geometry from a table of plain columns, which has none.
+    await refused('SELECT zone, geometry FROM counts', '"zone", "count"');
+});
+
 test("a sql source saved under a GeoJSON table's name takes its rows out of the cache the plots read first", async () => {
     const cache = new Map([['zones', emptyCollection()], ['west/zones', emptyCollection()]]);
     await createDataAdapter(undefined, cache).resolveSource(fakeDb().db, { type: 'sql', outputTableName: 'zones', query: 'SELECT * FROM zones' } as DataSourceSpec);
@@ -275,6 +295,126 @@ test('a layer update whose keys match no row leaves autk-db alone, and one of ro
     const anonymous = fakeDb([{ name: 'zones', type: 'polygons', columns: geojsonColumns }], { zones: zoneRows([null, null, null, null], [7, 7, 7, 7]) });
     await assert.rejects(createDataAdapter().resolveSource(anonymous.db, update('zones')), { message: 'Update of "zones": its rows have no feature id to update them by.' });
     assert.deepEqual(anonymous.calls, [['getLayer', 'zones']]);
+});
+
+// autk-db 4.1.1 stages the rows of an update of a table without a geometry with DuckDB's read_json_auto, whose columns
+// follow a row's keys in the order they come, then inserts them with `INSERT INTO <table> SELECT * FROM <staging>`, by
+// position: a row given as { count: 25, zone: 2 } to a table of (zone, count) wrote 25 in zone and 2 in count.
+const zoneCounts = { name: 'zones', columns: [{ name: 'zone', type: 'BIGINT' }, { name: 'count', type: 'BIGINT' }] };
+
+test("an update of a table without a geometry hands autk-db each given row with its columns in the table's order", async () => {
+    const jsonObject = [{ count: 25, zone: 2 }, { zone: 3, count: 30 }];
+    const calls = await callsFor({ type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'zone', jsonObject }, [zoneCounts]);
+    assert.deepEqual(calls, [['updateTable', { tableName: 'zones', data: [{ zone: 2, count: 25 }, { zone: 3, count: 30 }], strategy: 'update', idColumn: 'zone' }]]);
+    // deepEqual compares no key order, so the order is compared apart.
+    const { data } = calls[0][1] as { data: Array<Record<string, unknown>> };
+    assert.deepEqual(data.map((row) => Object.keys(row)), [['zone', 'count'], ['zone', 'count']]);
+    // replace makes the table of the given rows, by their keys' names, so they reach autk-db as they are given.
+    const replaced = [{ count: 7, zone: 9, note: 'new' }];
+    const [replace] = await callsFor({ type: 'update', dataRef: 'zones', strategy: 'replace', jsonObject: replaced }, [zoneCounts]);
+    assert.equal((replace[1] as { data: unknown }).data, replaced);
+});
+
+// autk-db 4.1.1 stages the rows with the keys of them all, so a key a row leaves out is null in it, and DuckDB matches a
+// key to a column without regard to case: 5.6.0, which handed autk-db the rows as given, wrote such rows. A key the table
+// lacks it refused, or wrote into another column.
+test('an update row of a table without a geometry gets null in a column it leaves out and matches columns without regard to case, and one with a key the table lacks is refused, naming it, before autk-db runs', async () => {
+    /** Each row of the update autk-db is handed, as its keys and values in order. */
+    const handed = async (jsonObject: unknown[], table = zoneCounts) => {
+        const [[, params]] = await callsFor({ type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'zone', jsonObject }, [table]) as Array<[string, { data: Array<Record<string, unknown>> }]>;
+        return params.data.map((row) => Object.entries(row));
+    };
+    assert.deepEqual(await handed([{ zone: 2, count: 25 }, { zone: 3 }, { zone: 4, count: undefined }]), [
+        [['zone', 2], ['count', 25]],
+        [['zone', 3], ['count', null]],
+        [['zone', 4], ['count', null]],
+    ]);
+    const capitalized = { name: 'zones', columns: [{ name: 'Zone', type: 'BIGINT' }, { name: 'Count', type: 'BIGINT' }] };
+    assert.deepEqual(await handed([{ count: 25, zone: 2 }, { ZONE: 3 }], capitalized), [
+        [['Zone', 2], ['Count', 25]],
+        [['Zone', 3], ['Count', null]],
+    ]);
+    const refused = async (jsonObject: unknown[], message: string) => {
+        const { db, calls } = fakeDb([zoneCounts]);
+        await assert.rejects(createDataAdapter().resolveSource(db, { type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'zone', jsonObject } as DataSourceSpec), { message });
+        assert.deepEqual(calls, []);
+    };
+    await refused([{ zone: 2, count: 25, extra: 1 }], 'Update of "zones": jsonObject[0] has "extra", which is not a column of the table: "zone", "count".');
+    await refused([{ zone: 2 }, { zone: 3, note: 5 }], 'Update of "zones": jsonObject[1] has "note", which is not a column of the table: "zone", "count".');
+    await refused([{ zone: 2, Zone: 3, count: 25 }], 'Update of "zones": jsonObject[0] has "zone" and "Zone", which name one column of the table, "zone".');
+    // A row that is not an object, such as one given as an array of values, is refused rather than written as nulls.
+    const notAnObject = (index: number) => `Update of "zones": jsonObject[${index}] is not an object; give each row as an object whose keys name the table's columns.`;
+    await refused([[2, 25]], notAnObject(0));
+    await refused([{ zone: 2 }, null], notAnObject(1));
+});
+
+// The rows of an update reach autk-db as JSON objects, which put the keys named as whole numbers, such as "2020", first
+// and in ascending order, and autk-db 4.1.1 inserts them by position: a table whose columns named so do not come first
+// and in that order took a row's values in other columns. replace makes the table of the given rows, by their keys' names.
+test('refuses the update strategy on a table whose column named as a whole number comes after another, before autk-db runs', async () => {
+    const table = (names: string[]) => ({ name: 'zones', columns: names.map((name) => ({ name, type: 'BIGINT' })) });
+    const update = (jsonObject: unknown[], strategy = 'update') => ({ type: 'update', dataRef: 'zones', strategy, ...(strategy === 'update' && { idColumn: 'zone' }), jsonObject });
+    const refused = async (names: string[], name: string, after: string) => {
+        const { db, calls } = fakeDb([table(names)]);
+        await assert.rejects(createDataAdapter().resolveSource(db, update([{ zone: 2 }]) as DataSourceSpec), {
+            message: `Update of "zones": the update strategy cannot change a table whose column "${name}", named as a whole number, comes after "${after}". Use strategy 'replace' with every row of the table, or rename the column.`,
+        }, names.join());
+        assert.deepEqual(calls, [], names.join());
+    };
+    await refused(['zone', '2020'], '2020', 'zone');
+    await refused(['2021', '2020', 'zone'], '2020', '2021');
+    await refused(['2020', 'zone', '2021'], '2021', 'zone');
+    // Columns named as whole numbers that come first, in ascending order, keep their places.
+    const [[, ordered]] = await callsFor(update([{ zone: 2, '2021': 5 }]), [table(['2020', '2021', 'zone'])]) as Array<[string, { data: Array<Record<string, unknown>> }]>;
+    assert.deepEqual(ordered.data.map((row) => Object.entries(row)), [[['2020', null], ['2021', 5], ['zone', 2]]]);
+    const replaced = [{ zone: 9, '2020': 7 }];
+    const [[, replace]] = await callsFor(update(replaced, 'replace'), [table(['zone', '2020'])]) as Array<[string, { data: unknown }]>;
+    assert.equal(replace.data, replaced);
+});
+
+// A layer of plain columns, such as a CSV or JSON table loaded with geometryColumns, or a sql source's table drawn as a
+// layer whose query returns no properties, has no properties column and no feature id. autk-db 4.1.1 updates a row of
+// a layer by setting its properties column, so the update strategy never changed such a table: a key
+// `properties.<name>` found no feature id, a plain column failed to bind, and jsonObject is refused for a layer.
+const plainColumns = 'on a layer, the update strategy sets the properties column of each row it matches, and this layer has none: it keeps its values in plain columns, as a CSV or JSON layer or a sql source\'s table of plain columns does. Use strategy \'replace\', with every row in geojsonObject.';
+
+test('refuses the update strategy on a layer of plain columns, before autk-db runs, and hands autk-db its replace', async () => {
+    const column = (name: string, type: string) => ({ name, type });
+    const tables = [
+        { name: 'noise', type: 'points', columns: [column('key', 'BIGINT'), column('level', 'BIGINT'), column('Latitude', 'DOUBLE'), column('Longitude', 'DOUBLE'), column('geometry', 'GEOMETRY')] },
+        { name: 'noisiest', type: 'polygons', columns: [column('name', 'VARCHAR'), column('complaints', 'INTEGER'), column('geometry', 'GEOMETRY')] },
+    ];
+    const point = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [0, 0] }, properties: { key: 2, level: 75 } }] };
+    const updates: Array<[string, object]> = [
+        ['noise', { idColumn: 'properties.key', geojsonObject: point }],
+        ['noise', { idColumn: 'key', geojsonObject: point }],
+        ['noise', { idColumn: 'key', jsonObject: [{ key: 2, level: 75 }] }],
+        ['noisiest', { idColumn: 'properties.name', geojsonObject: point }],
+    ];
+    for (const [dataRef, fields] of updates) {
+        const { db, calls } = fakeDb(tables);
+        await assert.rejects(
+            createDataAdapter().resolveSource(db, { type: 'update', dataRef, strategy: 'update', ...fields } as DataSourceSpec),
+            { message: `Update of "${dataRef}": ${plainColumns}` },
+            JSON.stringify(fields),
+        );
+        assert.deepEqual(calls, [], JSON.stringify(fields));
+    }
+    assert.deepEqual(await callsFor({ type: 'update', dataRef: 'noise', strategy: 'replace', geojsonObject: point }, tables), [
+        ['updateTable', { tableName: 'noise', data: point, strategy: 'replace' }],
+    ]);
+});
+
+// autk-db lists every column of a table it holds. A host's stand-in database may list none, and then the adapter cannot
+// tell a table's columns: its rows go to autk-db as they are given, and the update strategy is not refused.
+test('hands autk-db the update of a table listed without columns as it is given, neither ordered nor refused', async () => {
+    const jsonObject = [{ total: 9, month: 'Feb' }];
+    const [[, plain]] = await callsFor({ type: 'update', dataRef: 'sales', strategy: 'update', idColumn: 'month', jsonObject }, [{ name: 'sales' }]) as Array<[string, { data: unknown }]>;
+    assert.equal(plain.data, jsonObject);
+    const geojsonObject = { type: 'FeatureCollection', features: [{ type: 'Feature', id: 3, geometry: { type: 'Point', coordinates: [0, 0] }, properties: { v: 1 } }] };
+    assert.deepEqual(await callsFor({ type: 'update', dataRef: 'spots', strategy: 'update', idColumn: 'id', geojsonObject }, [{ name: 'spots', type: 'points' }]), [
+        ['updateTable', { tableName: 'spots', data: geojsonObject, strategy: 'update', idColumn: 'id' }],
+    ]);
 });
 
 // drop sources: a table dropped.

@@ -2,9 +2,12 @@
 // grammar's, which every run of the grammar calls instead. A fake autk-db stands for the database a host's data adapter
 // hands the grammar's own, and records each call; a run with no data source runs its passes on no database. Each case
 // checks that the grammar called the wrap function before it runs anything. The browser tests run the options on autk-db
-// itself. Run with
+// itself. The last case compiles a host's code with TypeScript against the package's built declarations, as a host
+// compiles it, so it needs `make build` first, as CI runs it. Run with
 //   npm run test:unit
 import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { DEFAULT_WORKSPACE_NAME } from '@urban-toolkit/autk-db';
 import type { AutkDb } from '@urban-toolkit/autk-db';
 import type { FeatureCollection, Polygon } from 'geojson';
@@ -168,6 +171,88 @@ test('a wrap function that returns no adapter of the shape it was given is refus
     assert.throws(() => new AutkGrammar(undefined, { wrapComputeAdapter: () => ({}) as never }), { message: refusedCompute });
     // The adapter it was given, returned as it is, is taken.
     assert.doesNotThrow(() => new AutkGrammar(undefined, { wrapDataAdapter: (adapter) => adapter, wrapComputeAdapter: (adapter) => adapter }));
+});
+
+/** A file of a host's that is never written: the compiler reads it from `compileAsAHost`, in the repository's tests. */
+const HOST_FILE = fileURLToPath(new URL('./host.ts', import.meta.url));
+
+/**
+ * The messages TypeScript gives `code`, a module of a host's that imports `@urban-toolkit/autk-grammar`, compiled with
+ * `strict`, as the grammar is, against the declarations the package ships (`adapters/autk/dist/index.d.ts`), which it
+ * finds by the package's name, as a host does.
+ */
+function compileAsAHost(code: string): string[] {
+    const options: ts.CompilerOptions = {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        lib: ['lib.es2022.d.ts', 'lib.dom.d.ts', 'lib.dom.iterable.d.ts'],
+        types: [],
+        strict: true,
+        skipLibCheck: true,
+        noEmit: true,
+    };
+    const host = ts.createCompilerHost(options);
+    const { getSourceFile, fileExists, readFile } = host;
+    host.getSourceFile = (name, version, ...rest) =>
+        (name === HOST_FILE ? ts.createSourceFile(name, code, version) : getSourceFile.call(host, name, version, ...rest));
+    host.fileExists = (name) => name === HOST_FILE || fileExists.call(host, name);
+    host.readFile = (name) => (name === HOST_FILE ? code : readFile.call(host, name));
+    const program = ts.createProgram([HOST_FILE], options, host);
+    const file = program.getSourceFile(HOST_FILE);
+    return [
+        ...program.getOptionsDiagnostics(),
+        ...program.getGlobalDiagnostics(),
+        ...program.getSyntacticDiagnostics(file),
+        ...program.getSemanticDiagnostics(file),
+    ].map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+}
+
+/**
+ * A host's ways of writing `wrapDataAdapter` on 5.6.0: the README's example, both calls written out; the given adapter
+ * spread, with its resolveSource replaced; the given adapter as it is; a wrapper generic over the adapter it is given, as
+ * Curio's is; and a host that calls a wrap function and then both calls of what it returns.
+ */
+const HOST_CODE = `
+import { AutkGrammar } from '@urban-toolkit/autk-grammar';
+import type { AutkGrammarOptions, DataAdapter } from '@urban-toolkit/autk-grammar';
+
+declare const db: unknown;
+declare function handedTo<A extends DataAdapter>(adapter: A): A;
+
+export const written = new AutkGrammar({ map: 'map' }, {
+    wrapDataAdapter: (adapter) => ({
+        resolveWorkspaces: (context, workspaces) => adapter.resolveWorkspaces(context ?? db, workspaces),
+        resolveSource: (context, source) => adapter.resolveSource(context ?? db, source),
+    }),
+});
+export const spread: AutkGrammarOptions = {
+    wrapDataAdapter: (adapter) => ({ ...adapter, resolveSource: (context, source) => adapter.resolveSource(context ?? db, source) }),
+};
+export const same: AutkGrammarOptions = { wrapDataAdapter: (adapter) => adapter };
+export const generic: AutkGrammarOptions = { wrapDataAdapter: (adapter) => handedTo(adapter) };
+export async function calls(options: Required<AutkGrammarOptions>, given: Required<DataAdapter>): Promise<void> {
+    const wrapped = options.wrapDataAdapter(given);
+    await wrapped.resolveWorkspaces(undefined, []);
+    await wrapped.resolveSource(undefined, { type: 'csv', outputTableName: 't', csvFileUrl: 't.csv' });
+}
+`;
+
+/** A call a later 5.x adds to `DataAdapter`, optional, as `resolveWorkspaces` is. */
+const LATER_CALL = `
+declare module '@urban-toolkit/autk-grammar' {
+    interface DataAdapter {
+        resolveLater?(context: unknown): Promise<unknown>;
+    }
+}
+`;
+
+test("a host's wrapDataAdapter that compiles on 5.6.0 still compiles once DataAdapter gains an optional call, as a 5.x release may add", () => {
+    // DataAdapter as it is: each way compiles.
+    assert.deepEqual(compileAsAHost(HOST_CODE), []);
+    // With a call added, the adapter a host returns still needs only resolveSource and resolveWorkspaces, which a run
+    // makes and the grammar checks for as it is made: a host that wrote neither the new call nor a spread compiles too.
+    assert.deepEqual(compileAsAHost(HOST_CODE + LATER_CALL), []);
 });
 
 let failed = 0;

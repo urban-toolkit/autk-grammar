@@ -83,6 +83,8 @@ export class AutkGrammar {
     private _exports: LayerExports = new Map();
     /** Each GeoJSON table a run loaded and each table a join wrote, which its plots read before the database. */
     private _geojsonCache: GeoJsonCache = new Map();
+    /** The CRS the last run's default workspace stores its tables in, as autk-db holds it, which `workspaceCrs` gives. */
+    private _workspaceCrs?: string;
     /** The page's plot colors the last run's spec sets, which its plots draw in. */
     private _plotColors: PlotColors = {};
 
@@ -102,16 +104,19 @@ export class AutkGrammar {
     }
 
     /**
-     * The coordinate reference system autk-db stores a workspace's tables in, unless the spec's `workspaces` sets
-     * another for it.
+     * The coordinate reference system the default workspace of the last {@link run} stores its tables in, as autk-db
+     * holds it, which is the CRS of the features {@link data} gives: the `coordinateFormat` of the spec's `workspaces`
+     * entry for the default workspace, else autk-db's default, `'EPSG:3395'` (World Mercator). Before a run, and once
+     * {@link destroy} has run, autk-db's default.
      *
-     * Input data is expected in EPSG:4326 (WGS84) by default and is transformed
-     * to this CRS on load. Consumers that prepare data for injection (e.g. by
-     * serialising a GeoDataFrame) can read this value and reproject accordingly
-     * instead of hard-coding a CRS string.
+     * A source reads its coordinates in EPSG:4326 (WGS84) by default, and autk-db transforms them to its workspace's
+     * CRS as it loads them. An `update` source's `geojsonObject` gives them in its workspace's CRS, which autk-db stores
+     * as they come, so a host that prepares those rows (for example by serialising a GeoDataFrame) reprojects them to
+     * that CRS: for a spec it is about to run, the `coordinateFormat` of the spec's `workspaces` entry for the table's
+     * workspace, else autk-db's default. This value is the default workspace's once the spec has run.
      */
     get workspaceCrs(): string {
-        return DEFAULT_WORKSPACE_COORDINATE_FORMAT;
+        return this._workspaceCrs ?? DEFAULT_WORKSPACE_COORDINATE_FORMAT;
     }
 
     get data(): Record<string, Promise<FeatureCollection>> {
@@ -218,6 +223,7 @@ export class AutkGrammar {
         this._computeTypes.clear();
         this.grammarEngine = undefined;
         this._data = {};
+        this._workspaceCrs = undefined;
     }
 
     async run(spec: UrbanSpec) {
@@ -255,8 +261,11 @@ export class AutkGrammar {
 
         await this.grammarEngine.run();
         const db = this.grammarEngine.context as AutkDb | undefined;
-        // Leave the database in the default workspace, whose tables `data` lists.
-        if (db) await enterWorkspace(db);
+        // Leave the database in the default workspace, whose tables `data` lists, in the CRS `workspaceCrs` gives.
+        if (db) {
+            await enterWorkspace(db);
+            this._workspaceCrs = db.getWorkspaceConfiguration().coordinateFormat;
+        }
         this._wireLinks(spec);
         // The plots show their first selections in the run's colors too, though another run drew its plots since.
         if (this._plotRegistry.size > 0) setPlotColors(plotColors);
