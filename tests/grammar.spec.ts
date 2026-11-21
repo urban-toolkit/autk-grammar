@@ -2447,17 +2447,26 @@ test('saves the rows of a sql source as a table, drawn as its layerType says, or
         .rejects.toThrow('SQL source "gone": Only SELECT queries are allowed for raw queries.');
 });
 
-test('saves a sql source whose query returns its geometry as geometry, and tells one that names it otherwise to name it so', async ({ page }) => {
+test('saves a sql source whose query returns its geometry as geometry, and tells one that DuckDB finds no geometry column for to name a geometry it returns so', async ({ page }) => {
     // autk-db puts the geometry of a table a query saves on the workspace's grid, read from a column named geometry, with
-    // a layerType or without one.
+    // a layerType or without one. DuckDB's error for a geometry under another name is the one for a query that reads a
+    // geometry column its table lacks, so the advice holds for both.
     const centers = (name: string): DataSourceSpec => ({
         type: 'sql', outputTableName: 'centers', query: `SELECT CAST(properties->>'id' AS INTEGER) AS id, ST_Centroid(geometry) AS ${name} FROM zones`,
     });
     await runSpec(page, { data: [area, zones, centers('geometry')] });
     expect(await page.evaluate(() => window.dbRows('SELECT id FROM centers ORDER BY id'))).toEqual([{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }]);
-    await expect(runSpec(page, { data: [area, zones, centers('center')] })).rejects.toThrow(
-        'SQL source "centers": autk-db reads the geometry of a table it saves from a column named geometry, so a query returns its geometry as geometry, for example ST_Centroid(geometry) AS geometry.',
+    const counts: DataSourceSpec = { type: 'csv', outputTableName: 'counts', csvObject: [['zone', 'count'], [1, 10]] };
+    /** The run's message when it was refused. */
+    const refusal = (spec: UrbanSpec) => runSpec(page, spec).then(() => 'ran', (error: Error) => error.message);
+    const advice = (table: string) => expect.stringContaining(
+        `SQL source "${table}": if the query returns a geometry, name it geometry, for example ST_Centroid(geometry) AS geometry. autk-db: Binder Error: Referenced column "geometry" not found`,
     );
+    expect([
+        await refusal({ data: [area, zones, centers('center')] }),
+        // A table of plain columns has no geometry to read.
+        await refusal({ data: [counts, { type: 'sql', outputTableName: 'placed', query: 'SELECT zone, geometry FROM counts' }] }),
+    ]).toEqual([advice('centers'), advice('placed')]);
 });
 
 test('replaces and updates the rows of a table with an update source, and the map and the plot draw them as they are now', async ({ page }) => {

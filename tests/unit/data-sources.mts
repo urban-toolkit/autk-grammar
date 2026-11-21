@@ -173,16 +173,22 @@ test('names the sql source whose query autk-db refuses', async () => {
 
 // autk-db 4.1.1 puts the geometry of a table a query saves on the workspace's grid, read from a column named geometry,
 // with a layerType or without one: a query that returns its geometry under another name fails there, with DuckDB's
-// binder error for a column named geometry.
-test('tells a sql source whose query returns its geometry under another name to name it geometry, and keeps autk-db\'s reason', async () => {
-    const binder = 'Binder Error: Referenced column "geometry" not found in FROM clause!\nCandidate bindings: "center", "name"';
-    const { db } = fakeDb();
-    Object.assign(db, { rawQuery: async () => { throw new Error(binder); } });
-    const query = "SELECT properties->>'ntaname' AS name, ST_Centroid(geometry) AS center FROM neighborhoods";
-    await assert.rejects(
-        createDataAdapter().resolveSource(db, { type: 'sql', outputTableName: 'centers', query } as DataSourceSpec),
-        { message: `SQL source "centers": autk-db reads the geometry of a table it saves from a column named geometry, so a query returns its geometry as geometry, for example ST_Centroid(geometry) AS geometry. autk-db: ${binder}` },
-    );
+// binder error for a column named geometry. A query that reads a geometry column its table lacks fails with the same
+// error, so the advice holds for both.
+test("tells a sql source that DuckDB finds no geometry column for to name a geometry it returns geometry, and keeps autk-db's reason", async () => {
+    const refused = async (query: string, bindings: string) => {
+        const binder = `Binder Error: Referenced column "geometry" not found in FROM clause!\nCandidate bindings: ${bindings}`;
+        const { db } = fakeDb();
+        Object.assign(db, { rawQuery: async () => { throw new Error(binder); } });
+        await assert.rejects(
+            createDataAdapter().resolveSource(db, { type: 'sql', outputTableName: 'centers', query } as DataSourceSpec),
+            { message: `SQL source "centers": if the query returns a geometry, name it geometry, for example ST_Centroid(geometry) AS geometry. autk-db: ${binder}` },
+        );
+    };
+    // The query returns its geometry under another name.
+    await refused("SELECT properties->>'ntaname' AS name, ST_Centroid(geometry) AS center FROM neighborhoods", '"center", "name"');
+    // The query reads a geometry from a table of plain columns, which has none.
+    await refused('SELECT zone, geometry FROM counts', '"zone", "count"');
 });
 
 test("a sql source saved under a GeoJSON table's name takes its rows out of the cache the plots read first", async () => {
