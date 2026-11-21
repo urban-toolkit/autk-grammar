@@ -128,6 +128,28 @@ async function updateByFeatureId(db: AutkDb, table: Table, rows: FeatureCollecti
     return { data: { ...rows, features }, idColumn };
 }
 
+/**
+ * The rows of an update of a table without a geometry, each with its keys in the order of the table's columns. autk-db
+ * 4.1.1 stages the given rows with DuckDB's `read_json_auto`, whose columns follow a row's keys in the order they come,
+ * then inserts them with `INSERT INTO <table> SELECT * FROM <staging>`, by position: a row given as `{ count, zone }` to
+ * a table of (zone, count) wrote its count in zone. autk-db writes each given row as a whole row of the table, so a row
+ * that lacks a column of the table, or has one the table does not have, is refused, by that key.
+ */
+function inColumnOrder(rows: Array<Record<string, unknown>>, table: Table): Array<Record<string, unknown>> {
+    const columns = table.columns.map((column) => column.name);
+    const listed = columns.map((column) => `"${column}"`).join(', ');
+    return rows.map((row, index) => {
+        const keys = Object.keys(row ?? {});
+        const missing = columns.find((column) => !keys.includes(column));
+        if (missing !== undefined)
+            throw new Error(`jsonObject[${index}] has no "${missing}"; autk-db writes each given row as a whole row of the table, so it gives every column: ${listed}.`);
+        const extra = keys.find((key) => !columns.includes(key));
+        if (extra !== undefined)
+            throw new Error(`jsonObject[${index}] has "${extra}", which is not a column of the table: ${listed}.`);
+        return Object.fromEntries(columns.map((column) => [column, row[column]]));
+    });
+}
+
 /** The database a source loads into: `context`, else a new one. */
 async function database(context: AutkDb | undefined): Promise<AutkDb> {
     if (context) return context;
@@ -423,8 +445,12 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache, compu
                     let data = (update.geojsonObject ?? update.jsonObject) as FeatureCollection | Record<string, unknown>[];
                     let idColumn = update.idColumn;
                     try {
-                        // A layer keyed by a feature property is matched here, then updated by its rows' feature ids.
                         const table = db.getTablesMetadata().find((candidate) => candidate.name === update.dataRef);
+                        // autk-db inserts the given rows of a table without a geometry by position, so each comes in the
+                        // table's column order. replace makes the table of the given rows, by their keys' names.
+                        if (update.strategy === 'update' && update.jsonObject && table && !isVectorTable(table))
+                            data = inColumnOrder(update.jsonObject, table);
+                        // A layer keyed by a feature property is matched here, then updated by its rows' feature ids.
                         if (update.strategy === 'update' && update.geojsonObject && idColumn?.startsWith('properties.') && table && isVectorTable(table)) {
                             ({ data, idColumn } = await updateByFeatureId(db, table, update.geojsonObject as FeatureCollection, idColumn.slice('properties.'.length)));
                             // No row has a given key, so the table stays as it is, as autk-db leaves it.
