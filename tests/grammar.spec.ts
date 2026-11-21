@@ -1270,20 +1270,13 @@ test('hides the features skippedComps names, on a layer of polygons, of lines or
         .rejects.toThrow('Layer "heatmap": skippedComps names features, and a raster layer has none.');
 });
 
-test('drops a hidden point a double click picks from map:picking and from the plot linked to its layer', async ({ page }) => {
-    // autk-map's picking pass draws every point of a points layer, the hidden ones too, so a double click where hidden
-    // spot 0 lies picked it: map:picking reported it, and the plot linked to the layer by mapRef selected its row.
-    await runSpec(page, {
-        data: [area, spots],
-        map: { layerRefs: [{ dataRef: 'spots', title: 'Spots', isPick: true, skippedComps: [0] }] },
-        plot: { id: 'p', dataRef: 'spots', mark: 'table', axis: ['id'], mapRef: 'spots', events: ['click'] },
-    });
-    expect((await page.evaluate(() => window.drawnRows('map0', 'Spots'))).map((row) => row?.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
-    expect((await layerById(page)).Spots.skippedIds).toEqual([0]);
-
-    // Double-clicks the map where spot `id` lies, as the user picks, and gives the selection of the next map:picking
-    // event and the ids of the rows the plot then selects. The spot is put on the page by the map's camera.
-    const pickSpot = (id: number) => page.evaluate(async ([x, y]) => {
+/**
+ * Double-clicks the map on #map0 where `[lon, lat]` lies, as the user picks, and gives the selection of the next
+ * map:picking event and the ids of the rows the plot `plotId` then selects. The point is put on the page by the map's
+ * camera.
+ */
+function pickAt(page: Page, plotId: string, [lon, lat]: [number, number]) {
+    return page.evaluate(async ({ plotId, point: [x, y] }) => {
         const map = window.grammar.maps[0];
         const [ox, oy] = map.layerManager.origin;
         map.camera.update();
@@ -1298,15 +1291,59 @@ test('drops a hidden point a double click picks from map:picking and from the pl
             setTimeout(() => resolve('no map:picking event within 5 s'), 5000);
             map.canvas.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX, clientY }));
         });
-        const rows = window.grammar.plotCollection('p')?.features ?? [];
-        const selected = [...(window.grammar as any)._plotRegistry.get('p').selection] as number[];
+        const rows = window.grammar.plotCollection(plotId)?.features ?? [];
+        const selected = [...(window.grammar as any)._plotRegistry.get(plotId).selection] as number[];
         return { reported, plotted: selected.map((position) => rows[position]?.properties?.id).sort() };
-    }, worldMercator(-73.984 + (id % 3) * 0.004, 40.751 + Math.floor(id / 3) * 0.004));
+    }, { plotId, point: worldMercator(lon, lat) });
+}
+
+/** Where spot `id` of `spots` lies, `[lon, lat]`. */
+const spotAt = (id: number): [number, number] => [-73.984 + (id % 3) * 0.004, 40.751 + Math.floor(id / 3) * 0.004];
+
+test('drops a hidden point a double click picks from map:picking and from the plot linked to its layer', async ({ page }) => {
+    // autk-map's picking pass draws every point of a points layer, the hidden ones too, so a double click where hidden
+    // spot 0 lies picked it: map:picking reported it, and the plot linked to the layer by mapRef selected its row.
+    await runSpec(page, {
+        data: [area, spots],
+        map: { layerRefs: [{ dataRef: 'spots', title: 'Spots', isPick: true, skippedComps: [0] }] },
+        plot: { id: 'p', dataRef: 'spots', mark: 'table', axis: ['id'], mapRef: 'spots', events: ['click'] },
+    });
+    expect((await page.evaluate(() => window.drawnRows('map0', 'Spots'))).map((row) => row?.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect((await layerById(page)).Spots.skippedIds).toEqual([0]);
 
     // A shown spot is picked, and its row selected.
-    expect(await pickSpot(4)).toEqual({ reported: [4], plotted: [4] });
+    expect(await pickAt(page, 'p', spotAt(4))).toEqual({ reported: [4], plotted: [4] });
     // The hidden spot is not: the pick reports the spots picked before it, and the plot keeps their rows.
-    expect(await pickSpot(0)).toEqual({ reported: [4], plotted: [4] });
+    expect(await pickAt(page, 'p', spotAt(0))).toEqual({ reported: [4], plotted: [4] });
+});
+
+test('drops the picks of the features a layer hides when the pick is made, though a host shows or hides them after the run', async ({ page }) => {
+    // The grammar kept the positions skippedComps hid as the layer loaded: after a host showed a feature again, its pick
+    // was dropped, and after a host hid another, its pick was forwarded.
+    // Zone 1, hidden as the layer loads, shown again with autk-map's own clearSkippedIds: its pick is forwarded.
+    await runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones', title: 'Zones', isPick: true, skippedComps: [1] }] },
+        plot: { id: 'z', dataRef: 'zones', mark: 'table', axis: ['id'], mapRef: 'zones', events: ['click'] },
+    });
+    expect((await layerById(page)).Zones.skippedIds).toEqual([1]);
+    await page.evaluate(() => window.grammar.maps[0].clearSkippedIds('Zones'));
+    expect((await layerById(page)).Zones.skippedIds).toEqual([]);
+    expect(await pickAt(page, 'z', [-73.9845, 40.7515])).toEqual({ reported: [1], plotted: [1] });
+
+    // On a points layer, which autk-map's setSkippedIds and clearSkippedIds pass over, with the layer's own calls: spot 0
+    // shown again is picked, and spot 4 hidden after the run is not.
+    await runSpec(page, {
+        data: [area, spots],
+        map: { layerRefs: [{ dataRef: 'spots', title: 'Spots', isPick: true, skippedComps: [0] }] },
+        plot: { id: 'p', dataRef: 'spots', mark: 'table', axis: ['id'], mapRef: 'spots', events: ['click'] },
+    });
+    await page.evaluate(() => window.grammar.maps[0].layerManager.searchByLayerId('Spots')?.clearSkippedIds());
+    expect((await layerById(page)).Spots.skippedIds).toEqual([]);
+    expect(await pickAt(page, 'p', spotAt(0))).toEqual({ reported: [0], plotted: [0] });
+    await page.evaluate(() => window.grammar.maps[0].layerManager.searchByLayerId('Spots')?.setSkippedIds([4]));
+    expect((await layerById(page)).Spots.skippedIds).toEqual([4]);
+    expect(await pickAt(page, 'p', spotAt(4))).toEqual({ reported: [0], plotted: [0] });
 });
 
 test('draws each line of a roads layer as wide as widthBy says, and a line without a width as wide as its kind of road', async ({ page }) => {
