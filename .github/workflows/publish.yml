@@ -12,9 +12,13 @@ permissions:
 jobs:
   publish:
     name: Publish changed package versions
+    # Only a green CI run of a push to this repository's main publishes. head_branch alone is not enough: a pull
+    # request from a fork's own branch named main reports it too, and this job runs with the npm token.
     if: >-
       ${{ github.event.workflow_run.conclusion == 'success' &&
-          github.event.workflow_run.head_branch == 'main' }}
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: macos-latest
     timeout-minutes: 30
 
