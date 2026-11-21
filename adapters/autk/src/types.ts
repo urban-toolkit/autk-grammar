@@ -1,4 +1,4 @@
-import type { UrbanSpec } from '@urban-toolkit/the-urban-grammar';
+import type { ComputeAdapter, DataAdapter, UrbanSpec } from '@urban-toolkit/the-urban-grammar';
 import type { AutkMap } from '@urban-toolkit/autk-map';
 import type { AutkPlot } from '@urban-toolkit/autk-plot';
 import type { LayerType } from '@urban-toolkit/the-urban-grammar';
@@ -20,6 +20,30 @@ export type Targets = {
 }
 
 /**
+ * What a host hands `AutkGrammar` besides its targets: its own adapters around the grammar's, which every run of the
+ * grammar calls instead. Each function is called once, as the grammar is made, with the grammar's own adapter, already
+ * wired to the grammar's caches, so maps and plots read what the host's adapter runs. A grammar made without them runs
+ * as before.
+ */
+export interface AutkGrammarOptions {
+    /**
+     * Returns the compute adapter every pass of every run goes through: its `resolveCompute(context, pass)` runs one
+     * entry of the spec's `compute` on the run's database, and returns it. A host that checks each pass, in GPU error
+     * scopes for example, calls the given adapter's `resolveCompute` inside its check and returns what that returns.
+     */
+    wrapComputeAdapter?: (adapter: ComputeAdapter) => ComputeAdapter;
+    /**
+     * Returns the data adapter the spec's `workspaces` and every source of every run go through, those before compute
+     * and those after. It keeps `resolveWorkspaces`: `{ ...adapter, resolveSource }` keeps the grammar's. Each call takes
+     * the run's database, undefined until the workspaces or the first source make one, and returns the database the run
+     * goes on with. So a host that loads a kind of source of its own loads it there and hands every other source to the
+     * given adapter, and a host that keeps the run's database in hand, to read its tables or to end it, hands the given
+     * adapter its own database where it is given none: `adapter.resolveSource(context ?? db, source)`.
+     */
+    wrapDataAdapter?: (adapter: Required<DataAdapter>) => Required<DataAdapter>;
+}
+
+/**
  * How the grammar names a map of the spec: its `id`, else its index in the spec's `map` list (0 for a single map).
  * `map:picking` events name the map by it, and the calls that take a `mapId` (`mapLayers`, `mapLayer`,
  * `highlightOnMap`, `clearHighlightOnMap`, `setPlotSelection`, `clearHighlightOnPlot`) address one map with it: a
@@ -35,6 +59,12 @@ export interface GrammarMapLayer {
     map: AutkMap;
     /** The layer's id in that map: its `title`, else its `dataRef`. */
     layerId: string;
+    /**
+     * What the run handed autk-map for the layer: the features of its table that have a geometry, in the table's order,
+     * as the run read them (a pass's result, an OpenStreetMap table's elements, or autk-db's export); for a raster, its
+     * one feature. It is the collection itself, not a copy: read it, and change nothing in it.
+     */
+    readonly collection: FeatureCollection;
 }
 export type GeoJsonCache = Map<string, FeatureCollection>;
 export type ComputeCache = Map<string, FeatureCollection>;

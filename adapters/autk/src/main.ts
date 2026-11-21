@@ -6,18 +6,17 @@ import type { MapEventData } from "@urban-toolkit/autk-map";
 import { PlotEvent } from "@urban-toolkit/autk-plot";
 import type { PlotEventData } from "@urban-toolkit/autk-plot";
 import { FeatureCollection } from "geojson";
-import { createDataAdapter } from "./adapters/data";
 import { createMapAdapter } from "./adapters/map";
 import { createPlotAdapter, linkPlotToLayer, setPlotColors } from "./adapters/plot";
 import { checkPlotKeys, plotColorsOf, plotKey } from "./plot-options";
 import { layerIdOf } from "./adapters/map";
 import { enterWorkspace } from "./workspace";
-import { createComputeAdapter } from "./adapters/compute";
+import { wiredAdapters } from "./compute-steps";
 import { tourOf } from "./camera";
 import type { CameraTour } from "./camera";
 import { Targets, PlotRegistry, GeoJsonCache, ComputeCache, ComputeLayerTypes, GrammarEventEmitter } from "./types";
-import type { GrammarMapLayer, GrammarPlotSelectionEvent, MapId } from "./types";
-import { DrawnLayer, DrawnLayers, LayerExports, PlotLinks, PlotRows, addPlotLink, isOnMap, mapIdOf } from "./drawn";
+import type { AutkGrammarOptions, GrammarMapLayer, GrammarPlotSelectionEvent, MapId } from "./types";
+import { DrawnLayer, DrawnLayers, LayerExports, PlotCollections, PlotLinks, PlotRows, addPlotLink, isOnMap, mapIdOf } from "./drawn";
 import { translateIds } from "./rows";
 
 function asList<T>(value: T[] | T | undefined): T[] {
@@ -49,6 +48,20 @@ function checkViewIds(spec: UrbanSpec): void {
     }
 }
 
+/** The data adapter a host's `wrapDataAdapter` returned, refused unless it loads a source and sets up workspaces. */
+function hostDataAdapter(adapter: DataAdapter | undefined): DataAdapter {
+    if (typeof adapter?.resolveSource !== 'function' || typeof adapter.resolveWorkspaces !== 'function')
+        throw new Error('wrapDataAdapter must return a data adapter with resolveSource and resolveWorkspaces, as the one it is given has: { ...adapter, resolveSource } keeps its resolveWorkspaces.');
+    return adapter;
+}
+
+/** The compute adapter a host's `wrapComputeAdapter` returned, refused unless it runs a pass. */
+function hostComputeAdapter(adapter: ComputeAdapter | undefined): ComputeAdapter {
+    if (typeof adapter?.resolveCompute !== 'function')
+        throw new Error('wrapComputeAdapter must return a compute adapter with resolveCompute, as the one it is given has.');
+    return adapter;
+}
+
 export class AutkGrammar {
     private dataAdapter?: DataAdapter;
     private mapAdapter?: MapAdapter;
@@ -64,17 +77,25 @@ export class AutkGrammar {
     private _fwdCleanups: Array<() => void> = [];
     private _plotLinks: PlotLinks = new Map();
     private _plotRows: PlotRows = new Map();
+    /** The collection each plot of the last run was handed, which `plotCollection` gives. */
+    private _plotCollections: PlotCollections = new Map();
     private _exports: LayerExports = new Map();
     /** Each GeoJSON table a run loaded and each table a join wrote, which its plots read before the database. */
     private _geojsonCache: GeoJsonCache = new Map();
 
     readonly interactions = new GrammarEventEmitter();
 
-    constructor(targets?: Targets) {
-        this.dataAdapter = createDataAdapter(targets, this._geojsonCache, this._computeCache, this._computeTypes);
+    /**
+     * @param targets The elements of the page the maps and plots draw in.
+     * @param options A host's own adapters around the grammar's, which every run calls instead (see {@link AutkGrammarOptions}).
+     */
+    constructor(targets?: Targets, options?: AutkGrammarOptions) {
+        // The data and compute adapters share the run's caches as a host's compute steps share theirs (createComputeSteps).
+        const { data, compute } = wiredAdapters(targets, this._geojsonCache, this._computeCache, this._computeTypes);
+        this.dataAdapter = options?.wrapDataAdapter ? hostDataAdapter(options.wrapDataAdapter(data)) : data;
+        this.computeAdapter = options?.wrapComputeAdapter ? hostComputeAdapter(options.wrapComputeAdapter(compute)) : compute;
         this.mapAdapter = createMapAdapter(targets, this._layers, this._computeCache, this._maps, this._computeTypes, this._exports);
-        this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, this._geojsonCache, this._computeCache, this._plotRows, this._exports);
-        this.computeAdapter = createComputeAdapter(this._computeCache, this._computeTypes, this._geojsonCache);
+        this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, this._geojsonCache, this._computeCache, this._plotRows, this._exports, this._plotCollections);
     }
 
     /**
@@ -122,22 +143,34 @@ export class AutkGrammar {
 
     /**
      * Every layer the maps of the last {@link run} draw for a table, found by the table's name (a layer's `dataRef`):
-     * for each, the map that draws it and the layer's id in that map, which is its `title`, else its `dataRef`. The
-     * maps come in the spec's order, each map's layers bottom first. Empty when no map draws the table.
+     * for each, the map that draws it, the layer's id in that map, which is its `title`, else its `dataRef`, and the
+     * collection the run handed autk-map for it. The maps come in the spec's order, each map's layers bottom first. Empty
+     * when no map draws the table.
      *
      * @param dataRef The table's name.
      * @param mapId The map to look in, by its {@link MapId}: a string names a map by its `id`, a number by its index in
      * the spec's `map` list. Without it, every map.
      */
     mapLayers(dataRef: string, mapId?: MapId): GrammarMapLayer[] {
-        return this._layersOf(dataRef, mapId).map(({ map, layerId }) => ({ map, layerId }));
+        return this._layersOf(dataRef, mapId).map(({ map, layerId, collection }) => ({ map, layerId, collection }));
+    }
+
+    /**
+     * The collection the last {@link run} handed autk-plot for the plot `plotId` names, its `id`, else its `dataRef`: the
+     * table's rows, in the order the plot draws them, so a `plot:selection` id is a position in its features. It is the
+     * collection itself, not a copy: read it, and change nothing in it. `undefined` when no plot has that name.
+     *
+     * @param plotId The plot: its `id`, else its `dataRef`.
+     */
+    plotCollection(plotId: string): FeatureCollection | undefined {
+        return this._plotCollections.get(plotId);
     }
 
     /**
      * The layer a map of the last {@link run} draws for a table, found by the table's name (a layer's `dataRef`):
-     * the map that draws it, and the layer's id in that map, which is its `title`, else its `dataRef`.
-     * `undefined` when no map draws the table. When several layers draw it, the last one, which is the last map's;
-     * {@link mapLayers} lists them all.
+     * the map that draws it, the layer's id in that map, which is its `title`, else its `dataRef`, and the collection the
+     * run handed autk-map for it. `undefined` when no map draws the table. When several layers draw it, the last one,
+     * which is the last map's; {@link mapLayers} lists them all.
      *
      * @param dataRef The table's name.
      * @param mapId The map to look in, by its {@link MapId}: a string names a map by its `id`, a number by its index in
@@ -175,6 +208,7 @@ export class AutkGrammar {
         this._plotRegistry.clear();
         this._plotLinks.clear();
         this._plotRows.clear();
+        this._plotCollections.clear();
         this._exports.clear();
         this._geojsonCache.clear();
         this._computeCache.clear();

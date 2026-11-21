@@ -2140,6 +2140,190 @@ test('refuses a source after compute that reads a table a pass wrote without wri
         .rejects.toThrow(`Data source 1 (geojson): after must be 'compute', the one phase a source runs after, not "map".`);
 });
 
+// A host runs a spec's sources and passes on an autk-db database of its own with createComputeSteps, and reads each pass's
+// result as the grammar holds it with computed. window.runOnHostDb runs the steps on a database the page makes, and
+// window.hostRows reads that database.
+
+test("runs passes written back and sources after compute on a database the host owns, with createComputeSteps, as a run does", async ({ page }) => {
+    // Written in World Mercator meters, the default workspace's CRS, as a host that hands its own tables writes them.
+    const [x0, y0] = [-8235000, 4946000];
+    const square = (x: number, y: number, size: number) =>
+        ({ type: 'Polygon', coordinates: [[[x, y], [x + size, y], [x + size, y + size], [x, y + size], [x, y]]] });
+    const point = (x: number, y: number) => ({ type: 'Point', coordinates: [x, y] });
+    const inMeters = (outputTableName: string, features: Array<{ properties: Record<string, unknown>; geometry: unknown }>, layerType?: string) => ({
+        type: 'geojson', outputTableName, coordinateFormat: 'EPSG:3395', ...(layerType && { layerType }),
+        geojsonObject: { type: 'FeatureCollection', features: features.map((feature) => ({ type: 'Feature', ...feature })) },
+    });
+    const spec = {
+        data: [
+            // Listed first, the sources after compute run once both passes have, in this order.
+            {
+                type: 'sql', outputTableName: 'totals', after: 'compute',
+                query: "SELECT CAST(count(*) AS INTEGER) AS spots, sum(CAST(properties->'compute'->>'width' AS DOUBLE)) AS width FROM widths",
+            },
+            { type: 'join', dataRef: 'squares', joinDataRef: 'pins', groupBy: [{ column: '*', aggregateFn: 'count' }], after: 'compute' },
+            // autk-db cuts each table to the first polygon table it loads: a square kilometer around the others.
+            inMeters('ground', [{ properties: {}, geometry: square(x0 - 500, y0 - 500, 1000) }]),
+            // Three building parts, each 20 m wide, and four spots south of them.
+            inMeters('parts', [0, 1, 2].map((i) => ({ properties: { height: 10 + i }, geometry: square(x0 + i * 50, y0, 20) })), 'buildings'),
+            inMeters('spots', [0, 1, 2, 3].map((i) => ({ properties: { w: 1 }, geometry: point(x0 + i * 40, y0 - 100) }))),
+            // Squares a and b share an edge, and c stands apart; two pins lie in a, and one in c.
+            inMeters('squares', [0, 60, 300].map((dx, i) => ({ properties: { name: 'abc'[i] }, geometry: square(x0 + dx, y0 - 300, 60) }))),
+            inMeters('pins', [[10, 10], [50, 50], [330, 30]].map(([dx, dy]) => ({ properties: {}, geometry: point(x0 + dx, y0 - 300 + dy) }))),
+        ],
+        compute: [
+            {
+                // Each spot sums the widths of the parts' outlines, read as the GeoJSON source gave them: autk-db keeps
+                // each part in its building model, where geometry.coordinates.0 finds no outline, so its copy gives 0.
+                dataRef: 'spots',
+                attributes: { w: 'w' },
+                uniformMatrices: { o: { fromFeature: { layer: 'parts', path: 'geometry.coordinates.0', iterate: 'batched' }, cols: 2 } },
+                outputColumnName: 'width',
+                outputTableName: 'widths',
+                layerType: 'points',
+                writeBack: true,
+                wgslFunction: [
+                    'var total = 0.0;',
+                    'for (var i = 0u; i < u32(num_features); i++) { total += o[i * 8u + 2u] - o[i * 8u]; }',
+                    'return total * w;',
+                ],
+            },
+            { type: 'clusters', dataRef: 'squares', outputColumnName: 'cluster', writeBack: true },
+        ],
+    } as unknown as UrbanSpec;
+    const { afterPasses, atEnd } = await page.evaluate(({ s, names }) => window.runOnHostDb(s, names), { s: spec, names: ['widths', 'squares', 'totals'] });
+
+    // Once the passes have run: each spot read the three parts, 3 x 20 m, into a new table of points, and the squares
+    // hold their clusters, in place, with no layer type of their own.
+    expect(afterPasses.widths?.layerType).toBe('points');
+    const widths = (afterPasses.widths?.rows ?? []).map((row) => (row?.compute as { width?: number } | undefined)?.width);
+    expect(widths).toHaveLength(4);
+    for (const width of widths) expect(width as number).toBeCloseTo(60, 3);
+    expect(afterPasses.squares?.layerType).toBeNull();
+    expect(Object.fromEntries((afterPasses.squares?.rows ?? []).map((row) => [row?.name, (row?.compute as { cluster?: number } | undefined)?.cluster])))
+        .toEqual({ a: 0, b: 0, c: 1 });
+    expect(afterPasses.totals).toBeNull();
+
+    // The host's database holds both results, written back: every spot with its width, and each square with its cluster.
+    const [kept] = await page.evaluate(() => window.hostRows(
+        "SELECT CAST(count(*) AS INTEGER) AS n, min(CAST(properties->'compute'->>'width' AS DOUBLE)) AS low, max(CAST(properties->'compute'->>'width' AS DOUBLE)) AS high FROM widths"));
+    expect(kept.n).toBe(4);
+    expect(kept.low as number).toBeCloseTo(60, 3);
+    expect(kept.high as number).toBeCloseTo(60, 3);
+
+    // The sources after compute ran on it, over what the passes kept there: the widths summed, and the pins of each
+    // square beside its cluster.
+    const [totals] = await page.evaluate(() => window.hostRows('SELECT spots, width FROM totals'));
+    expect(totals.spots).toBe(4);
+    expect(totals.width as number).toBeCloseTo(240, 2);
+    const squaresQuery = "SELECT properties->>'name' AS name, CAST(properties->'compute'->>'cluster' AS INTEGER) AS cluster, "
+        + "CAST(properties->'sjoin'->'count'->>'pins' AS INTEGER) AS pins FROM squares ORDER BY name";
+    const squares = [{ name: 'a', cluster: 0, pins: 2 }, { name: 'b', cluster: 0, pins: 0 }, { name: 'c', cluster: 1, pins: 1 }];
+    expect(await page.evaluate((query) => window.hostRows(query), squaresQuery)).toEqual(squares);
+
+    // The join wrote the squares, so the steps hold no result of a pass for them now: autk-db's table, with the clusters
+    // and the counts, is the one maps and plots read. The widths, which the sql source only read, stay as the pass left them.
+    expect(atEnd.squares).toBeNull();
+    expect(atEnd.widths).toEqual(afterPasses.widths);
+    expect(atEnd.totals).toBeNull();
+
+    // AutkGrammar's own run of the spec leaves the same tables in its database, and the same widths in grammar.data.
+    await runSpec(page, spec);
+    expect(await page.evaluate((query) => window.dbRows(query), squaresQuery)).toEqual(squares);
+    const [ran] = await page.evaluate(() => window.dbRows('SELECT spots, width FROM totals'));
+    expect(ran.spots).toBe(4);
+    expect(ran.width as number).toBeCloseTo(totals.width as number, 3);
+    const ranWidths = await page.evaluate(async () => (await window.grammar.data.widths).features.map((feature) => feature.properties?.compute?.width));
+    expect(ranWidths).toHaveLength(4);
+    ranWidths.forEach((width, i) => expect(width as number).toBeCloseTo(widths[i] as number, 3));
+});
+
+// A host made AutkGrammar with adapters of its own around the grammar's (wrapDataAdapter and wrapComputeAdapter), which
+// every run calls instead. window.runWrapped makes them: they record what goes through them and hand it on, the data
+// adapter handing the grammar's a database the page made.
+
+test("sends a run's workspaces, every source and every pass through a host's own adapters around the grammar's, on the host's database", async ({ page }) => {
+    const spec: UrbanSpec = {
+        // autk-db's own CRS and grid for the default workspace, so the run sets up its workspaces and draws as without them.
+        workspaces: [{ coordinateFormat: 'EPSG:3395', precisionGrid: 0.01 }],
+        data: [
+            // Listed first, the sources after compute run once both passes have, in this order.
+            { type: 'join', dataRef: 'squares', joinDataRef: 'pins', groupBy: [{ column: '*', aggregateFn: 'count' }], after: 'compute' },
+            area, fourSquares, pins,
+            {
+                type: 'sql', outputTableName: 'sizes', after: 'compute',
+                query: "SELECT CAST(properties->'compute'->>'block' AS INTEGER) AS block, CAST(count(*) AS INTEGER) AS squares FROM blocks GROUP BY block ORDER BY block",
+            },
+        ],
+        compute: [
+            { type: 'clusters', dataRef: 'squares', outputColumnName: 'cluster', writeBack: true },
+            { type: 'clusters', dataRef: 'squares', outputColumnName: 'block', outputTableName: 'blocks', writeBack: true },
+        ],
+        map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'squares', getFnv: 'sjoin.count.pins' }] },
+    };
+    const seen = await page.evaluate((s) => window.runWrapped(s), spec);
+
+    // Each wrap function was called once, as the grammar was made.
+    expect([...seen.wrapped].sort()).toEqual(['compute', 'data']);
+    // The workspaces, every source and every pass went through the host's adapters once each, in the order the engine
+    // runs them: the sources before compute in the order of data, the passes, then the sources after compute.
+    expect(seen.steps).toEqual([
+        'workspaces',
+        'source geojson area', 'source geojson squares', 'source geojson pins',
+        'pass clusters squares', 'pass clusters blocks',
+        'source join squares', 'source sql sizes',
+    ]);
+    // The run went on with the database the host's data adapter handed the grammar's, which holds the run's tables.
+    expect(seen.onHostDb).toBe(true);
+    expect(await page.evaluate(() => window.hostRows('SELECT block, squares FROM sizes ORDER BY block')))
+        .toEqual([{ block: 0, squares: 2 }, { block: 1, squares: 2 }]);
+    // The grammar's own adapters ran inside the host's: the map draws each square with the pass's cluster and the join's
+    // count of pins, as a run without the host's adapters draws them.
+    const drawn = await page.evaluate(() => window.drawnRows('map0', 'squares').map((row) =>
+        `${row?.name} ${(row?.compute as { cluster?: number } | undefined)?.cluster} ${(row?.sjoin as { count?: { pins?: number } } | undefined)?.count?.pins}`));
+    expect(drawn.sort()).toEqual(['a 0 2', 'b 0 0', 'c 1 1', 'd 1 0']);
+    await runSpec(page, spec);
+    const unwrapped = await page.evaluate(() => window.drawnRows('map0', 'squares').map((row) =>
+        `${row?.name} ${(row?.compute as { cluster?: number } | undefined)?.cluster} ${(row?.sjoin as { count?: { pins?: number } } | undefined)?.count?.pins}`));
+    expect(unwrapped.sort()).toEqual(drawn);
+});
+
+// What a run handed each view, which a host reads with the collection of each layer mapLayers gives and with
+// plotCollection.
+
+test("gives the collection a run handed each view: the one autk-map was handed for each layer, and every row for a plot", async ({ page }) => {
+    // Five sites, c without a geometry, and a heatmap of the nine spots, drawn on one map; a plot of the sites.
+    const sites = ['a', 'b', 'c', 'd', 'e'].map((name, i) => ({
+        type: 'Feature' as const,
+        properties: { name, v: i * 10, w: 40 - i * 10 },
+        geometry: name === 'c' ? null : { type: 'Point' as const, coordinates: [-73.985 + i * 0.002, 40.75 + i * 0.001] },
+    }));
+    await runSpec(page, {
+        data: [
+            { type: 'geojson', outputTableName: 'sites', geojsonObject: { type: 'FeatureCollection', features: sites } },
+            spots,
+            { type: 'heatmap', outputTableName: 'heat', joinDataRef: 'spots', near: { distance: 1000 }, grid: { rows: 2, columns: 2 } },
+        ],
+        map: { id: 'm', layerRefs: [{ dataRef: 'heat' }, { dataRef: 'sites', title: 'Sites' }] },
+        plot: { id: 'p', dataRef: 'sites', mark: 'scatter', axis: ['v', 'w'] },
+    } as unknown as UrbanSpec);
+
+    // Each layer's collection is the very one autk-map was handed for it: the raster's, of one feature, and the sites'.
+    expect(await page.evaluate(() => [window.handedToLayer('map0', 'heat', 'heat'), window.handedToLayer('map0', 'sites', 'Sites')]))
+        .toEqual([true, true]);
+    expect(await page.evaluate(() => window.grammar.mapLayer('heat', 'm')?.collection.features.length)).toBe(1);
+    // The layer of the sites draws those of its features that have a shape: c has none.
+    expect((await page.evaluate(() => window.drawnRows('map0', 'Sites'))).map((row) => row?.name).sort()).toEqual(['a', 'b', 'd', 'e']);
+    // The plot's collection is every row of the sites, c among them, in their order, which its marks draw.
+    const plotted = await page.evaluate(() => window.grammar.plotCollection('p')?.features.map((feature) => [feature.properties?.name, feature.geometry === null]));
+    expect(plotted).toEqual([['a', false], ['b', false], ['c', true], ['d', false], ['e', false]]);
+    expect((await page.evaluate(() => window.plotMarks())).map((mark) => mark.datum?.name).sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
+
+    // destroy(), which each run calls first, lets the last run's views go.
+    await page.evaluate(() => window.grammar.destroy());
+    expect(await page.evaluate(() => [window.grammar.mapLayers('sites').length, window.grammar.plotCollection('p') ?? null])).toEqual([0, null]);
+});
+
 test('refuses a points layer in a render pass, and names the layer', async ({ page }) => {
     // autk-compute would skip it with only a warning. The schema refuses the type too.
     await expect(runSpec(page, {

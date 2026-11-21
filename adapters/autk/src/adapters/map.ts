@@ -439,14 +439,17 @@ function setRasterOrigin(map: AutkMap, raster: FeatureCollection): void {
  */
 export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, computeCache?: ComputeCache, maps?: AutkMap[], computeTypes?: ComputeLayerTypes, exports?: LayerExports): MapAdapter {
 
-    /** Loads each layer of `spec` on `map`, and gives the keys of the rows each draws, in the order of the layers. */
-    async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<string[][]> {
+    /**
+     * Loads each layer of `spec` on `map`, and gives, in the order of the layers, the keys of the rows each draws and the
+     * collection it handed autk-map for it.
+     */
+    async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<Array<{ rows: string[]; collection: FeatureCollection }>> {
         let tableToTypeMap: {[tableName: string]: string} = {};
         for(const table of context.getTablesMetadata()) {
             if(table.type !== undefined) tableToTypeMap[table.name] = table.type;
         }
 
-        const drawn: string[][] = [];
+        const drawn: Array<{ rows: string[]; collection: FeatureCollection }> = [];
         for(const layerRef of spec.layerRefs){
             const name     = layerRef.dataRef;
             const layerId  = layerIdOf(layerRef);
@@ -580,7 +583,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 // hides them on every type of layer.
                 map.layerManager.searchByLayerId(layerId)?.setSkippedIds(layerRef.skippedComps);
             }
-            drawn.push(drawnRows);
+            drawn.push({ rows: drawnRows, collection: data });
         }
         return drawn;
     }
@@ -624,7 +627,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
 
                 // A map is known to the grammar, which destroys it, once its layers are loaded. One that fails before
                 // is destroyed here, so its controls, event handlers and GPU buffers do not outlive the failed run.
-                let drawn: string[][];
+                let drawn: Array<{ rows: string[]; collection: FeatureCollection }>;
                 try {
                     applyMapColors(map, spec);
 
@@ -649,7 +652,8 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
 
                 const mapId = mapIdOf(spec, index);
                 spec.layerRefs.forEach((layerRef, at) => layers?.push({
-                    map, mapIndex: index, mapId, layerId: layerIdOf(layerRef), dataRef: layerRef.dataRef, rows: drawn[at],
+                    map, mapIndex: index, mapId, layerId: layerIdOf(layerRef), dataRef: layerRef.dataRef,
+                    rows: drawn[at].rows, collection: drawn[at].collection,
                 }));
 
                 if(maps)
