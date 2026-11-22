@@ -9,6 +9,7 @@ import { FeatureCollection } from "geojson";
 import { createMapAdapter } from "./adapters/map";
 import { createPlotAdapter, linkPlotToLayer, setPlotColors } from "./adapters/plot";
 import { checkPlotKeys, plotColorsOf, plotKey } from "./plot-options";
+import type { PlotColors } from "./plot-options";
 import { layerIdOf, shownPicks } from "./adapters/map";
 import { enterWorkspace } from "./workspace";
 import { wiredAdapters } from "./compute-steps";
@@ -16,7 +17,7 @@ import { tourOf } from "./camera";
 import type { CameraTour } from "./camera";
 import { Targets, PlotRegistry, GeoJsonCache, ComputeCache, ComputeLayerTypes, GrammarEventEmitter } from "./types";
 import type { AutkGrammarOptions, GrammarMapLayer, GrammarPlotSelectionEvent, MapId } from "./types";
-import { DrawnLayer, DrawnLayers, LayerExports, PlotCollections, PlotLinks, PlotRows, addPlotLink, isOnMap, mapIdOf } from "./drawn";
+import { DrawnLayer, DrawnLayers, LayerExports, PlotCollections, PlotLinks, PlotRows, addPlotLink, checkLinkedRows, isOnMap, mapIdOf } from "./drawn";
 import { translateIds } from "./rows";
 
 function asList<T>(value: T[] | T | undefined): T[] {
@@ -82,6 +83,10 @@ export class AutkGrammar {
     private _exports: LayerExports = new Map();
     /** Each GeoJSON table a run loaded and each table a join wrote, which its plots read before the database. */
     private _geojsonCache: GeoJsonCache = new Map();
+    /** The CRS the last run's default workspace stores its tables in, as autk-db holds it, which `workspaceCrs` gives. */
+    private _workspaceCrs?: string;
+    /** The page's plot colors the last run's spec sets, which its plots draw in. */
+    private _plotColors: PlotColors = {};
 
     readonly interactions = new GrammarEventEmitter();
 
@@ -95,20 +100,23 @@ export class AutkGrammar {
         this.dataAdapter = options?.wrapDataAdapter ? hostDataAdapter(options.wrapDataAdapter(data)) : data;
         this.computeAdapter = options?.wrapComputeAdapter ? hostComputeAdapter(options.wrapComputeAdapter(compute)) : compute;
         this.mapAdapter = createMapAdapter(targets, this._layers, this._computeCache, this._maps, this._computeTypes, this._exports);
-        this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, this._geojsonCache, this._computeCache, this._plotRows, this._exports, this._plotCollections);
+        this.plotAdapter = createPlotAdapter(targets, this._layers, this._plotRegistry, this._plotLinks, this._geojsonCache, this._computeCache, this._plotRows, this._exports, this._plotCollections, () => this._plotColors);
     }
 
     /**
-     * The coordinate reference system autk-db stores a workspace's tables in, unless the spec's `workspaces` sets
-     * another for it.
+     * The coordinate reference system the default workspace of the last {@link run} stores its tables in, as autk-db
+     * holds it, which is the CRS of the features {@link data} gives: the `coordinateFormat` of the spec's `workspaces`
+     * entry for the default workspace, else autk-db's default, `'EPSG:3395'` (World Mercator). Before a run, and once
+     * {@link destroy} has run, autk-db's default.
      *
-     * Input data is expected in EPSG:4326 (WGS84) by default and is transformed
-     * to this CRS on load. Consumers that prepare data for injection (e.g. by
-     * serialising a GeoDataFrame) can read this value and reproject accordingly
-     * instead of hard-coding a CRS string.
+     * A source reads its coordinates in EPSG:4326 (WGS84) by default, and autk-db transforms them to its workspace's
+     * CRS as it loads them. An `update` source's `geojsonObject` gives them in its workspace's CRS, which autk-db stores
+     * as they come, so a host that prepares those rows (for example by serialising a GeoDataFrame) reprojects them to
+     * that CRS: for a spec it is about to run, the `coordinateFormat` of the spec's `workspaces` entry for the table's
+     * workspace, else autk-db's default. This value is the default workspace's once the spec has run.
      */
     get workspaceCrs(): string {
-        return DEFAULT_WORKSPACE_COORDINATE_FORMAT;
+        return this._workspaceCrs ?? DEFAULT_WORKSPACE_COORDINATE_FORMAT;
     }
 
     get data(): Record<string, Promise<FeatureCollection>> {
@@ -215,6 +223,7 @@ export class AutkGrammar {
         this._computeTypes.clear();
         this.grammarEngine = undefined;
         this._data = {};
+        this._workspaceCrs = undefined;
     }
 
     async run(spec: UrbanSpec) {
@@ -235,9 +244,10 @@ export class AutkGrammar {
         const plotColors = plotColorsOf(asList(spec.plot));
 
         this.destroy();
-        // autk-plot keeps one mark color and one highlight color for the page, which a plot reads as it draws. A run that
-        // draws no plot leaves them as they are.
-        if (asList(spec.plot).length > 0) setPlotColors(plotColors);
+        // autk-plot keeps one mark color and one highlight color for the page, which a plot reads as it draws. The plot
+        // adapter sets the run's just before it draws each plot (setPlotColors), so a run that draws no plot, or fails
+        // before it draws one, leaves them as they are.
+        this._plotColors = plotColors;
 
         this.grammarEngine = createEngine({
             spec,
@@ -251,9 +261,14 @@ export class AutkGrammar {
 
         await this.grammarEngine.run();
         const db = this.grammarEngine.context as AutkDb | undefined;
-        // Leave the database in the default workspace, whose tables `data` lists.
-        if (db) await enterWorkspace(db);
+        // Leave the database in the default workspace, whose tables `data` lists, in the CRS `workspaceCrs` gives.
+        if (db) {
+            await enterWorkspace(db);
+            this._workspaceCrs = db.getWorkspaceConfiguration().coordinateFormat;
+        }
         this._wireLinks(spec);
+        // The plots show their first selections in the run's colors too, though another run drew its plots since.
+        if (this._plotRegistry.size > 0) setPlotColors(plotColors);
         this._pickFromTheStart(spec);
         this._selectFromTheStart(spec);
         this._rewireInteractions(spec);
@@ -393,6 +408,7 @@ export class AutkGrammar {
             // The link names its map, so it is that map's layer that it links, though other maps draw the table too.
             const layer = this._layers.find((drawn) => drawn.mapIndex === mapIndex && drawn.layerId === layerIdOf(layerRef));
             if (!layer) continue;
+            checkLinkedRows(link.source, this._plotCollections.get(link.source), layer, 'in links');
             linkPlotToLayer(plot, this._plotRows.get(link.source) ?? [], (plotSpec.events ?? []) as unknown as PlotEvent[], layer);
             addPlotLink(this._plotLinks, link.source, layer);
         }

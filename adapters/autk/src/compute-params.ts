@@ -141,10 +141,37 @@ function batchedReadsGeometry(...entries: Array<Record<string, UniformEntry | Ma
 }
 
 /**
+ * The tag groups a building part sets as a whole. autk-core 4.1.1 draws a part from the building's tags with the part's
+ * over them, but a part that sets any tag of a group takes none of the building's tags of that group: its building
+ * triangulators read a part's tags from `getBuildingParts` (autk-core/src/building-feature.ts), which autk-core does
+ * not export, so {@link partProperties} follows it here.
+ */
+const PART_TAG_GROUPS = [
+    ['height', 'building:height', 'levels', 'building:levels'],
+    ['min_height', 'min_level', 'building:min_level'],
+];
+
+/**
+ * The properties autk-core draws a building part from: the building's, `building` (its properties without `parts`), with
+ * `part`'s over them, less the building's tags of each group in {@link PART_TAG_GROUPS} of which `part` sets a tag.
+ */
+function partProperties(building: Record<string, unknown>, part: Record<string, unknown>): Record<string, unknown> {
+    const properties: Record<string, unknown> = { ...building, ...part };
+    const sets = (key: string) => Object.prototype.hasOwnProperty.call(part, key);
+    for (const group of PART_TAG_GROUPS) {
+        if (!group.some(sets)) continue;
+        for (const key of group) if (!sets(key)) delete properties[key];
+    }
+    return properties;
+}
+
+/**
  * The features a batched entry that reads the geometry packs for `feature`: one for each polygon of a MultiPolygon,
  * and of a GeometryCollection, nested collections included, each a Polygon with the feature's properties. A member of
  * a GeometryCollection takes its part's properties over them too, from the `properties.parts` entry whose
- * `geometryIndex` is its place, as autk-db keeps a building. Any other feature, and one with no polygon, is as it is.
+ * `geometryIndex` is its place, as autk-db keeps a building, and as autk-core draws the part
+ * ({@link partProperties}): a part that sets its own height or levels takes none of the building's, and so for its
+ * base. Any other feature, and one with no polygon, is as it is.
  */
 function polygonsOf(feature: Feature): Feature[] {
     const geometry = feature.geometry;
@@ -168,7 +195,7 @@ function polygonsOf(feature: Feature): Feature[] {
     };
     geometry.geometries.forEach((member, index) => {
         const part = partAt(index);
-        collect(member, part ? { ...shared, ...part } : feature.properties);
+        collect(member, part ? partProperties(shared, part) : feature.properties);
     });
     return out.length > 0 ? out : [feature];
 }

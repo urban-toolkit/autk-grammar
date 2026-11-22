@@ -86,7 +86,7 @@ await grammar.run({
 - **Without `groupBy`,** a heatmap's one band counts the rows near each cell, as `[{ column: '*', aggregateFn: 'count' }]` does: the grammar hands autk-db that count, where autk-db 4.1.1 left to itself drew 0 in every cell.
 - **An entry of `groupBy` without `aggregateFn` is refused,** as `collect` is, since a cell holds one value: autk-db would list the column's values near each cell, and 4.1.1 drew that band as 0 in every cell, with no error.
 - **`count` and `weighted` bands** are right on every autk-db release.
-- **`avg`, `sum`, `min` and `max` bands read 0 in every cell on npm's autk-db 4.1.1,** for any column. Autark's next autk-db release fixes it (our urban-toolkit/autark#132), and Curio's vendored autk-db already carries the fix.
+- **`avg`, `sum`, `min` and `max` bands read 0 in every cell on autk-db 4.1.1,** for any column. urban-toolkit/autark#132, merged into Autark's main, fixes them.
 
 ### Heatmap `normalize`
 
@@ -104,9 +104,9 @@ A `sql` source saves the rows of a query over the tables of its workspace as a n
 | Field | Effect |
 |---|---|
 | `query` | A `SELECT`, or a `WITH` query that ends in one, in DuckDB's SQL, naming the workspace's tables by their names. autk-db refuses any other statement, and any query in which `insert`, `update`, `delete`, `create`, `alter`, `drop`, `truncate` or `replace` appears as a word, even inside a string; the run's message names the source. |
-| `layerType` | How a map draws the new table. The query then returns its geometry in a column named `geometry`, as the workspace's tables hold it, in the workspace's CRS. Without it, the table has no layer type: a plot draws its rows, but a map does not draw it and `grammar.data` does not list it. |
+| `layerType` | How a map draws the new table, from its `geometry` column, in the workspace's CRS, as the workspace's tables hold it. Without it, the table has no layer type: a plot draws its rows, but a map does not draw it and `grammar.data` does not list it. |
 
-A GeoJSON table keeps each feature's properties in a JSON column, `properties`, which `properties->>'name'` reads as text; a CSV or JSON table keeps a column per field. A query that returns `properties` gives each feature those properties; otherwise each column but `geometry` becomes a property. Saving under a table's own name replaces it.
+A GeoJSON table keeps each feature's properties in a JSON column, `properties`, which `properties->>'name'` reads as text; a CSV or JSON table keeps a column per field. A query that returns `properties` gives each feature those properties; otherwise each column but `geometry` becomes a property. A query that returns a geometry returns it as a column named `geometry`, as in `ST_Centroid(geometry) AS geometry`, with a `layerType` or without one: autk-db reads the new table's geometry from that column, and the run refuses a geometry under another name, saying so. Saving under a table's own name replaces it.
 
 ```ts
 await grammar.run({
@@ -132,11 +132,13 @@ An `update` source replaces or changes the rows of a table already loaded, `data
 | Field | Effect |
 |---|---|
 | `strategy` | `replace` swaps every row of the table for the given rows. `update` changes the rows whose `idColumn` value a given row has: in a table with a geometry, each takes the given row's geometry and properties, and no row is added; in a table without one, the given rows replace them, and those that match no row are added. |
-| `idColumn` | With `update`, the column that matches a given row to the table's rows: a column such as `month`, or a feature property as `properties.<name>`. |
-| `geojsonObject` | The rows of a table with a geometry, as a FeatureCollection. autk-db stores their coordinates as they come, so they are in the workspace's CRS, as `grammar.data` gives a table's features. |
-| `jsonObject` | The rows of a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`, as an array of objects. |
+| `idColumn` | With `update`, the column that matches a given row to the table's rows: in a table without a geometry, one of its columns, such as `month`; in a table with one, a feature property as `properties.<name>`, or the feature id, `geojson_id` on a GeoJSON layer and `id` on an OpenStreetMap layer, which matches each given feature by the `id` that `grammar.data` gives it. |
+| `geojsonObject` | The rows of a table with a geometry, as a FeatureCollection. autk-db stores their coordinates as they come, so they are in the CRS of the table's workspace, as `grammar.data` gives a table's features: the `coordinateFormat` of its `workspaces` entry, else autk-db's default, `EPSG:3395`. Once a spec has run, `grammar.workspaceCrs` gives its default workspace's. |
+| `jsonObject` | The rows of a table without a geometry, such as a CSV or JSON table loaded without `geometryColumns`, as an array of objects. With `update`, a row's keys name the table's columns, in any case and in any order, each once, and a column a row leaves out is null in it; the run refuses a key that names no column of the table, naming it. The run refuses `update` on a table whose columns named as whole numbers, such as `2020`, do not all come first, smallest first: use `replace` with every row of the table, or rename those columns. |
 
 A source gives its rows in `geojsonObject` or in `jsonObject`, not both. The maps and plots after it draw the table's rows as they are now. The run's message names the table when autk-db refuses an update.
+
+**A layer of plain columns takes `replace` only.** autk-db's `update` of a table with a geometry sets the `properties` column of each row it matches, and a layer of plain columns, which keeps each value in a column of its own, has none: a CSV or JSON table loaded with `geometryColumns`, or a `sql` source's table whose query returns no `properties`. The run refuses `update` on such a table before anything runs, saying so. `replace` gives it the rows of a FeatureCollection, such as its own features from `grammar.data`, edited, each row's values in its `properties`, as a GeoJSON layer keeps them, so a `sql` source after it reads a column as `properties->>'<column>'`.
 
 ```ts
 await grammar.run({
@@ -163,9 +165,9 @@ data: [
 
 ### Workspaces
 
-A workspace is an isolated set of tables with its own extent. The first source loaded into a workspace sets its extent, and later sources are cut to it, so two areas that must not clip each other go in two workspaces. A table is found by its name inside its workspace, so two workspaces may hold tables of the same name.
+A workspace is an isolated set of tables with its own extent. The first source loaded into a workspace sets its extent, and later sources are cut to it, so two areas that must not clip each other go in two workspaces; a `drop`, a `sql` source or an `update` can change what they are cut to (see [Extent and crop layer](#extent-and-crop-layer)). A table is found by its name inside its workspace, so two workspaces may hold tables of the same name.
 
-`workspace` names one, on a source (where its table goes), a compute pass (where it reads and writes), a map or a plot (where it reads its tables). An entry without one uses the default workspace.
+`workspace` names one, on a source (where its table goes), a compute pass (where it reads and writes), a map or a plot (where it reads its tables). An entry without one uses the default workspace, which autk-db names `autk`.
 
 ### `workspaces`
 
@@ -185,6 +187,22 @@ await grammar.run({
   data: [{ type: 'geojson', outputTableName: 'parcels', geojsonFileUrl: 'parcels.geojson' }],
   map: { layerRefs: [{ dataRef: 'parcels' }] },
 });
+```
+
+### Extent and crop layer
+
+autk-db cuts each CSV, JSON or GeoJSON source it loads to the workspace's extent and to its crop layer: the first table with a geometry the workspace loads, when that table holds polygons, or the surface of an OpenStreetMap area. autk-db finds the crop layer by its name as each of those sources loads, so a source that changes that table changes how the sources after it are cut:
+
+- **A `drop` of it** leaves the workspace without a crop layer, and with its extent: later sources are cut to the extent alone.
+- **A `sql` source saved under its name, or an `update` of it,** gives it other rows, and later sources are cut to those.
+- **A `sql` source that saves a table without a geometry under its name** makes the next CSV, JSON or GeoJSON source with a geometry fail to load.
+
+```ts
+data: [
+  { type: 'geojson', outputTableName: 'manhattan', geojsonFileUrl: 'manhattan.geojson' },  // the crop layer
+  { type: 'drop', dataRef: 'manhattan' },  // no crop layer from here on
+  { type: 'csv', outputTableName: 'noise', csvFileUrl: 'noise.csv', geometryColumns: true },  // cut to manhattan's extent alone, not to its shape
+],
 ```
 
 ## OpenStreetMap areas
@@ -258,6 +276,8 @@ The CRS of an `osm` source's coordinates, as an EPSG string. It defaults to `EPS
 
 A map layer or a plot with `osmElements: true` reads an OpenStreetMap layer table as one feature per OSM element it was built from, rather than one per row. Each feature's properties are the element's tags, its `osm_type` (`node`, `way` or `relation`) and its `osm_id`; in a buildings table, whose parts are elements of their own, also the `building_id` of its building. A part takes only its own tags, so a buildings layer draws only the parts whose tags give their height. A compute pass that changes the table in place leaves autk-db's elements as they were, so they are read without the pass's columns. A table that is not an OSM layer, a surface, and an OSM table an `update` source or an in-place `writeBack` changed are read row by row, as without it.
 
+A plot and a layer linked, in [`links`](#plots-and-links) or by the plot's `mapRef`, find each other's rows by their feature ids, and autk-db names an element such as `way/123` but a row by a number. So a run refuses a link of which one view reads its table one feature per element and the other one per row: set `osmElements` on both, or on neither.
+
 ```ts
 map: { layerRefs: [{ dataRef: 'downtown_roads', osmElements: true, getFnv: 'highway', colorMapInterpolator: ColorMapInterpolator.CAT_TABLEAU10 }] },
 plot: { dataRef: 'downtown_roads', mark: 'table', axis: ['osm_id', 'highway', 'name'], osmElements: true },
@@ -281,11 +301,11 @@ A GPGPU pass runs a WGSL function once per feature of a table:
 
 `attributeArrays` and `attributeMatrices` pass more of each feature's values, and `uniforms`, `uniformArrays` and `uniformMatrices` pass values every invocation shares. `uniforms` and `uniformMatrices` can read theirs from a feature of a table (see [Compute helpers](#compute-helpers)).
 
-A pass reads such a `fromFeature` table as an earlier pass wrote it; else, when a GeoJSON source of the run loaded it with its coordinates in its workspace's CRS, as the source gave its features, as a plot reads its table; else as autk-db keeps it. The pass's own `dataRef` is read as autk-db keeps it, as a map draws it.
+A pass reads such a `fromFeature` table as an earlier pass wrote it; else, when a GeoJSON source of the run loaded it with its coordinates in its workspace's CRS, as the source gave its features, but only those autk-db kept, in the order `grammar.data` gives them: a feature outside the workspace's box or crop is not read, and a polygon autk-db cut to the crop keeps the source's outline; else as autk-db keeps it. The pass's own `dataRef` is read as autk-db keeps it, as a map draws it.
 
-A batched entry that reads the geometry, with a path that starts with `geometry.`, packs each polygon as a feature of its own: each polygon of a MultiPolygon, and of a GeometryCollection, with the feature's properties, beside which every other batched value of the feature repeats. autk-db keeps each feature of a `buildings` table in its building model, one GeometryCollection per building with each part's tags in `properties.parts`, so each polygon of a building read as autk-db keeps it also takes its part's tags. A path such as `geometry.coordinates.0` then reads every polygon's outer ring, from a source's own features and from autk-db's buildings alike, and `num_features` counts the polygons.
+A batched entry that reads the geometry, with a path that starts with `geometry.`, packs each polygon as a feature of its own: each polygon of a MultiPolygon, and of a GeometryCollection, with the feature's properties, beside which every other batched value of the feature repeats. autk-db keeps each feature of a `buildings` table in its building model, one GeometryCollection per building with each part's tags in `properties.parts`, so each polygon of a building read as autk-db keeps it also takes its part's tags, over the building's, as autk-core draws the part: a part that sets any of `height`, `building:height`, `levels` and `building:levels` takes none of those four from the building, and a part that sets any of `min_height`, `min_level` and `building:min_level` none of those three. A path such as `geometry.coordinates.0` then reads every polygon's outer ring, from a source's own features and from autk-db's buildings alike, and `num_features` counts the polygons.
 
-When an attribute reads the geometry of the pass's own table, a MultiLineString is handed to autk-compute as one line of its points, in their order: autk-compute packs a matrix attribute row by row, and a MultiLineString's rows are lines. The pass's result keeps each feature's own geometry.
+When an attribute reads the geometry of the pass's own table, a MultiLineString is handed to autk-compute as one line of its points, in their order: autk-compute packs a matrix attribute row by row, and a MultiLineString's rows are lines. The joined line also runs from each line's last point to the next line's first, segments the road does not have, so a function that reads the segments between consecutive points reads those too. The pass's result keeps each feature's own geometry.
 
 A render pass renders tables on the GPU from each viewpoint, in several directions, and counts what each frame shows: a visibility or sky-view metric. Its result is a new table: the viewpoints' features, with the metrics in `feature.properties.compute.render`: `sampleCount`, the frames rendered from the feature, and `classes` or `objects`.
 
@@ -368,11 +388,12 @@ map: { layerRefs: [{ dataRef: 'fidi_blocks', getFnv: 'compute.block', colorMapIn
 
 A pass of any type with `writeBack: true` also keeps its result in autk-db, in the pass's workspace, so that autk-db's own operations read it: a source that runs after compute, such as a join, a heatmap, a `sql` source or an update, and a host that reads autk-db after the run, or runs the passes on a database of its own (see [Compute steps on a host's database](#compute-steps-on-a-hosts-database)). Later passes, maps and plots read the result as they do without it.
 
-- **A new table**, a pass's `outputTableName` (a render or windows pass always has one): autk-db holds every row of the result, with its feature id and its properties, as a layer of the type a map draws it as. autk-db cuts a source it loads to the workspace's extent and crop layer, but not a result written back, so the windows of a building that reaches past the crop layer stay.
+- **A new table**, a pass's `outputTableName` (a render or windows pass always has one): autk-db holds every row of the result, with its feature id and its properties, as a layer of the type a map draws it as. The rows take the place of a table of that name only once autk-db holds them all. autk-db cuts a source it loads to the workspace's extent and crop layer, but not a result written back, so the windows of a building that reaches past the crop layer stay.
 - **In place**, a GPGPU or clusters pass without `outputTableName`: each row of autk-db's table takes the result's properties, matched by its feature id. The table keeps its other columns, and each building its parts. autk-db clears its records of an OSM table's elements, as it does on any update, so `osmElements` on that table then gives its rows.
+- **In place into a table of plain columns,** such as a CSV or JSON layer, or a `sql` source's table that selects plain columns: the table is written whole, as a new one is. Its rows are the result's, each row's values in its `properties`, as a GeoJSON layer keeps them, so a `sql` source after compute reads a column as `properties->>'<column>'`. So is a table whose rows have no feature id.
 - autk-db puts each coordinate on the workspace's precision grid, as it does for every table, and keeps a point's height. A polygon's ring may then start at another of its vertices.
 
-A run refuses `writeBack` on a raster, and on a new table whose layer type it cannot tell, naming the pass. It also refuses a result autk-db does not then hold row for row.
+A run refuses `writeBack` on a raster, and on a new table whose layer type it cannot tell, naming the pass. It also refuses a result autk-db does not then hold row for row. When autk-db refuses the rows, such as rows that share a feature id, the run names the pass and autk-db's reason, and autk-db's tables stay as they were.
 
 ```ts
 compute: [{ type: 'clusters', dataRef: 'fidi_buildings', outputColumnName: 'block', outputTableName: 'fidi_blocks', writeBack: true }],
@@ -382,7 +403,7 @@ compute: [{ type: 'clusters', dataRef: 'fidi_buildings', outputColumnName: 'bloc
 
 A source with `after: 'compute'` runs once every compute pass has run, instead of before them, so it reads what passes kept in autk-db with `writeBack`: a join or a heatmap over a pass's result, a `sql` source that queries it, an update or a drop. Every type of source takes it. The sources with it run in the order of `data`, after all those without it, wherever they stand in `data`; the maps and plots are drawn once they have run.
 
-- **A source after compute that reads a table a pass writes without `writeBack` is refused,** naming both, since autk-db holds that table without the pass's result. A `sql` source's query is not checked.
+- **A source after compute that reads a table whose last pass writes it without `writeBack` is refused,** naming both, since autk-db then holds that table without that pass's result. A `sql` source's query is not checked. An earlier pass without it is no reason to refuse: each pass reads a table as the passes before it left it, so autk-db then holds the table as the maps and plots draw it.
 - **A source that writes a table a pass wrote,** such as a join into it, an update, a `sql` source saved under its name or a drop, changes autk-db's table, and the maps, plots and `grammar.data` then read that table: the pass's columns and the source's together.
 - **A join's or a heatmap's `groupBy` reads a compute column by its path,** `compute.<column>`. A join writes an aggregate of it under the key `<joinDataRef>.<column>`, which a layer's `getFnv` reads as a path: `sjoin.max.squares.compute.cluster`.
 
@@ -656,7 +677,7 @@ A plot's `id` names it: as the `source` of a link, as the `plotId` of its `plot:
 | `target` | The map: its `id`. |
 | `layer` | The layer of the target map, by its `title`, else its `dataRef`. Defaults to the layer that draws the plot's `dataRef`. |
 
-A run refuses a link that names no plot, map or layer of the spec. A plot's `mapRef` is a shorthand for links: it names the table (`dataRef`) of map layers, and links the plot to every layer that draws it, in every map.
+A run refuses a link that names no plot, map or layer of the spec, and a link, or a `mapRef`, of which one view reads an OpenStreetMap table one feature per element and the other one per row (see [`osmElements`](#osmelements)). A plot's `mapRef` is a shorthand for links: it names the table (`dataRef`) of map layers, and links the plot to every layer that draws it, in every map.
 
 ```ts
 await grammar.run({
@@ -724,7 +745,7 @@ plot: { dataRef: 'parcels', mark: 'scatter', axis: ['area', 'share'], tickFormat
 
 ### `axisLabels`
 
-The titles of a plot's axes, in the order of `axis`, in place of the column names: the x and y titles of a scatter plot, a bar chart, a line chart and a heat matrix, each axis's title of parallel coordinates, and a table's column headers. An axis without a title keeps its column's name, and an axis that holds a transform's output, `@transform`, is titled `value`. A run refuses more titles than `axis` has columns, and two titles alike.
+The titles of a plot's axes, in the order of `axis`, in place of the column names: the x and y titles of a scatter plot, a bar chart, a line chart and a heat matrix, each axis's title of parallel coordinates, and a table's column headers. An axis without a title keeps its column's name, and an axis that holds a transform's output, `@transform`, is titled `value`. A run refuses more titles than `axis` has columns, two titles alike, and, on a table, a title that a column without one keeps, since both headers would then sort by one column.
 
 ```ts
 plot: { dataRef: 'parcels', mark: 'bar', axis: ['area', '@transform'], transform: { preset: 'binning-1d' }, axisLabels: ['Area (m²)', 'Parcels'] }
@@ -737,7 +758,7 @@ plot: { dataRef: 'parcels', mark: 'bar', axis: ['area', '@transform'], transform
 | `markColor` | The color of the marks that are neither colored by value nor selected, `#rrggbb`. autk-plot's is `#bfbfbf`. |
 | `highlightColor` | The color of the selected marks, and of a table's selected rows, `#rrggbb`. autk-plot's is `#5dade2`. |
 
-autk-plot keeps one mark color and one highlight color for the whole page, which every plot on it reads as it draws and as it shows a selection. So the plots of one spec cannot differ: a run refuses two plots that set different ones, and a plot that sets neither takes the others'. A run sets them for the page, other specs' plots too, and a run whose plots set neither gives back autk-plot's own: each run draws in the colors its spec gives. A run that draws no plot leaves them as they are, and a page whose specs never set them keeps the colors autk-plot has.
+autk-plot keeps one mark color and one highlight color for the whole page, which every plot on it reads as it draws and as it shows a selection. So the plots of one spec cannot differ: a run refuses two plots that set different ones, and a plot that sets neither takes the others'. A run sets them for the page as its plots draw, other specs' plots too, and a run whose plots set neither gives back autk-plot's own: each run draws in the colors its spec gives, though another run on the page draws its plots while this one loads its data. A run that draws no plot, or fails before it draws one, leaves them as they are, and a page whose specs never set them keeps the colors autk-plot has.
 
 ```ts
 plot: [
@@ -857,7 +878,7 @@ A host that runs part of a spec itself, a server that loads its tables for examp
 | `createComputeSteps()` | A run's workspaces, sources and compute passes, one call at a time, on an autk-db database the host owns: a data adapter and a compute adapter wired to one another as `AutkGrammar` wires its own, and each pass's result as the grammar holds it (see [Compute steps on a host's database](#compute-steps-on-a-hosts-database)). |
 | `AutkGrammar`'s options `wrapComputeAdapter` and `wrapDataAdapter` (`AutkGrammarOptions`) | A host's own adapters around the grammar's, which every run of the grammar calls instead: a check around each pass, a kind of source of its own, or a database of its own for the run (see [A host's own adapters around a run's](#a-hosts-own-adapters-around-a-runs)). |
 | `AutkGrammar`'s `mapLayers(dataRef, mapId?)` and `plotCollection(plotId)` | What the last run handed each view: each layer's `collection`, the one autk-map was handed for it (the features of its table that have a geometry, or a raster's one), and each plot's collection, its rows (see [Interactions](#interactions)). Each is the collection itself, not a copy, to read and leave as it is; `destroy()` and the next run let them go. |
-| `dataPhases(spec)` | The entries of a spec's `data` in the order the grammar runs them: `before`, the sources it runs before the compute passes, and `after`, those it runs after them (see [`after`](#after)). It refuses an `after` other than `'compute'`, and a source after compute that reads a table a pass writes without `writeBack`. A host that loads the data on a server and runs the passes in a browser loads `before` on the server, and runs `after` in the browser once the passes have run, with the compute adapter's caches handed to the data adapter. |
+| `dataPhases(spec)` | The entries of a spec's `data` in the order the grammar runs them: `before`, the sources it runs before the compute passes, and `after`, those it runs after them (see [`after`](#after)). It refuses an `after` other than `'compute'`, and a source after compute that reads a table whose last pass writes it without `writeBack`. A host that loads the data on a server and runs the passes in a browser loads `before` on the server, and runs `after` in the browser once the passes have run, with the compute adapter's caches handed to the data adapter. |
 | `enterWorkspace(db, workspace?)` | Makes an entry's workspace (the default one without a name) the one autk-db works in, and switches only when another is current. Every adapter calls it before it reads or writes an entry's tables. |
 | `tableKey(workspace, name)` | The key of a table in those caches: its name in the default workspace, `<workspace>/<name>` in another. |
 | `applyCamera(map, camera)` | Moves an `AutkMap`'s camera as a map's `camera` says, from the view that fits its layers, and refuses a `pitch` that is not at least 0 and less than 90. The map adapter calls it once the layers are loaded, before the map's first `draw()`. It looks at a `center` that `resolveCameraCenter` put on the map, and refuses any other, so a host's later turns of a map the grammar drew keep its center. |
@@ -922,21 +943,26 @@ const counts = await db.getTable('largest_blocks');
 | `wrapDataAdapter(adapter)` | Returns the data adapter the `workspaces` and every source of every run go through, those before compute and those after. It keeps `resolveWorkspaces`: `{ ...adapter, resolveSource }` keeps the grammar's. A host that loads a kind of source of its own, such as a raster it holds as bytes, loads it there and hands every other source to the given adapter. |
 
 - **Each function is called once, as the grammar is made,** with the grammar's own adapter, already wired to the grammar's caches, so the maps and plots read what the host's adapters run.
-- **Each call of a data adapter takes the run's database,** undefined until the workspaces or the first source make one, and returns the database the run goes on with.
+- **Each call of a data adapter takes the run's database,** undefined until the workspaces or the first source make one, and returns the database the run goes on with. Each run starts with none, so its first call is handed none.
 - **A function that returns an adapter without those calls is refused** as the grammar is made. A grammar made without the options runs as before.
 
-A host that keeps the run's database in hand, to read its tables or to end its worker, hands the grammar's data adapter its own database where it is given none:
+A host that keeps the run's database in hand, to read its tables or to end its worker, hands the grammar's data adapter a database of its own where it is given none: a new one for each run, as the grammar makes one. A database made once and handed to every run would hold the last run's tables, and autk-db keeps its workspace's extent and crop for every table loaded after them. It also refuses an OpenStreetMap source once the workspace holds another table, such as one a pass of the last run wrote back, and a `workspaces` entry that changes the CRS or grid of a workspace that holds tables.
 
 ```ts
 import { AutkDb } from '@urban-toolkit/autk-db';
 import { AutkGrammar } from '@urban-toolkit/autk-grammar';
 
-const db = new AutkDb();
-await db.init();
+let db: AutkDb | undefined; // the database of the last run
+// A new database, for the first call of a run, which is handed none.
+const newDb = async () => {
+  db = new AutkDb();
+  await db.init();
+  return db;
+};
 const grammar = new AutkGrammar({ map: 'map' }, {
   wrapDataAdapter: (adapter) => ({
-    resolveWorkspaces: (context, workspaces) => adapter.resolveWorkspaces(context ?? db, workspaces),
-    resolveSource: (context, source) => adapter.resolveSource(context ?? db, source),
+    resolveWorkspaces: async (context, workspaces) => adapter.resolveWorkspaces(context ?? await newDb(), workspaces),
+    resolveSource: async (context, source) => adapter.resolveSource(context ?? await newDb(), source),
   }),
   wrapComputeAdapter: (adapter) => ({
     resolveCompute: async (context, pass) => {
@@ -947,6 +973,7 @@ const grammar = new AutkGrammar({ map: 'map' }, {
   }),
 });
 await grammar.run(spec); // db holds the run's tables, and stays in the host's hands whether the run ends or fails
+await grammar.run(spec); // run again: this run makes a database of its own, and db now names it
 ```
 
 ### Instead of `AutkGrammar`'s private fields
@@ -961,7 +988,7 @@ A host that reached into an `AutkGrammar` for its adapters, its caches, its data
 | Read `_computeTypes` | `steps.computed(name, workspace)?.layerType`. |
 | Replaced `computeAdapter` to wrap the passes of a run | `new AutkGrammar(targets, { wrapComputeAdapter })`. |
 | Replaced `dataAdapter` to wrap the sources of a run | `new AutkGrammar(targets, { wrapDataAdapter })`. |
-| Read the run's database from `grammarEngine.context` | Its own database, handed to the grammar's data adapter through `wrapDataAdapter`, as above. |
+| Read the run's database from `grammarEngine.context` | Its own database, a new one for each run, handed to the grammar's data adapter through `wrapDataAdapter`, as above. |
 | Read `_exports` for the features a run handed a map | `grammar.mapLayer(dataRef, mapId)?.collection`, what the run handed autk-map for the layer, and `grammar.plotCollection(plotId)` for a plot. |
 
 ### Arranging the views

@@ -344,6 +344,65 @@ test('draws and plots an OSM table as one feature per OSM element with osmElemen
     await expectDrawn(page, 'map0');
 });
 
+test('refuses a link or a mapRef between a plot and a layer of which one reads OSM elements and the other rows, and links them read alike', async ({ page }) => {
+    const box = {
+        type: 'osm', outputTableName: 'box', pbfFileUrl: '/data/lower_mnt.osm.pbf', queryArea: { bbox: BOX },
+        autoLoadLayers: { layers: ['roads'] },
+    } as DataSourceSpec;
+    const roads = (fields: Record<string, unknown>) => plotOf({
+        id: 'roads', dataRef: 'box_roads', mark: 'table', axis: ['osm_type', 'osm_id', 'highway'], events: ['click'], ...fields,
+    });
+
+    // A plot and a layer that both read the road elements: a click on a row of the table lights that element.
+    await runSpec(page, {
+        data: [box],
+        map: { layerRefs: [{ dataRef: 'box_roads', title: 'Roads', osmElements: true }] },
+        plot: roads({ osmElements: true, mapRef: 'box_roads' }),
+    });
+    const drawn = await page.evaluate(() => window.drawnRows('map0', 'Roads'));
+    expect(drawn.length).toBeGreaterThan(0);
+    const clicked = await page.evaluate((osmId) => {
+        type Row = Element & { __data__?: { osm_id?: unknown } };
+        const row = [...document.querySelectorAll<Row>('#plot tr.autkMark')].find((candidate) => candidate.__data__?.osm_id === osmId);
+        row?.dispatchEvent(new MouseEvent('click'));
+        return row?.__data__?.osm_id;
+    }, drawn[0]?.osm_id);
+    expect(clicked).toBe(drawn[0]?.osm_id);
+    const lit = (await layerById(page)).Roads.highlightedIds ?? [];
+    expect(lit.length).toBeGreaterThan(0);
+    expect(lit.filter((position) => drawn[position]?.osm_id !== clicked)).toEqual([]);
+
+    // One reads the road elements and the other, without osmElements, the table's rows. autk-db names an element
+    // "way/<id>" and a row by a number, so the link found no row in either view: a click on a row lit nothing, and a pick
+    // selected nothing. Refused by a mapRef and in links.
+    const refusal = (spec: UrbanSpec) => runSpec(page, spec).then(() => 'linked', (error: Error) => error.message);
+    expect.soft(await refusal({
+        data: [box],
+        map: { layerRefs: [{ dataRef: 'box_roads', title: 'Roads' }] },
+        plot: roads({ osmElements: true, mapRef: 'box_roads' }),
+    })).toContain('Plot "roads" and layer "Roads", linked by its mapRef, disagree on osmElements: the plot reads its table one feature per OpenStreetMap element, named such as "way/123", and the layer one feature per row, named by a number, so neither finds the other\'s rows. Set osmElements on both, or on neither.');
+    // The plot of rows shows a column the rows have: they have no osm_type, which autk-plot refuses to draw.
+    expect.soft(await refusal({
+        data: [box],
+        map: { id: 'm', layerRefs: [{ dataRef: 'box_roads', title: 'Roads', osmElements: true }] },
+        plot: roads({ axis: ['highway'] }),
+        links: [{ source: 'roads', target: 'm', layer: 'Roads' }],
+    })).toContain('Plot "roads" and layer "Roads", linked in links, disagree on osmElements: the layer reads its table one feature per OpenStreetMap element, named such as "way/123", and the plot one feature per row, named by a number, so neither finds the other\'s rows. Set osmElements on both, or on neither.');
+
+    // osmElements reads a table that is not an OSM layer row by row, so a plot with it and a layer without it read the
+    // same rows of the zones, and stay linked.
+    await runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones', title: 'Zones' }] },
+        plot: plotOf({ id: 'z', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], osmElements: true, mapRef: 'zones' }),
+    });
+    await page.evaluate(() => window.grammar.setPlotSelection('z', [2]));
+    const zone = await page.evaluate(() => window.grammar.plotCollection('z')?.features[2]?.properties?.id);
+    const litZones = (await layerById(page)).Zones.highlightedIds ?? [];
+    const drawnZones = await page.evaluate(() => window.drawnRows('map0', 'Zones'));
+    expect(litZones.map((position) => drawnZones[position]?.id)).toEqual([zone]);
+});
+
 test('refuses tag sets with a PBF extract, naming the source', async ({ page }) => {
     // autk-db reads tag sets from the Overpass API only, and refused them with a PBF extract without naming the source.
     await expect(runSpec(page, { data: [taggedSource({ pbfFileUrl: '/data/lower_mnt.osm.pbf' })] }))
@@ -2150,6 +2209,41 @@ test('writes a pass back in place into an OSM table, which keeps its buildings, 
     expect(await exported(true)).toEqual(written);
 });
 
+test("writes a pass back in place into a CSV or JSON layer and a sql source's table, whose columns are plain, with or without a feature id", async ({ page }) => {
+    // Three readings: p and q at one point, so in one cluster, and r apart.
+    const readings = [['p', 1, 40.751, -73.985], ['q', 2, 40.751, -73.985], ['r', 3, 40.753, -73.983]];
+    const layers: Array<[table: string, sources: DataSourceSpec[], rows: string[]]> = [
+        // A CSV layer: its rows have no feature id.
+        ['readings', [{ type: 'csv', outputTableName: 'readings', csvObject: [['name', 'v', 'Latitude', 'Longitude'], ...readings], geometryColumns: true }],
+            ['p 1 0', 'q 2 0', 'r 3 1']],
+        // A JSON layer with an id column, which autk-db's export gives each row as its feature id.
+        ['stations', [{
+            type: 'json', outputTableName: 'stations', geometryColumns: true,
+            jsonObject: readings.map(([name, v, Latitude, Longitude], i) => ({ id: i + 1, name, v, Latitude, Longitude })),
+        }], ['p 1 0', 'q 2 0', 'r 3 1']],
+        // A sql source's table of plain columns, autk-db's row id among them.
+        ['plain', [fourSquares, { type: 'sql', outputTableName: 'plain', query: "SELECT id, properties->>'name' AS name, geometry FROM squares", layerType: 'polygons' }],
+            ['a 0', 'b 0', 'c 1', 'd 1']],
+    ];
+    /** Each row of `table` as its name, its value and its cluster, in the grammar's cache and in autk-db's export of it. */
+    const written = (table: string) => page.evaluate(async (name) => {
+        const [cached, kept] = [await window.grammar.data[name], await window.dbLayer(name)].map((collection) => collection.features
+            .map((feature) => [feature.properties?.name, feature.properties?.v, feature.properties?.compute?.cluster].filter((value) => value !== undefined).join(' '))
+            .sort());
+        return { cached, kept };
+    }, table);
+
+    // autk-db holds the pass's cluster on every row of each table, as the cache does; a refused write-back gives its reason.
+    const outcomes: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const [table, sources, rows] of layers) {
+        expected[table] = { cached: rows, kept: rows };
+        outcomes[table] = await runSpec(page, { data: [area, ...sources], compute: [{ type: 'clusters', dataRef: table, outputColumnName: 'cluster', writeBack: true }] })
+            .then(() => written(table), (error: Error) => error.message.split('\n')[0]);
+    }
+    expect(outcomes).toEqual(expected);
+});
+
 test('draws and plots the OSM elements of a table a pass changed in place with osmElements, as autk-db holds them', async ({ page }) => {
     // A pass in place keeps its result in the grammar's cache, which maps and plots read first, and leaves autk-db's
     // records of the table's elements as they were. osmElements read the pass's rows: a plot of the elements refused
@@ -2249,6 +2343,24 @@ test("joins after compute into a table a pass wrote back, and from one by a comp
     expect(zoneClusters.sort()).toEqual([[0, 0], [1, 1], [2, null], [3, null]]);
     const zoneLayer = (await mapLayers(page, 'map1')).find((layer) => layer.id === 'zones');
     expect([zoneLayer?.isColorMap, zoneLayer?.domain]).toEqual([true, [0, 1]]);
+});
+
+test("joins after compute by the column of an earlier pass without writeBack, which a later pass in place keeps in autk-db with it", async ({ page }) => {
+    // The second pass reads the first's result from the grammar's cache, and its write-back sets each zone's properties
+    // whole, so autk-db holds both passes' columns.
+    await runSpec(page, {
+        data: [area, zones, { type: 'join', dataRef: 'area', joinDataRef: 'zones', groupBy: [{ column: 'compute.twice', aggregateFn: 'sum' }], after: 'compute' }],
+        compute: [
+            { dataRef: 'zones', attributes: { v: 'v' }, outputColumnName: 'twice', wgslFunction: 'return v * 2.0;' },
+            { type: 'clusters', dataRef: 'zones', outputColumnName: 'block', writeBack: true },
+        ],
+    });
+    const kept = await page.evaluate(async () => (await window.dbLayer('zones')).features
+        .map((feature) => [feature.properties?.id, feature.properties?.compute?.twice, feature.properties?.compute?.block])
+        .sort((a, b) => a[0] - b[0]));
+    expect(kept).toEqual([[0, 0, 0], [1, 20, 1], [2, 40, 2], [3, 60, 3]]);
+    // The join summed the first pass's column over the four zones: 0 + 20 + 40 + 60.
+    expect(await page.evaluate(async () => (await window.dbLayer('area')).features[0]?.properties?.sjoin?.sum?.['zones.compute.twice'])).toBe(120);
 });
 
 test('builds a heatmap after compute from the windows a pass wrote back', async ({ page }) => {
@@ -2398,9 +2510,63 @@ test("runs passes written back and sources after compute on a database the host 
     ranWidths.forEach((width, i) => expect(width as number).toBeCloseTo(widths[i] as number, 3));
 });
 
+// A pass writes back a new table `scored`, which the host's database may already hold. window.runOnHostDb runs the steps
+// on a database the page makes, which window.hostRows reads, after a refusal too.
+
+/** Three readings with the ids `ids`, which autk-db's export gives each row as its feature id, valued 1, 2 and 3. */
+function readingsWithIds(ids: [number, number, number]): DataSourceSpec {
+    return {
+        type: 'csv', outputTableName: 'readings', geometryColumns: true,
+        csvObject: [['id', 'v', 'Latitude', 'Longitude'], [ids[0], 1, 40.751, -73.985], [ids[1], 2, 40.752, -73.984], [ids[2], 3, 40.753, -73.983]],
+    };
+}
+
+/** A table of the name the pass writes, which the host's database already holds: two points. */
+const hostScored: DataSourceSpec = {
+    type: 'csv', outputTableName: 'scored', geometryColumns: true,
+    csvObject: [['name', 'Latitude', 'Longitude'], ['first', 40.754, -73.982], ['second', 40.755, -73.981]],
+};
+
+const scoredPass: ComputeSpec = { type: 'clusters', dataRef: 'readings', outputColumnName: 'cluster', outputTableName: 'scored', writeBack: true };
+
+/** The tables of the host's database whose names hold `scored`: the table itself, and any table aside. */
+function scoredTables(page: Page): Promise<Array<Record<string, unknown>>> {
+    return page.evaluate(() => window.hostRows("SELECT table_name AS name FROM information_schema.tables WHERE table_name LIKE '%scored%' ORDER BY name"));
+}
+
+test("leaves the host's table as it was, and no empty table, when autk-db refuses the rows a pass writes back as a new table", async ({ page }) => {
+    // Readings whose id column repeats: autk-db keeps no two rows of a layer with one feature id.
+    const readings = readingsWithIds([3, 3, 4]);
+    /** Runs a spec's steps on a database the page makes, and gives the refusal of the step that failed. */
+    const refusal = (spec: UrbanSpec) => page.evaluate((s) => window.runOnHostDb(s, []), spec).then(() => 'no refusal', (error: Error) => error.message);
+    const refused = /Clusters pass over "readings": autk-db could not keep "scored": Duplicate GeoJSON feature ID: "?3"?/;
+
+    // Without a table of that name, the refusal leaves none: neither an empty one nor any other.
+    const alone = await refusal({ data: [area, readings], compute: [scoredPass] });
+    expect(await scoredTables(page)).toEqual([]);
+    expect(alone).toMatch(refused);
+
+    // With one, the refusal leaves it as it was.
+    const over = await refusal({ data: [area, hostScored, readings], compute: [scoredPass] });
+    expect(await page.evaluate(() => window.hostRows('SELECT count(*) AS n FROM scored'))).toEqual([{ n: 2 }]);
+    expect(await scoredTables(page)).toEqual([{ name: 'scored' }]);
+    expect(over).toMatch(refused);
+    expect(await page.evaluate(() => window.hostRows('SELECT name FROM scored ORDER BY name'))).toEqual([{ name: 'first' }, { name: 'second' }]);
+});
+
+test("puts the rows a pass writes back as a new table in place of the host's table of that name, and leaves no table aside", async ({ page }) => {
+    await page.evaluate((spec) => window.runOnHostDb(spec, []), { data: [area, hostScored, readingsWithIds([3, 4, 5])], compute: [scoredPass] } as UrbanSpec);
+    expect(await scoredTables(page)).toEqual([{ name: 'scored' }]);
+    // The pass's three readings, each at a point of its own, so in a cluster of its own; the host's two rows are gone.
+    expect(await page.evaluate(() => window.hostRows(
+        "SELECT CAST(properties->>'v' AS INTEGER) AS v, CAST(properties->'compute'->>'cluster' AS INTEGER) AS cluster FROM scored ORDER BY v")))
+        .toEqual([{ v: 1, cluster: 0 }, { v: 2, cluster: 1 }, { v: 3, cluster: 2 }]);
+});
+
 // A host made AutkGrammar with adapters of its own around the grammar's (wrapDataAdapter and wrapComputeAdapter), which
 // every run calls instead. window.runWrapped makes them: they record what goes through them and hand it on, the data
-// adapter handing the grammar's a database the page made.
+// adapter handing the grammar's a database the page made, as the README's example does. window.runWrappedAgain runs
+// that grammar again.
 
 test("sends a run's workspaces, every source and every pass through a host's own adapters around the grammar's, on the host's database", async ({ page }) => {
     const spec: UrbanSpec = {
@@ -2446,6 +2612,44 @@ test("sends a run's workspaces, every source and every pass through a host's own
     const unwrapped = await page.evaluate(() => window.drawnRows('map0', 'squares').map((row) =>
         `${row?.name} ${(row?.compute as { cluster?: number } | undefined)?.cluster} ${(row?.sjoin as { count?: { pins?: number } } | undefined)?.count?.pins}`));
     expect(unwrapped.sort()).toEqual(drawn);
+});
+
+test("runs the README's after example twice on one grammar, each run on a database of the host's own that wrapDataAdapter hands it", async ({ page }) => {
+    // The README's example of a source after compute: an OpenStreetMap area, a clusters pass written back, and a sql
+    // source that counts the buildings of each block the pass kept in autk-db, plotted.
+    const spec: UrbanSpec = {
+        data: [
+            { type: 'osm', outputTableName: 'fidi', pbfFileUrl: '/data/lower_mnt.osm.pbf', queryArea: { bbox: [-74.0132, 40.7032, -74.0072, 40.7088] }, autoLoadLayers: { layers: ['buildings'] } },
+            {
+                type: 'sql',
+                outputTableName: 'largest_blocks',
+                query: "SELECT CAST(properties->'compute'->>'block' AS INTEGER) AS block, CAST(count(*) AS INTEGER) AS buildings FROM fidi_blocks GROUP BY block ORDER BY buildings DESC, block LIMIT 10",
+                after: 'compute',
+            },
+        ],
+        compute: [{ type: 'clusters', dataRef: 'fidi_buildings', outputColumnName: 'block', outputTableName: 'fidi_blocks', writeBack: true }],
+        plot: { dataRef: 'largest_blocks', mark: 'bar', axis: ['block', 'buildings'], tickFormats: [',~f', ',~f'] },
+    };
+    const largest = 'SELECT block, buildings FROM largest_blocks ORDER BY buildings DESC, block';
+    const bars = () => page.evaluate(() => document.querySelectorAll('#plot rect.autkMark').length);
+
+    const first = await page.evaluate((s) => window.runWrapped(s), spec);
+    expect([first.onHostDb, first.databases]).toEqual([true, 1]);
+    const blocks = await page.evaluate((query) => window.hostRows(query), largest);
+    expect(blocks.length).toBeGreaterThan(0);
+    expect(await bars()).toBe(blocks.length);
+
+    // The same grammar runs the spec again, as a host that keeps one grammar does. autk-db keeps a database's tables, its
+    // workspace's extent and crop, and its grid: it refuses an OpenStreetMap source once the workspace holds another
+    // table, such as the blocks the first run's pass wrote back.
+    const second = await page.evaluate((s) => window.runWrappedAgain(s), spec);
+    // The wrap functions were called once, as the grammar was made, and the run went through them as the first did.
+    expect([...second.wrapped].sort()).toEqual(['compute', 'data']);
+    expect(second.steps).toEqual(first.steps);
+    // The run went on a database of its own, the second the host made, which holds this run's tables: the same blocks.
+    expect([second.onHostDb, second.databases]).toEqual([true, 2]);
+    expect(await page.evaluate((query) => window.hostRows(query), largest)).toEqual(blocks);
+    expect(await bars()).toBe(blocks.length);
 });
 
 // What a run handed each view, which a host reads with the collection of each layer mapLayers gives and with
@@ -2564,20 +2768,32 @@ test('accepts useCentroid on a heatmap', async ({ page }) => {
     expect((await heatmapLayer(page)).finite).toEqual(byDefault.finite);
 });
 
-test('builds a heatmap band with normalize, which autk-db 4.1.1 draws from the raw counts', async ({ page }) => {
-    // This test encodes autk-db 4.1.1. urban-toolkit/autark#132 rescales a normalized band from 0 to 1 and adds _norm to
-    // its label; once an autk-db with it is released, the `latest` leg fails here, and the test moves to those values.
+test('builds a heatmap band with normalize: from the raw counts on autk-db 4.1.1, rescaled from 0 to 1 with autark#132', async ({ page }) => {
+    // autk-db 4.1.1 builds a normalized band from the values as they are, under the label it has without normalize.
+    // urban-toolkit/autark#132, on Autark's main, rescales it from 0 to 1 across the cells and adds _norm to its label.
+    // The label tells which of the two built the band, since autark's main still calls itself 4.1.1: the `locked` leg
+    // checks 4.1.1's band, and a run on an autk-db with #132 checks the rescaled one.
     const [neighborhoods, noise, source] = heatmapGeojson.data!;
     const heatmap = source as HeatmapSourceSpec;
     await runSpec(page, heatmapGeojson);
     const raw = (await heatmapLayer(page)).finite;
+    expect(Math.max(...raw), 'the busiest cell counts many complaints').toBeGreaterThan(1);
     await runSpec(page, {
         ...heatmapGeojson,
         data: [neighborhoods, noise, { ...heatmap, groupBy: heatmap.groupBy!.map((group) => ({ ...group, normalize: true })) }],
     });
     const normalized = (await heatmapLayer(page)).finite;
-    expect(Math.max(...raw), 'the busiest cell counts many complaints').toBeGreaterThan(1);
-    expect(normalized).toEqual(raw);
+    const bands = await page.evaluate(() => window.dbBands('heatmap'));
+    expect(bands.map((band) => band.id)).toEqual(['band_1']);
+    if (bands[0].label === 'count_noise') {
+        expect(normalized).toEqual(raw);
+    } else {
+        expect(bands[0].label).toBe('count_noise_norm');
+        const low = Math.min(...raw);
+        const high = Math.max(...raw);
+        expect(normalized).toHaveLength(raw.length);
+        normalized.forEach((value, cell) => expect(value, `cell ${cell}`).toBeCloseTo((raw[cell] - low) / (high - low), 5));
+    }
 });
 
 test('saves the rows of a sql source as a table, drawn as its layerType says, or plotted without one', async ({ page }) => {
@@ -2605,6 +2821,28 @@ test('saves the rows of a sql source as a table, drawn as its layerType says, or
     // autk-db runs a SELECT only, and the run names the source it refused.
     await expect(runSpec(page, { data: [area, zones, { type: 'sql', outputTableName: 'gone', query: 'DROP TABLE zones' }] }))
         .rejects.toThrow('SQL source "gone": Only SELECT queries are allowed for raw queries.');
+});
+
+test('saves a sql source whose query returns its geometry as geometry, and tells one that DuckDB finds no geometry column for to name a geometry it returns so', async ({ page }) => {
+    // autk-db puts the geometry of a table a query saves on the workspace's grid, read from a column named geometry, with
+    // a layerType or without one. DuckDB's error for a geometry under another name is the one for a query that reads a
+    // geometry column its table lacks, so the advice holds for both.
+    const centers = (name: string): DataSourceSpec => ({
+        type: 'sql', outputTableName: 'centers', query: `SELECT CAST(properties->>'id' AS INTEGER) AS id, ST_Centroid(geometry) AS ${name} FROM zones`,
+    });
+    await runSpec(page, { data: [area, zones, centers('geometry')] });
+    expect(await page.evaluate(() => window.dbRows('SELECT id FROM centers ORDER BY id'))).toEqual([{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }]);
+    const counts: DataSourceSpec = { type: 'csv', outputTableName: 'counts', csvObject: [['zone', 'count'], [1, 10]] };
+    /** The run's message when it was refused. */
+    const refusal = (spec: UrbanSpec) => runSpec(page, spec).then(() => 'ran', (error: Error) => error.message);
+    const advice = (table: string) => expect.stringContaining(
+        `SQL source "${table}": if the query returns a geometry, name it geometry, for example ST_Centroid(geometry) AS geometry. autk-db: Binder Error: Referenced column "geometry" not found`,
+    );
+    expect([
+        await refusal({ data: [area, zones, centers('center')] }),
+        // A table of plain columns has no geometry to read.
+        await refusal({ data: [counts, { type: 'sql', outputTableName: 'placed', query: 'SELECT zone, geometry FROM counts' }] }),
+    ]).toEqual([advice('centers'), advice('placed')]);
 });
 
 test('replaces and updates the rows of a table with an update source, and the map and the plot draw them as they are now', async ({ page }) => {
@@ -2643,6 +2881,156 @@ test('replaces and updates the rows of a table with an update source, and the ma
     // autk-db's refusal names the table.
     await expect(runSpec(page, { data: [area, zones, { type: 'update', dataRef: 'nowhere', strategy: 'replace', jsonObject: [{ v: 1 }] }] }))
         .rejects.toThrow('Update of "nowhere": Table nowhere not found.');
+});
+
+test("updates a table without a geometry by the names of its columns, whatever the order of a given row's keys", async ({ page }) => {
+    // autk-db stages the given rows with their columns in the order of their keys, then inserts them by position: on 4.1.1
+    // { count: 25, zone: 2 } wrote 25 in zone and 2 in count, and { total: 9, month: 'Feb' } was refused for its total.
+    const zoneCounts: DataSourceSpec = { type: 'csv', outputTableName: 'zones', csvObject: [['zone', 'count'], [1, 10], [2, 20]] };
+    const sales: DataSourceSpec = { type: 'csv', outputTableName: 'sales', csvObject: [['month', 'total'], ['Jan', 3], ['Feb', 5]] };
+    /** The table's rows in autk-db once the update ran, or the run's message when it was refused. */
+    const updated = (source: DataSourceSpec, dataRef: string, idColumn: string, jsonObject: Array<Record<string, unknown>>) =>
+        runSpec(page, { data: [source, { type: 'update', dataRef, strategy: 'update', idColumn, jsonObject }] })
+            .then(() => page.evaluate((table) => window.dbRows(`SELECT * FROM ${table} ORDER BY 1`), dataRef), (error: Error) => error.message);
+    expect([
+        await updated(zoneCounts, 'zones', 'zone', [{ count: 25, zone: 2 }]),
+        await updated(sales, 'sales', 'month', [{ total: 9, month: 'Feb' }]),
+        // A column a row leaves out is null in it, and a key the table lacks is refused.
+        await updated(sales, 'sales', 'month', [{ month: 'Feb' }]),
+        await updated(sales, 'sales', 'month', [{ month: 'Feb', total: 9, note: 'late' }]),
+    ]).toEqual([
+        [{ zone: 1, count: 10 }, { zone: 2, count: 25 }],
+        [{ month: 'Feb', total: 9 }, { month: 'Jan', total: 3 }],
+        [{ month: 'Feb', total: null }, { month: 'Jan', total: 3 }],
+        expect.stringContaining('Update of "sales": jsonObject[0] has "note", which is not a column of the table: "month", "total".'),
+    ]);
+});
+
+test('autk-db 4.1.1, handed the jsonObject rows of an update as 5.6.0 handed them, writes a key a row leaves out as null and matches names without regard to case', async ({ page }) => {
+    // This test encodes autk-db 4.1.1, run as 5.6.0's data adapter ran it: an update of a table without a geometry handed
+    // its jsonObject to updateTable unchanged (window.dbUpdate). autk-db stages the rows with DuckDB's read_json_auto,
+    // deletes the table's rows whose idColumn value a staged row has, then inserts every staged row by position. The
+    // grammar writes such rows as autk-db wrote these, each with its keys in the table's column order (the next test).
+    // Both E2E legs run autk-db 4.1.1, the newest on npm, so a later autk-db that writes them otherwise fails here.
+    const zoneCounts = (zone: string, count: string): DataSourceSpec => ({ type: 'csv', outputTableName: 'zones', csvObject: [[zone, count], [1, 10], [2, 20]] });
+    const sales: DataSourceSpec = { type: 'csv', outputTableName: 'sales', csvObject: [['month', 'total'], ['Jan', 3], ['Feb', 5]] };
+    /** The table's rows once autk-db's update ran on the rows as given, or autk-db's refusal. */
+    const written = async (source: DataSourceSpec, table: string, idColumn: string, data: Array<Record<string, unknown>>) => {
+        await runSpec(page, { data: [source] });
+        return page.evaluate(async ([table, idColumn, data]) => {
+            try {
+                await window.dbUpdate({ tableName: table, data, strategy: 'update', idColumn });
+            } catch (error) {
+                return `refused: ${error instanceof Error ? error.message : String(error)}`;
+            }
+            return window.dbRows(`SELECT * FROM ${table} ORDER BY 1`);
+        }, [table, idColumn, data] as const);
+    };
+    const refused = expect.stringMatching(/^refused: /);
+    expect([
+        // A key one row gives and another leaves out: null in the row that leaves it out.
+        await written(zoneCounts('zone', 'count'), 'zones', 'zone', [{ zone: 2, count: 25 }, { zone: 3 }]),
+        // Keys in another case than the table's columns.
+        await written(zoneCounts('Zone', 'Count'), 'zones', 'zone', [{ zone: 2, count: 25 }]),
+        // A null in a column no row gives a value, as the grammar hands autk-db a key a row leaves out.
+        await written(sales, 'sales', 'month', [{ month: 'Feb', total: null }]),
+        // A column no row gives: the staged rows have one column fewer than the table.
+        await written(sales, 'sales', 'month', [{ month: 'Feb' }]),
+        // A key the table lacks, in place of one of its columns: its value goes into that column.
+        await written(zoneCounts('zone', 'count'), 'zones', 'zone', [{ zone: 2, note: 5 }]),
+        // A key the table lacks, beside all of its columns: the staged rows have one column more than the table.
+        await written(zoneCounts('zone', 'count'), 'zones', 'zone', [{ zone: 2, count: 25, note: 'late' }]),
+        // Two keys that name one column, in two cases.
+        await written(zoneCounts('zone', 'count'), 'zones', 'zone', [{ zone: 2, Zone: 3, count: 25 }]),
+    ]).toEqual([
+        [{ zone: 1, count: 10 }, { zone: 2, count: 25 }, { zone: 3, count: null }],
+        [{ Zone: 1, Count: 10 }, { Zone: 2, Count: 25 }],
+        [{ month: 'Feb', total: null }, { month: 'Jan', total: 3 }],
+        refused,
+        [{ zone: 1, count: 10 }, { zone: 2, count: 5 }],
+        refused,
+        refused,
+    ]);
+});
+
+test('updates a table without a geometry as autk-db 4.1.1 wrote the rows 5.6.0 handed it, each value in the column its key names, and refuses a key the table lacks', async ({ page }) => {
+    // The rows of the test before this one, through the grammar: a column a row leaves out is null in it, and a key names
+    // its column without regard to case. A key the table lacks, which 4.1.1 wrote into another column or refused, is
+    // refused, naming it.
+    const zoneCounts = (zone: string, count: string): DataSourceSpec => ({ type: 'csv', outputTableName: 'zones', csvObject: [[zone, count], [1, 10], [2, 20]] });
+    const lower = zoneCounts('zone', 'count');
+    const upper = zoneCounts('Zone', 'Count');
+    /** The table's rows in autk-db once the update ran, or the run's message when it was refused. */
+    const updated = (source: DataSourceSpec, jsonObject: Array<Record<string, unknown>>) =>
+        runSpec(page, { data: [source, { type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'zone', jsonObject }] })
+            .then(() => page.evaluate(() => window.dbRows('SELECT * FROM zones ORDER BY 1')), (error: Error) => error.message);
+    const notAColumn = expect.stringContaining('Update of "zones": jsonObject[0] has "note", which is not a column of the table: "zone", "count".');
+    expect([
+        await updated(lower, [{ zone: 2, count: 25 }, { zone: 3 }]),
+        await updated(lower, [{ count: 25, zone: 2 }, { zone: 3 }]),
+        await updated(upper, [{ zone: 2, count: 25 }]),
+        await updated(upper, [{ count: 25, zone: 2 }]),
+        await updated(lower, [{ zone: 2, note: 5 }]),
+        await updated(lower, [{ zone: 2, count: 25, note: 'late' }]),
+        await updated(lower, [{ zone: 2, Zone: 3, count: 25 }]),
+    ]).toEqual([
+        [{ zone: 1, count: 10 }, { zone: 2, count: 25 }, { zone: 3, count: null }],
+        [{ zone: 1, count: 10 }, { zone: 2, count: 25 }, { zone: 3, count: null }],
+        [{ Zone: 1, Count: 10 }, { Zone: 2, Count: 25 }],
+        [{ Zone: 1, Count: 10 }, { Zone: 2, Count: 25 }],
+        notAColumn,
+        notAColumn,
+        expect.stringContaining('Update of "zones": jsonObject[0] has "zone" and "Zone", which name one column of the table, "zone".'),
+    ]);
+});
+
+test('refuses the update strategy on a table whose column named as a whole number comes after another, and leaves its rows as they were', async ({ page }) => {
+    // The rows of an update reach autk-db as JSON objects, which put a key named as a whole number, such as "2020", before
+    // the others, and autk-db 4.1.1 inserts them by position: zone 2's row below wrote 25 in zone and 2 in "2020". The run
+    // refuses such an update before autk-db runs. A refused run leaves the grammar no database to read, so the run goes
+    // through runWrapped, whose database hostRows reads back.
+    const zones: DataSourceSpec = { type: 'csv', outputTableName: 'zones', csvObject: [['zone', '2020'], [1, 10], [2, 20]] };
+    const spec = { data: [zones, { type: 'update', dataRef: 'zones', strategy: 'update', idColumn: 'zone', jsonObject: [{ zone: 2, '2020': 25 }] }] } as UrbanSpec;
+    const outcome = await page.evaluate((spec) => window.runWrapped(spec), spec).then(() => 'ran', (error: Error) => error.message);
+    expect(await page.evaluate(() => window.hostRows('SELECT * FROM zones ORDER BY 1'))).toEqual([{ zone: 1, '2020': 10 }, { zone: 2, '2020': 20 }]);
+    expect(outcome).toContain(`Update of "zones": the update strategy cannot change a table whose column "2020", named as a whole number, comes after "zone". Use strategy 'replace' with every row of the table, or rename the column.`);
+});
+
+test('replaces the rows of a layer of plain columns, and refuses the update strategy on it, which autk-db 4.1.1 cannot run there', async ({ page }) => {
+    // A CSV table of points keeps each value in a column of its own beside its geometry: it has no properties column,
+    // which autk-db's update of a layer sets, and no feature id.
+    const noise: DataSourceSpec = {
+        type: 'csv', outputTableName: 'noise', geometryColumns: true,
+        csvObject: [['key', 'level', 'Latitude', 'Longitude'], [1, 50, 40.75, -73.98], [2, 70, 40.76, -73.97]],
+    };
+    await runSpec(page, { data: [noise] });
+    const exported = await page.evaluate(async () => (await window.grammar.data.noise).features);
+    expect(exported).toHaveLength(2);
+    const edited = {
+        type: 'FeatureCollection',
+        features: exported.map((feature) => ({ ...feature, properties: { ...feature.properties, level: feature.properties?.key === 2 ? 75 : feature.properties?.level } })),
+    };
+    // replace swaps its rows for its own export, edited.
+    await runSpec(page, { data: [noise, { type: 'update', dataRef: 'noise', strategy: 'replace', geojsonObject: edited } as DataSourceSpec] });
+    expect(await page.evaluate(async () => (await window.grammar.data.noise).features.map((feature) => Number(feature.properties?.level)).sort((a, b) => a - b)))
+        .toEqual([50, 75]);
+
+    // The update strategy is refused, by a property, by a column or with rows without a geometry, before autk-db runs; so
+    // is an update of a sql source's table of plain columns drawn as a layer.
+    const outcome = (spec: UrbanSpec) => runSpec(page, spec).then(() => 'ran', (error: Error) => error.message);
+    const update = (dataRef: string, fields: object) => ({ type: 'update', dataRef, strategy: 'update', ...fields }) as DataSourceSpec;
+    const zoneValues: DataSourceSpec = {
+        type: 'sql', outputTableName: 'zone_values', layerType: 'polygons',
+        query: "SELECT CAST(properties->>'id' AS INTEGER) AS zone, CAST(properties->>'v' AS INTEGER) AS v, geometry FROM zones",
+    };
+    const zoneTwo = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: null, properties: { zone: 2, v: 99 } }] };
+    const refused = (table: string) => expect.stringContaining(`Update of "${table}": on a layer, the update strategy sets the properties column of each row it matches, and this layer has none`);
+    expect([
+        await outcome({ data: [noise, update('noise', { idColumn: 'properties.key', geojsonObject: edited })] }),
+        await outcome({ data: [noise, update('noise', { idColumn: 'key', geojsonObject: edited })] }),
+        await outcome({ data: [noise, update('noise', { idColumn: 'key', jsonObject: [{ key: 2, level: 75 }] })] }),
+        await outcome({ data: [area, zones, zoneValues, update('zone_values', { idColumn: 'properties.zone', geojsonObject: zoneTwo })] }),
+    ]).toEqual([refused('noise'), refused('noise'), refused('noise'), refused('zone_values')]);
 });
 
 test('drops a table with a drop source, so data no longer lists it and a map no longer finds it', async ({ page }) => {
@@ -3240,6 +3628,26 @@ test('stores the tables of each workspace in the CRS and on the grid its workspa
         expect(Math.abs(origin[0] - x), `${name} origin x`).toBeLessThan(2);
         expect(Math.abs(origin[1] - y), `${name} origin y`).toBeLessThan(2);
     }
+});
+
+test("gives in workspaceCrs the CRS of the last run's default workspace, the one the spec's workspaces set for it", async ({ page }) => {
+    // workspaceCrs gave autk-db's default, EPSG:3395, whatever the spec's workspaces set.
+    const webMercator = { coordinateFormat: 'EPSG:3857', precisionGrid: 1 };
+    const runs: Array<UrbanSpec['workspaces']> = [
+        undefined,
+        [{ name: 'web', ...webMercator }], // another workspace only: the default one keeps autk-db's default
+        [webMercator],
+        [{ name: 'autk', ...webMercator }], // the default workspace, by the name autk-db gives it
+    ];
+    const seen: string[] = [];
+    for (const workspaces of runs) {
+        await runSpec(page, { ...(workspaces && { workspaces }), data: [area] });
+        seen.push(await page.evaluate(() => window.grammar.workspaceCrs));
+    }
+    // The grammar run again, with a spec without workspaces.
+    await page.evaluate((spec) => window.runAgain(spec), { data: [area] } as UrbanSpec);
+    seen.push(await page.evaluate(() => window.grammar.workspaceCrs));
+    expect(seen).toEqual(['EPSG:3395', 'EPSG:3395', 'EPSG:3857', 'EPSG:3857', 'EPSG:3395']);
 });
 
 // The gallery examples of the keys 5.0.0 adds, each run as the gallery runs it, and checked for what it draws or computes.
@@ -4008,6 +4416,43 @@ test('draws the marks of every plot of the page in one markColor, and the select
     expect(await plotStyle()).toEqual({ markColor: '#1f77b4', highlightColor: '#5dade2' });
 });
 
+test("sets the page's plot colors as a run's plots draw: a run that fails first leaves them, and one that loads its data while another draws keeps its own", async ({ page }) => {
+    const green = 'rgb(44, 160, 44)'; // #2ca02c
+    const zonesPlot = (fields: Record<string, unknown>) => plotOf({ dataRef: 'zones', axis: ['id', 'v'], ...fields });
+    const fills = async (target: string) => (await plotMarks(page, target)).map(({ fill }) => fill);
+
+    // A run that fails as it loads its data draws no plot, and leaves the page's colors as they were. It set them as it
+    // started.
+    await expect(runSpec(page, {
+        data: [area, zones, { type: 'drop', dataRef: 'nothing' }],
+        plot: zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c' }),
+    })).rejects.toThrow('Drop of "nothing"');
+    expect.soft(await page.evaluate(() => window.plotStyle()), 'the colors after a run that failed').toEqual({ markColor: '#bfbfbf', highlightColor: '#5dade2' });
+
+    // A run that sets a mark color loads its zones, held back here, while a second grammar's run, which sets none, draws
+    // its bars. The first run's bars are drawn in its own green: they were drawn in the gray the second run gave the page
+    // as it started.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/held/zones.geojson', async (route) => {
+        await held;
+        await route.fulfill({ json: (zones as unknown as { geojsonObject: unknown }).geojsonObject });
+    });
+    const heldZones = { type: 'geojson', outputTableName: 'zones', geojsonFileUrl: '/held/zones.geojson' } as DataSourceSpec;
+    type Pending = { firstRun?: Promise<string | null> };
+    await page.evaluate((spec) => {
+        (window as unknown as Pending).firstRun = window.runSpec(spec).then(() => null, (error: Error) => error.message);
+    }, { data: [area, heldZones], plot: zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c' }) } as UrbanSpec);
+    try {
+        await page.evaluate((spec) => window.runBeside(spec), { data: [area, zones], plot: zonesPlot({ id: 'c', mark: 'bar' }) } as UrbanSpec);
+        expect(await fills('beside')).toEqual([markGray, markGray, markGray, markGray]);
+    } finally {
+        release();
+    }
+    expect(await page.evaluate(() => (window as unknown as Pending).firstRun)).toBeNull();
+    expect.soft(await fills('plot'), "the bars of the run that loaded its data while the other drew").toEqual([green, green, green, green]);
+});
+
 test('colors the ten noisiest neighborhoods of plot-colors alike on its map and its chart, and selects the noisiest', async ({ page }) => {
     const spec = await exampleSpec(page, 'plot-colors');
     expect(spec.plot).toMatchObject({ colorMapInterpolator: 'interpolateReds', colorMapRange: [0, 80], selection: [0], highlightColor: '#1f77b4' });
@@ -4072,6 +4517,65 @@ test("reads each building part's outline in a pass's fromFeature table, as a Geo
     const widths = await page.evaluate(() => Promise.all([0, 1, 2, 3].map((i) => window.valueAt('spots', i, 'compute.width'))));
     expect(widths).toHaveLength(4);
     for (const width of widths) expect(width as number).toBeCloseTo(60, 3);
+});
+
+test("reads in a pass's fromFeature table only the parts autk-db kept, in the order grammar.data gives them", async ({ page }) => {
+    // The test above's three parts, after a fourth 20 m part 2 km east of the ground, outside the workspace's box:
+    // autk-db drops it, and the map and grammar.data hold three parts. A pass read the source as it was given, the
+    // dropped part too: every spot added up four widths, 80 m, and the part at index 1 was the source's second, not the
+    // second part grammar.data gives.
+    const [x0, y0] = [-8235000, 4946000];
+    const square = (x: number, y: number, size: number) =>
+        ({ type: 'Polygon', coordinates: [[[x, y], [x + size, y], [x + size, y + size], [x, y + size], [x, y]]] });
+    const inMeters = (outputTableName: string, features: Array<{ properties: Record<string, unknown>; geometry: unknown }>, layerType?: string) => ({
+        type: 'geojson', outputTableName, coordinateFormat: 'EPSG:3395', ...(layerType && { layerType }),
+        geojsonObject: { type: 'FeatureCollection', features: features.map((feature) => ({ type: 'Feature', ...feature })) },
+    });
+    await runSpec(page, {
+        data: [
+            inMeters('ground', [{ properties: {}, geometry: square(x0 - 500, y0 - 500, 1000) }]),
+            inMeters('parts', [
+                { properties: { height: 99 }, geometry: square(x0 + 2000, y0, 20) },
+                ...[0, 1, 2].map((i) => ({ properties: { height: 10 + i }, geometry: square(x0 + i * 50, y0, 20) })),
+            ], 'buildings'),
+            inMeters('spots', [0, 1, 2, 3].map((i) => ({ properties: { w: 1 }, geometry: { type: 'Point', coordinates: [x0 + i * 40, y0 - 100] } }))),
+        ],
+        compute: [
+            {
+                dataRef: 'spots',
+                attributes: { w: 'w' },
+                uniformMatrices: { o: { fromFeature: { layer: 'parts', path: 'geometry.coordinates.0', iterate: 'batched' }, cols: 2 } },
+                outputColumnName: 'width',
+                // o packs [xmin,ymin, xmax,ymin, xmax,ymax, xmin,ymax] per part: sum the parts' widths.
+                wgslFunction: [
+                    'var total = 0.0;',
+                    'for (var i = 0u; i < u32(num_features); i++) { total += o[i * 8u + 2u] - o[i * 8u]; }',
+                    'return total * w;',
+                ],
+            },
+            // The height of the part at index 1, in a table of its own.
+            {
+                dataRef: 'spots',
+                attributes: { w: 'w' },
+                uniforms: { h: { fromFeature: { layer: 'parts', path: 'properties.height', index: 1 } } },
+                outputColumnName: 'second',
+                outputTableName: 'second_part',
+                wgslFunction: 'return h * w;',
+            },
+        ],
+    } as unknown as UrbanSpec);
+    // autk-db kept the three parts inside the box, which grammar.data gives.
+    expect(await page.evaluate(async () => (await window.grammar.data.parts).features.length)).toBe(3);
+    const heights = await page.evaluate(() => Promise.all([0, 1, 2].map((i) => window.valueAt('parts', i, 'height'))));
+    expect([...heights as number[]].sort((a, b) => a - b)).toEqual([10, 11, 12]);
+    // Every spot reads the outlines of those three parts, 3 x 20 m, and the part at index 1 is grammar.data's.
+    const read = await page.evaluate(() => Promise.all([0, 1, 2, 3].map(async (i) =>
+        [await window.valueAt('spots', i, 'compute.width'), await window.valueAt('second_part', i, 'compute.second')])));
+    expect(read).toHaveLength(4);
+    for (const [width, second] of read) {
+        expect.soft(width as number, 'the widths of the parts autk-db kept').toBeCloseTo(60, 3);
+        expect.soft(second, "the height of grammar.data's part at index 1").toBe(heights[1]);
+    }
 });
 
 // A noon shadow pass over roads: each building, packed as the box of its outline, casts its shadow north as far as it

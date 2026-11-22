@@ -1,7 +1,7 @@
 import { PlotAdapter, PlotSpec, PlotMark } from '@urban-toolkit/the-urban-grammar';
 import { enterWorkspace, tableKey } from '../workspace';
 import { Targets, PlotRegistry, GeoJsonCache, ComputeCache } from '../types';
-import { addPlotLink, exportKey, exportOf, exportOptions, osmElementsOf } from '../drawn';
+import { addPlotLink, checkLinkedRows, exportKey, exportOf, exportOptions, osmElementsOf } from '../drawn';
 import type { DrawnLayer, DrawnLayers, LayerExports, PlotCollections, PlotLinks, PlotRows } from '../drawn';
 import { rowKeys, translateIds } from '../rows';
 import { checkPlotSelection, plotKey, plotOptions } from '../plot-options';
@@ -36,8 +36,10 @@ let colorsBefore: { markColor: ColorHEX; highlightColor: ColorHEX } | undefined;
  * whole page (`PlotStyle`), which every plot reads as it draws and as it shows a selection. So a run that sets them
  * colors every plot on the page, and a run whose plots set neither gives back the colors autk-plot had before a run set
  * any: a run draws in the colors its own spec gives, though a host makes a new grammar for each run and never destroys
- * the old one. A page whose specs set neither never has its colors touched. `AutkGrammar.run` calls it before it draws
- * its first plot.
+ * the old one. A page whose specs set neither never has its colors touched. The plot adapter calls it just before it
+ * draws each plot of a run, and `AutkGrammar.run` just before the run's plots show their first selections: so a run that
+ * draws no plot, or fails before it draws one, leaves the colors as they are, and the plots of a run that loads its data
+ * while another run draws its own are drawn in their run's colors.
  */
 export function setPlotColors(colors: PlotColors): void {
     if (colors.markColor === undefined && colors.highlightColor === undefined && !colorsBefore) return;
@@ -86,9 +88,10 @@ async function tableRows(db: AutkDb, name: string, key: string, exports?: LayerE
 /**
  * The plot adapter `AutkGrammar` runs. Each plot it draws goes in `plotRegistry`, the keys of the rows it draws in
  * `plotRows`, and the collection it handed autk-plot in `plotCollections`, by the plot's `id`, else its `dataRef`. A table
- * it reads from autk-db is the export the maps of the run draw, from `exports`.
+ * it reads from autk-db is the export the maps of the run draw, from `exports`. `colors` gives the page's plot colors the
+ * run's spec sets, which it sets just before it draws each plot (see {@link setPlotColors}).
  */
-export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotRegistry?: PlotRegistry, plotLinks?: PlotLinks, cache?: GeoJsonCache, computeCache?: ComputeCache, plotRows?: PlotRows, exports?: LayerExports, plotCollections?: PlotCollections): PlotAdapter {
+export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotRegistry?: PlotRegistry, plotLinks?: PlotLinks, cache?: GeoJsonCache, computeCache?: ComputeCache, plotRows?: PlotRows, exports?: LayerExports, plotCollections?: PlotCollections, colors?: () => PlotColors): PlotAdapter {
 
     return {
         async resolvePlot(context: unknown, spec: PlotSpec, index: number = 0): Promise<void> {
@@ -113,9 +116,17 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
             const geojson: FeatureCollection = elements ?? computeCache?.get(key) ?? cached ?? await tableRows(db, spec.dataRef, key, exports, spec.osmElements);
             // Refused before the plot is made, so a refused selection leaves no plot on the page.
             checkPlotSelection(spec, geojson.features?.length ?? 0);
+            // mapRef names the table of the layers to link to: every layer that draws it, in every map. The maps are
+            // drawn before the plots. A layer that reads its table otherwise than the plot, by OSM elements or by rows,
+            // is refused before the plot is made too (checkLinkedRows).
+            const linked = spec.mapRef ? (layers ?? []).filter((layer) => layer.dataRef === spec.mapRef) : [];
+            for(const layer of linked) checkLinkedRows(plotKey(spec), geojson, layer, 'by its mapRef');
 
             const events = (spec.events ?? []) as unknown as AutkPlotEvent[];
 
+            // autk-plot draws the plot as it makes it, in the page's colors: the run's, set here, after every wait of
+            // the run, since another run may have set its own meanwhile.
+            if (colors) setPlotColors(colors());
             const plot = new AutkPlot(div, {
                 type: grammarMarkToPlotType(spec.mark),
                 collection: geojson,
@@ -138,10 +149,7 @@ export function createPlotAdapter(targets?: Targets, layers?: DrawnLayers, plotR
             const rows = rowKeys(geojson.features ?? []);
             plotRows?.set(plotKey(spec), rows);
 
-            // mapRef names the table of the layers to link to: every layer that draws it, in every map. The maps are
-            // drawn before the plots.
-            for(const layer of layers ?? []) {
-                if(!spec.mapRef || layer.dataRef !== spec.mapRef) continue;
+            for(const layer of linked) {
                 linkPlotToLayer(plot, rows, events, layer);
                 addPlotLink(plotLinks, plotKey(spec), layer);
             }

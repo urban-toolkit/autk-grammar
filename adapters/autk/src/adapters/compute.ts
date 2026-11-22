@@ -8,6 +8,7 @@ import { computeLayerNames, runCompute } from '../compute-params';
 import { clustersTable, windowsTable } from '../compute-tables';
 import { enterWorkspace, inWorkspaceCrs, tableKey } from '../workspace';
 import { writeBack } from '../write-back';
+import { rowKeys } from '../rows';
 
 /**
  * The layer types a render pass draws. autk-compute skips a layer of any other type, points among them, with only a
@@ -24,6 +25,20 @@ function layerTypeOf(db: AutkDb, name: string, workspace: string | undefined, ty
 }
 
 /**
+ * The features of a GeoJSON source's table that autk-db kept, each as `source` gave it, in the order of `kept`, the table
+ * as autk-db exports it, which maps and `grammar.data` show. autk-db cuts a table to its workspace's box and crop as it
+ * loads it, and keeps its rows in an order of its own: the data adapter hands it a first feature without a geometry after
+ * the first one with one. A feature is found among autk-db's rows by its feature id (`rowKeys`), as maps and plots find a
+ * row. Without `source`, `kept`.
+ */
+function sourceRowsKept(kept: FeatureCollection, source: FeatureCollection | undefined): FeatureCollection {
+    if (!source) return kept;
+    const features = source.features ?? [];
+    const byKey = new Map(rowKeys(features).map((key, at) => [key, features[at]]));
+    return { ...source, features: rowKeys(kept.features ?? []).flatMap((key) => byKey.get(key) ?? []) };
+}
+
+/**
  * The compute adapter `AutkGrammar` runs. Its `resolveCompute(db, pass)` runs one entry of a spec's `compute`, in the
  * pass's workspace, which it leaves current: a GPGPU pass or a render pass on autk-compute, or a windows or clusters
  * pass on the CPU through autk-core. It does nothing without a database.
@@ -33,8 +48,8 @@ function layerTypeOf(db: AutkDb, name: string, workspace: string | undefined, ty
  * {@link tableKey} of its `outputTableName`, or of the table it computed over, and a later pass reads a table from it
  * first. `types` receives the layer type of each
  * table a pass wrote under its own `outputTableName`, which a map needs to draw it. `sources` is the cache the data
- * adapter fills: a pass reads a `fromFeature` table from it next, as its plots read theirs, when a GeoJSON source put
- * the table there with its coordinates in the workspace's CRS.
+ * adapter fills: a pass reads a `fromFeature` table from it next, the features autk-db kept of it, when a GeoJSON source
+ * put the table there with its coordinates in the workspace's CRS.
  */
 export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerTypes, sources?: GeoJsonCache): ComputeAdapter {
 
@@ -122,16 +137,17 @@ export function createComputeAdapter(cache?: ComputeCache, types?: ComputeLayerT
         const workspaceCrs = db.getWorkspaceConfiguration().coordinateFormat;
         for (const name of computeLayerNames(spec)) {
             const key = tableKey(spec.workspace, name);
-            // A `fromFeature` table a GeoJSON source loaded is read as the source gave it, as the plots read theirs,
-            // each feature with its own tags. autk-db keeps each feature of a buildings table in its building model,
-            // the parts' geometries inside a GeometryCollection, whose polygons a batched entry that reads the geometry
-            // packs one by one with their parts' tags (buildBatchedUniforms). The pass's own table is read as autk-db
-            // keeps it, as a map draws it, so its result holds the rows the map draws.
-            const cached = cache?.get(key) ?? (name === spec.dataRef ? undefined : inWorkspaceCrs(sources?.get(key), workspaceCrs));
+            // A `fromFeature` table a GeoJSON source loaded is read as the source gave it, each feature with its own
+            // tags, but only the features autk-db kept, in the order `grammar.data` gives them (sourceRowsKept).
+            // autk-db keeps each feature of a buildings table in its building model, the parts' geometries inside a
+            // GeometryCollection, whose polygons a batched entry that reads the geometry packs one by one with their
+            // parts' tags (buildBatchedUniforms). The pass's own table is read as autk-db keeps it, as a map draws it,
+            // so its result holds the rows the map draws.
+            const cached = cache?.get(key);
             if (cached) layers[name] = cached;
             else if (name === spec.dataRef) layers[name] = await db.getLayer(name);
             else {
-                try { layers[name] = await db.getLayer(name); }
+                try { layers[name] = sourceRowsKept(await db.getLayer(name), inWorkspaceCrs(sources?.get(key), workspaceCrs)); }
                 catch { layers[name] = undefined; }
             }
         }

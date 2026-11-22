@@ -128,6 +128,63 @@ async function updateByFeatureId(db: AutkDb, table: Table, rows: FeatureCollecti
     return { data: { ...rows, features }, idColumn };
 }
 
+/**
+ * The rows of an update of a table without a geometry, each with every column of the table, in the table's order.
+ * autk-db 4.1.1 stages the given rows with DuckDB's `read_json_auto`, whose columns are the keys of all the rows, null
+ * in a row that leaves one out, then inserts them with `INSERT INTO <table> SELECT * FROM <staging>`, by position: a row
+ * given as `{ count, zone }` to a table of (zone, count) wrote its count in zone. DuckDB matches names without regard to
+ * case. So each row here takes its keys by the columns they name, in any case, and null in a column it leaves out, as
+ * 4.1.1 wrote a key another row gave. A key the table lacks, which 4.1.1 wrote into another column or refused on the
+ * count of values, is refused, and so are two keys that name one column. autk-db lists every column of a table it
+ * holds, so the rows of a table listed without any, as a host's stand-in database may list it, go as they are given.
+ *
+ * A row reaches autk-db as a JSON object, and an object lists its keys named as whole numbers, such as "2020", first,
+ * in ascending order, whatever order they were set in. A table whose columns do not come in that order would take every
+ * row's values in other columns, as 4.1.1 wrote them, so its update is refused, naming the column that comes too late.
+ */
+function inColumnOrder(rows: Array<Record<string, unknown>>, table: Table): Array<Record<string, unknown>> {
+    const columns = table.columns.map((column) => column.name);
+    if (columns.length === 0) return rows;
+    const written = Object.keys(Object.fromEntries(columns.map((column) => [column, null])));
+    const moved = written.findIndex((key, index) => key !== columns[index]);
+    if (moved !== -1) {
+        // The first key out of the table's order is named as a whole number and comes after another column.
+        const name = written[moved];
+        throw new Error(`the update strategy cannot change a table whose column "${name}", named as a whole number, comes after "${columns[columns.indexOf(name) - 1]}". Use strategy 'replace' with every row of the table, or rename the column.`);
+    }
+    const listed = columns.map((column) => `"${column}"`).join(', ');
+    return rows.map((row, index) => {
+        // The schema refuses a row that is not an object, but a spec that was not checked against it reaches here.
+        if (row === null || typeof row !== 'object' || Array.isArray(row))
+            throw new Error(`jsonObject[${index}] is not an object; give each row as an object whose keys name the table's columns.`);
+        const ordered: Record<string, unknown> = Object.fromEntries(columns.map((column) => [column, null]));
+        const keyOf = new Map<string, string>();
+        for (const [key, value] of Object.entries(row)) {
+            const column = columns.find((name) => name.toLowerCase() === key.toLowerCase());
+            if (column === undefined)
+                throw new Error(`jsonObject[${index}] has "${key}", which is not a column of the table: ${listed}.`);
+            const named = keyOf.get(column);
+            if (named !== undefined)
+                throw new Error(`jsonObject[${index}] has "${named}" and "${key}", which name one column of the table, "${column}".`);
+            keyOf.set(column, key);
+            // JSON leaves out a key whose value is undefined, as autk-db reads the rows, so it is null in its row.
+            ordered[column] = value === undefined ? null : value;
+        }
+        return ordered;
+    });
+}
+
+/**
+ * Whether a table keeps each value in a column of its own, without the `properties` column a GeoJSON or an OSM layer
+ * keeps its rows' values in. autk-db's update of a layer sets that column on each row it matches, so it cannot change a
+ * layer of plain columns: a CSV or JSON layer, or a `sql` source's table of plain columns drawn as a layer. autk-db lists
+ * every column of a table it holds, so a table listed without any, as a host's stand-in database may list it, is not
+ * taken for one.
+ */
+function keepsPlainColumns(table: Table): boolean {
+    return table.columns.length > 0 && !table.columns.some((column) => column.name === 'properties');
+}
+
 /** The database a source loads into: `context`, else a new one. */
 async function database(context: AutkDb | undefined): Promise<AutkDb> {
     if (context) return context;
@@ -405,7 +462,15 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache, compu
                             },
                         });
                     } catch (err) {
-                        throw new Error(`SQL source "${sql.outputTableName}": ${err instanceof Error ? err.message : String(err)}`);
+                        const reason = err instanceof Error ? err.message : String(err);
+                        // autk-db puts the geometry of a table a query saves on the workspace's grid, read from a column
+                        // named geometry, with a layerType or without one, so a geometry under another name fails there
+                        // with DuckDB's binder error for that column. A query that reads a geometry column its table
+                        // lacks fails with the same error, so the advice holds for both, and autk-db's reason follows.
+                        const advice = /Referenced column "geometry" not found/i.test(reason)
+                            ? 'if the query returns a geometry, name it geometry, for example ST_Centroid(geometry) AS geometry. autk-db: '
+                            : '';
+                        throw new Error(`SQL source "${sql.outputTableName}": ${advice}${reason}`);
                     }
                     // A query saved under the name of a GeoJSON table replaces it, so the plots no longer read its rows.
                     cache?.delete(tableKey(workspace, sql.outputTableName));
@@ -423,8 +488,16 @@ export function createDataAdapter(targets?: Targets, cache?: GeoJsonCache, compu
                     let data = (update.geojsonObject ?? update.jsonObject) as FeatureCollection | Record<string, unknown>[];
                     let idColumn = update.idColumn;
                     try {
-                        // A layer keyed by a feature property is matched here, then updated by its rows' feature ids.
                         const table = db.getTablesMetadata().find((candidate) => candidate.name === update.dataRef);
+                        // autk-db cannot update a layer of plain columns (see keepsPlainColumns): on 4.1.1 such an update
+                        // failed for want of a feature id or of a column, or on rows that were not a FeatureCollection.
+                        if (update.strategy === 'update' && table && isVectorTable(table) && keepsPlainColumns(table))
+                            throw new Error("on a layer, the update strategy sets the properties column of each row it matches, and this layer has none: it keeps its values in plain columns, as a CSV or JSON layer or a sql source's table of plain columns does. Use strategy 'replace', with every row in geojsonObject.");
+                        // autk-db inserts the given rows of a table without a geometry by position, so each comes in the
+                        // table's column order. replace makes the table of the given rows, by their keys' names.
+                        if (update.strategy === 'update' && update.jsonObject && table && !isVectorTable(table))
+                            data = inColumnOrder(update.jsonObject, table);
+                        // A layer keyed by a feature property is matched here, then updated by its rows' feature ids.
                         if (update.strategy === 'update' && update.geojsonObject && idColumn?.startsWith('properties.') && table && isVectorTable(table)) {
                             ({ data, idColumn } = await updateByFeatureId(db, table, update.geojsonObject as FeatureCollection, idColumn.slice('properties.'.length)));
                             // No row has a given key, so the table stays as it is, as autk-db leaves it.

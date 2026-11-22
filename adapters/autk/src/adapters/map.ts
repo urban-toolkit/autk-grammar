@@ -75,6 +75,16 @@ function bandValues(collection: { features?: { properties?: unknown }[] }, band:
 }
 
 /**
+ * Whether a color map config's scheme is categorical. autk-core 4.1.1 gives every config an interpolator. On Autark's
+ * main a config can also be made of colors alone, with no interpolator and a `type` that says whether it is
+ * categorical, so both are read here.
+ */
+function isCategoricalConfig(config: ColorMapConfig): boolean {
+    if (config.interpolator !== undefined) return ColorMap.isCategorical(config.interpolator);
+    return (config as unknown as { type?: string }).type === 'categorical';
+}
+
+/**
  * The domain of a raster's color scale when the layer sets a range, a center or reverse, or `undefined` when it
  * sets none of them, the scheme is categorical, or, without a range, the band has no value. A range is the domain:
  * `[low, high]`, or `[low, center, high]` with a center. Without one, a scale centered on `center` runs from the
@@ -84,7 +94,7 @@ function bandValues(collection: { features?: { properties?: unknown }[] }, band:
 export function rasterScaleDomain(
     values: Float32Array | null, config: ColorMapConfig, center?: number, reverse?: boolean, range?: [number, number],
 ): number[] | undefined {
-    if (ColorMap.isCategorical(config.interpolator)) return undefined;
+    if (isCategoricalConfig(config)) return undefined;
     if (range != null) {
         const domain = center != null ? [range[0], center, range[1]] : [range[0], range[1]];
         return reverse === true ? domain.reverse() : domain;
@@ -112,7 +122,7 @@ export function rasterScaleDomain(
  * centered nor reversed.
  */
 function vectorScaleDomain(config: ColorMapConfig, range?: [number, number]): number[] | undefined {
-    if (range == null || ColorMap.isCategorical(config.interpolator)) return undefined;
+    if (range == null || isCategoricalConfig(config)) return undefined;
     return [range[0], range[1]];
 }
 
@@ -446,8 +456,10 @@ export function applyCamera(map: AutkMap, camera: CameraSpec): void {
 
 /**
  * Raises the map's ground to the heights of a raster band, through autk-map's `enableTerrainMode`, once its layers are
- * loaded. autk-map drapes the flat layers over the ground the raster covers and fits the view to it. It refuses a
- * `dataRef` that names no raster table of the map's workspace, and a `band` that names none of several bands.
+ * loaded. autk-map drapes the flat layers over the ground the raster covers, and the view is fitted to that ground with
+ * autk-map's `resetCamera`, which in terrain mode frames the heights: autk-map 4.1.1 also frames them as it enables the
+ * terrain, while Autark's main keeps the view the map's layers set. It refuses a `dataRef` that names no raster table of
+ * the map's workspace, and a `band` that names none of several bands.
  */
 async function loadTerrain(map: AutkMap, context: AutkDb, terrain: TerrainSpec, index: number): Promise<void> {
     const refuse = (message: string) => new Error(`Map ${index}: terrain ${message}`);
@@ -460,6 +472,7 @@ async function loadTerrain(map: AutkMap, context: AutkDb, terrain: TerrainSpec, 
     const band = rasterBand(collection, terrain.band, (message) => refuse(`band ${message}`));
     try {
         map.enableTerrainMode(collection, band);
+        map.resetCamera();
     } catch (error) {
         throw refuse(`"${terrain.dataRef}": ${error instanceof Error ? error.message : String(error)}`);
     }

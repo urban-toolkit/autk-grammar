@@ -52,11 +52,20 @@ function tickFormatsRefusal(tickFormats: unknown): string | undefined {
 }
 
 /**
- * Why a plot refuses its `axisLabels`, or `undefined` when it takes them: titles that are not strings, more titles than
- * `axis` has columns, which a table would show as headers over no cells, and two titles alike, since a table finds the
- * column a click on a header sorts by its title.
+ * The title of an axis without one: its column's name, and `value`, autk-plot's own title, for the axis that holds a
+ * transform's output, `@transform`.
  */
-function axisLabelsRefusal(axisLabels: unknown, axis: readonly string[]): string | undefined {
+function columnTitle(column: string): string {
+    return column === '@transform' ? 'value' : column;
+}
+
+/**
+ * Why a plot refuses its `axisLabels`, or `undefined` when it takes them: titles that are not strings, more titles than
+ * `axis` has columns, which a table would show as headers over no cells, two titles alike, and, on a table, a title
+ * that a column without one keeps (see {@link columnTitle}), since a table finds the column a click on a header sorts
+ * by its title. A chart only draws each title by its axis, so it takes such a title.
+ */
+function axisLabelsRefusal(axisLabels: unknown, axis: readonly string[], mark: PlotSpec['mark']): string | undefined {
     if (axisLabels === undefined) return undefined;
     if (!Array.isArray(axisLabels) || !axisLabels.every((title) => typeof title === 'string'))
         return 'axisLabels must be a list of titles, one for each column of axis.';
@@ -65,6 +74,13 @@ function axisLabelsRefusal(axisLabels: unknown, axis: readonly string[]): string
     const twice = axisLabels.find((title, at) => axisLabels.indexOf(title) !== at);
     if (twice !== undefined)
         return `axisLabels gives two axes the title ${JSON.stringify(twice)}.`;
+    if (mark !== 'table') return undefined;
+    const untitled = axis.slice(axisLabels.length);
+    for (let at = 0; at < axisLabels.length; at++) {
+        const kept = untitled.find((column) => columnTitle(column) === axisLabels[at]);
+        if (kept !== undefined)
+            return `axisLabels gives the axis of ${JSON.stringify(axis[at])} the title ${JSON.stringify(axisLabels[at])}, which the axis of ${JSON.stringify(kept)} keeps without a title.`;
+    }
     return undefined;
 }
 
@@ -91,7 +107,7 @@ export function checkPlotKeys(spec: PlotSpec): void {
         ?? schemeRefusal('categoricalColorMapInterpolator', spec.categoricalColorMapInterpolator, true)
         ?? colorMapRangeRefusal(spec.colorMapRange, spec.colorMapDomain)
         ?? tickFormatsRefusal(spec.tickFormats)
-        ?? axisLabelsRefusal(spec.axisLabels, spec.axis)
+        ?? axisLabelsRefusal(spec.axisLabels, spec.axis, spec.mark)
         ?? selectionRefusal(spec.selection)
         ?? hexColorRefusal('markColor', spec.markColor)
         ?? hexColorRefusal('highlightColor', spec.highlightColor);
@@ -164,7 +180,7 @@ function domainSpecOf(spec: PlotSpec, rows: readonly (Feature | null | undefined
  * headers too, so the list holds a title for every column.
  */
 function axisTitles(spec: PlotSpec): string[] {
-    return spec.axis.map((column, at) => spec.axisLabels?.[at] ?? (column === '@transform' ? 'value' : column));
+    return spec.axis.map((column, at) => spec.axisLabels?.[at] ?? columnTitle(column));
 }
 
 /**
