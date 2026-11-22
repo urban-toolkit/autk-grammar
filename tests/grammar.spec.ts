@@ -291,6 +291,65 @@ test('draws and plots an OSM table as one feature per OSM element with osmElemen
     await expectDrawn(page, 'map0');
 });
 
+test('refuses a link or a mapRef between a plot and a layer of which one reads OSM elements and the other rows, and links them read alike', async ({ page }) => {
+    const box = {
+        type: 'osm', outputTableName: 'box', pbfFileUrl: '/data/lower_mnt.osm.pbf', queryArea: { bbox: BOX },
+        autoLoadLayers: { layers: ['roads'] },
+    } as DataSourceSpec;
+    const roads = (fields: Record<string, unknown>) => plotOf({
+        id: 'roads', dataRef: 'box_roads', mark: 'table', axis: ['osm_type', 'osm_id', 'highway'], events: ['click'], ...fields,
+    });
+
+    // A plot and a layer that both read the road elements: a click on a row of the table lights that element.
+    await runSpec(page, {
+        data: [box],
+        map: { layerRefs: [{ dataRef: 'box_roads', title: 'Roads', osmElements: true }] },
+        plot: roads({ osmElements: true, mapRef: 'box_roads' }),
+    });
+    const drawn = await page.evaluate(() => window.drawnRows('map0', 'Roads'));
+    expect(drawn.length).toBeGreaterThan(0);
+    const clicked = await page.evaluate((osmId) => {
+        type Row = Element & { __data__?: { osm_id?: unknown } };
+        const row = [...document.querySelectorAll<Row>('#plot tr.autkMark')].find((candidate) => candidate.__data__?.osm_id === osmId);
+        row?.dispatchEvent(new MouseEvent('click'));
+        return row?.__data__?.osm_id;
+    }, drawn[0]?.osm_id);
+    expect(clicked).toBe(drawn[0]?.osm_id);
+    const lit = (await layerById(page)).Roads.highlightedIds ?? [];
+    expect(lit.length).toBeGreaterThan(0);
+    expect(lit.filter((position) => drawn[position]?.osm_id !== clicked)).toEqual([]);
+
+    // One reads the road elements and the other, without osmElements, the table's rows. autk-db names an element
+    // "way/<id>" and a row by a number, so the link found no row in either view: a click on a row lit nothing, and a pick
+    // selected nothing. Refused by a mapRef and in links.
+    const refusal = (spec: UrbanSpec) => runSpec(page, spec).then(() => 'linked', (error: Error) => error.message);
+    expect.soft(await refusal({
+        data: [box],
+        map: { layerRefs: [{ dataRef: 'box_roads', title: 'Roads' }] },
+        plot: roads({ osmElements: true, mapRef: 'box_roads' }),
+    })).toContain('Plot "roads" and layer "Roads", linked by its mapRef, disagree on osmElements: the plot reads its table one feature per OpenStreetMap element, named such as "way/123", and the layer one feature per row, named by a number, so neither finds the other\'s rows. Set osmElements on both, or on neither.');
+    // The plot of rows shows a column the rows have: they have no osm_type, which autk-plot refuses to draw.
+    expect.soft(await refusal({
+        data: [box],
+        map: { id: 'm', layerRefs: [{ dataRef: 'box_roads', title: 'Roads', osmElements: true }] },
+        plot: roads({ axis: ['highway'] }),
+        links: [{ source: 'roads', target: 'm', layer: 'Roads' }],
+    })).toContain('Plot "roads" and layer "Roads", linked in links, disagree on osmElements: the layer reads its table one feature per OpenStreetMap element, named such as "way/123", and the plot one feature per row, named by a number, so neither finds the other\'s rows. Set osmElements on both, or on neither.');
+
+    // osmElements reads a table that is not an OSM layer row by row, so a plot with it and a layer without it read the
+    // same rows of the zones, and stay linked.
+    await runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones', title: 'Zones' }] },
+        plot: plotOf({ id: 'z', dataRef: 'zones', mark: 'scatter', axis: ['id', 'v'], osmElements: true, mapRef: 'zones' }),
+    });
+    await page.evaluate(() => window.grammar.setPlotSelection('z', [2]));
+    const zone = await page.evaluate(() => window.grammar.plotCollection('z')?.features[2]?.properties?.id);
+    const litZones = (await layerById(page)).Zones.highlightedIds ?? [];
+    const drawnZones = await page.evaluate(() => window.drawnRows('map0', 'Zones'));
+    expect(litZones.map((position) => drawnZones[position]?.id)).toEqual([zone]);
+});
+
 test('refuses tag sets with a PBF extract, naming the source', async ({ page }) => {
     // autk-db reads tag sets from the Overpass API only, and refused them with a PBF extract without naming the source.
     await expect(runSpec(page, { data: [taggedSource({ pbfFileUrl: '/data/lower_mnt.osm.pbf' })] }))
@@ -4080,6 +4139,43 @@ test('draws the marks of every plot of the page in one markColor, and the select
     expect(await plotStyle()).toEqual({ markColor: '#1f77b4', highlightColor: '#5dade2' });
 });
 
+test("sets the page's plot colors as a run's plots draw: a run that fails first leaves them, and one that loads its data while another draws keeps its own", async ({ page }) => {
+    const green = 'rgb(44, 160, 44)'; // #2ca02c
+    const zonesPlot = (fields: Record<string, unknown>) => plotOf({ dataRef: 'zones', axis: ['id', 'v'], ...fields });
+    const fills = async (target: string) => (await plotMarks(page, target)).map(({ fill }) => fill);
+
+    // A run that fails as it loads its data draws no plot, and leaves the page's colors as they were. It set them as it
+    // started.
+    await expect(runSpec(page, {
+        data: [area, zones, { type: 'drop', dataRef: 'nothing' }],
+        plot: zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c' }),
+    })).rejects.toThrow('Drop of "nothing"');
+    expect.soft(await page.evaluate(() => window.plotStyle()), 'the colors after a run that failed').toEqual({ markColor: '#bfbfbf', highlightColor: '#5dade2' });
+
+    // A run that sets a mark color loads its zones, held back here, while a second grammar's run, which sets none, draws
+    // its bars. The first run's bars are drawn in its own green: they were drawn in the gray the second run gave the page
+    // as it started.
+    let release = () => {};
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/held/zones.geojson', async (route) => {
+        await held;
+        await route.fulfill({ json: (zones as unknown as { geojsonObject: unknown }).geojsonObject });
+    });
+    const heldZones = { type: 'geojson', outputTableName: 'zones', geojsonFileUrl: '/held/zones.geojson' } as DataSourceSpec;
+    type Pending = { firstRun?: Promise<string | null> };
+    await page.evaluate((spec) => {
+        (window as unknown as Pending).firstRun = window.runSpec(spec).then(() => null, (error: Error) => error.message);
+    }, { data: [area, heldZones], plot: zonesPlot({ id: 'a', mark: 'bar', markColor: '#2ca02c' }) } as UrbanSpec);
+    try {
+        await page.evaluate((spec) => window.runBeside(spec), { data: [area, zones], plot: zonesPlot({ id: 'c', mark: 'bar' }) } as UrbanSpec);
+        expect(await fills('beside')).toEqual([markGray, markGray, markGray, markGray]);
+    } finally {
+        release();
+    }
+    expect(await page.evaluate(() => (window as unknown as Pending).firstRun)).toBeNull();
+    expect.soft(await fills('plot'), "the bars of the run that loaded its data while the other drew").toEqual([green, green, green, green]);
+});
+
 test('colors the ten noisiest neighborhoods of plot-colors alike on its map and its chart, and selects the noisiest', async ({ page }) => {
     const spec = await exampleSpec(page, 'plot-colors');
     expect(spec.plot).toMatchObject({ colorMapInterpolator: 'interpolateReds', colorMapRange: [0, 80], selection: [0], highlightColor: '#1f77b4' });
@@ -4144,6 +4240,65 @@ test("reads each building part's outline in a pass's fromFeature table, as a Geo
     const widths = await page.evaluate(() => Promise.all([0, 1, 2, 3].map((i) => window.valueAt('spots', i, 'compute.width'))));
     expect(widths).toHaveLength(4);
     for (const width of widths) expect(width as number).toBeCloseTo(60, 3);
+});
+
+test("reads in a pass's fromFeature table only the parts autk-db kept, in the order grammar.data gives them", async ({ page }) => {
+    // The test above's three parts, after a fourth 20 m part 2 km east of the ground, outside the workspace's box:
+    // autk-db drops it, and the map and grammar.data hold three parts. A pass read the source as it was given, the
+    // dropped part too: every spot added up four widths, 80 m, and the part at index 1 was the source's second, not the
+    // second part grammar.data gives.
+    const [x0, y0] = [-8235000, 4946000];
+    const square = (x: number, y: number, size: number) =>
+        ({ type: 'Polygon', coordinates: [[[x, y], [x + size, y], [x + size, y + size], [x, y + size], [x, y]]] });
+    const inMeters = (outputTableName: string, features: Array<{ properties: Record<string, unknown>; geometry: unknown }>, layerType?: string) => ({
+        type: 'geojson', outputTableName, coordinateFormat: 'EPSG:3395', ...(layerType && { layerType }),
+        geojsonObject: { type: 'FeatureCollection', features: features.map((feature) => ({ type: 'Feature', ...feature })) },
+    });
+    await runSpec(page, {
+        data: [
+            inMeters('ground', [{ properties: {}, geometry: square(x0 - 500, y0 - 500, 1000) }]),
+            inMeters('parts', [
+                { properties: { height: 99 }, geometry: square(x0 + 2000, y0, 20) },
+                ...[0, 1, 2].map((i) => ({ properties: { height: 10 + i }, geometry: square(x0 + i * 50, y0, 20) })),
+            ], 'buildings'),
+            inMeters('spots', [0, 1, 2, 3].map((i) => ({ properties: { w: 1 }, geometry: { type: 'Point', coordinates: [x0 + i * 40, y0 - 100] } }))),
+        ],
+        compute: [
+            {
+                dataRef: 'spots',
+                attributes: { w: 'w' },
+                uniformMatrices: { o: { fromFeature: { layer: 'parts', path: 'geometry.coordinates.0', iterate: 'batched' }, cols: 2 } },
+                outputColumnName: 'width',
+                // o packs [xmin,ymin, xmax,ymin, xmax,ymax, xmin,ymax] per part: sum the parts' widths.
+                wgslFunction: [
+                    'var total = 0.0;',
+                    'for (var i = 0u; i < u32(num_features); i++) { total += o[i * 8u + 2u] - o[i * 8u]; }',
+                    'return total * w;',
+                ],
+            },
+            // The height of the part at index 1, in a table of its own.
+            {
+                dataRef: 'spots',
+                attributes: { w: 'w' },
+                uniforms: { h: { fromFeature: { layer: 'parts', path: 'properties.height', index: 1 } } },
+                outputColumnName: 'second',
+                outputTableName: 'second_part',
+                wgslFunction: 'return h * w;',
+            },
+        ],
+    } as unknown as UrbanSpec);
+    // autk-db kept the three parts inside the box, which grammar.data gives.
+    expect(await page.evaluate(async () => (await window.grammar.data.parts).features.length)).toBe(3);
+    const heights = await page.evaluate(() => Promise.all([0, 1, 2].map((i) => window.valueAt('parts', i, 'height'))));
+    expect([...heights as number[]].sort((a, b) => a - b)).toEqual([10, 11, 12]);
+    // Every spot reads the outlines of those three parts, 3 x 20 m, and the part at index 1 is grammar.data's.
+    const read = await page.evaluate(() => Promise.all([0, 1, 2, 3].map(async (i) =>
+        [await window.valueAt('spots', i, 'compute.width'), await window.valueAt('second_part', i, 'compute.second')])));
+    expect(read).toHaveLength(4);
+    for (const [width, second] of read) {
+        expect.soft(width as number, 'the widths of the parts autk-db kept').toBeCloseTo(60, 3);
+        expect.soft(second, "the height of grammar.data's part at index 1").toBe(heights[1]);
+    }
 });
 
 // A noon shadow pass over roads: each building, packed as the box of its outline, casts its shadow north as far as it

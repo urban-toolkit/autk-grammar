@@ -125,6 +125,34 @@ test('refuses axis titles that are not strings, more titles than axis columns, o
     refused({ axisLabels: ['Value', 'Value'] }, 'axisLabels gives two axes the title "Value".');
 });
 
+test("refuses on a table a title that a column without one keeps: its column's name", () => {
+    // A table finds the column a click on a header sorts by its title: under the headers "b, b", a click on the second
+    // sorted by a.
+    refused({ mark: 'table', axis: ['a', 'b'], axisLabels: ['b'] }, 'axisLabels gives the axis of "a" the title "b", which the axis of "b" keeps without a title.');
+    refused({ mark: 'table', axis: ['name', 'v', 'kind'], axisLabels: ['Name', 'kind'] }, 'axisLabels gives the axis of "v" the title "kind", which the axis of "kind" keeps without a title.');
+    // A title that is its own column's name is taken. So are axes without titles that keep one title alike, as 5.2.0
+    // drew them: one column twice, which a table sorts by that column from either header, and a transform's output
+    // beside a column named value.
+    checkPlotKeys(plot({ mark: 'table', axis: ['name', 'v'], axisLabels: ['name'] }));
+    checkPlotKeys(plot({ mark: 'table', axis: ['v', 'v'] }));
+    checkPlotKeys(plot({ axis: ['value', '@transform'], transform: { preset: 'binning-1d' } }));
+});
+
+test('takes on every plot but a table a title that an axis without one keeps, as 5.6.0 drew it', () => {
+    // Only a table finds a column by its title, when a click on its header sorts the rows.
+    refused({ mark: 'table', axis: ['area', 'height'], axisLabels: ['height'] },
+        'axisLabels gives the axis of "area" the title "height", which the axis of "height" keeps without a title.');
+    // A chart draws each title by its axis, and parallel coordinates color by the axis whose title is clicked: 5.6.0 drew
+    // this scatter plot with both axes titled height.
+    const scatter = plot({ mark: 'scatter', axis: ['area', 'height'], axisLabels: ['height'] });
+    checkPlotKeys(scatter);
+    assert.deepEqual(plotOptions(scatter, rows).labels, { axis: ['height', 'height'], title: undefined });
+    for (const mark of ['bar', 'line', 'linechart', 'parallel-coordinates', 'heatmatrix'])
+        checkPlotKeys(plot({ mark, axis: ['area', 'height'], axisLabels: ['height'] }));
+    // And a bar chart that titles its column value, beside its transform's output, which keeps the title value.
+    checkPlotKeys(plot({ mark: 'bar', axis: ['v', '@transform'], transform: { preset: 'binning-1d' }, axisLabels: ['value'] }));
+});
+
 test('refuses a selection that is not positions of rows, whole numbers from 0, or that names a row past the last', () => {
     const positions = 'selection must list the positions of rows, whole numbers from 0.';
     refused({ selection: [-1] }, positions);

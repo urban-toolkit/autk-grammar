@@ -276,6 +276,8 @@ The CRS of an `osm` source's coordinates, as an EPSG string. It defaults to `EPS
 
 A map layer or a plot with `osmElements: true` reads an OpenStreetMap layer table as one feature per OSM element it was built from, rather than one per row. Each feature's properties are the element's tags, its `osm_type` (`node`, `way` or `relation`) and its `osm_id`; in a buildings table, whose parts are elements of their own, also the `building_id` of its building. A part takes only its own tags, so a buildings layer draws only the parts whose tags give their height. A compute pass that changes the table in place leaves autk-db's elements as they were, so they are read without the pass's columns. A table that is not an OSM layer, a surface, and an OSM table an `update` source or an in-place `writeBack` changed are read row by row, as without it.
 
+A plot and a layer linked, in [`links`](#plots-and-links) or by the plot's `mapRef`, find each other's rows by their feature ids, and autk-db names an element such as `way/123` but a row by a number. So a run refuses a link of which one view reads its table one feature per element and the other one per row: set `osmElements` on both, or on neither.
+
 ```ts
 map: { layerRefs: [{ dataRef: 'downtown_roads', osmElements: true, getFnv: 'highway', colorMapInterpolator: ColorMapInterpolator.CAT_TABLEAU10 }] },
 plot: { dataRef: 'downtown_roads', mark: 'table', axis: ['osm_id', 'highway', 'name'], osmElements: true },
@@ -299,7 +301,7 @@ A GPGPU pass runs a WGSL function once per feature of a table:
 
 `attributeArrays` and `attributeMatrices` pass more of each feature's values, and `uniforms`, `uniformArrays` and `uniformMatrices` pass values every invocation shares. `uniforms` and `uniformMatrices` can read theirs from a feature of a table (see [Compute helpers](#compute-helpers)).
 
-A pass reads such a `fromFeature` table as an earlier pass wrote it; else, when a GeoJSON source of the run loaded it with its coordinates in its workspace's CRS, as the source gave its features, as a plot reads its table; else as autk-db keeps it. The pass's own `dataRef` is read as autk-db keeps it, as a map draws it.
+A pass reads such a `fromFeature` table as an earlier pass wrote it; else, when a GeoJSON source of the run loaded it with its coordinates in its workspace's CRS, as the source gave its features, but only those autk-db kept, in the order `grammar.data` gives them: a feature outside the workspace's box or crop is not read, and a polygon autk-db cut to the crop keeps the source's outline; else as autk-db keeps it. The pass's own `dataRef` is read as autk-db keeps it, as a map draws it.
 
 A batched entry that reads the geometry, with a path that starts with `geometry.`, packs each polygon as a feature of its own: each polygon of a MultiPolygon, and of a GeometryCollection, with the feature's properties, beside which every other batched value of the feature repeats. autk-db keeps each feature of a `buildings` table in its building model, one GeometryCollection per building with each part's tags in `properties.parts`, so each polygon of a building read as autk-db keeps it also takes its part's tags, over the building's, as autk-core draws the part: a part that sets any of `height`, `building:height`, `levels` and `building:levels` takes none of those four from the building, and a part that sets any of `min_height`, `min_level` and `building:min_level` none of those three. A path such as `geometry.coordinates.0` then reads every polygon's outer ring, from a source's own features and from autk-db's buildings alike, and `num_features` counts the polygons.
 
@@ -666,7 +668,7 @@ A plot's `id` names it: as the `source` of a link, as the `plotId` of its `plot:
 | `target` | The map: its `id`. |
 | `layer` | The layer of the target map, by its `title`, else its `dataRef`. Defaults to the layer that draws the plot's `dataRef`. |
 
-A run refuses a link that names no plot, map or layer of the spec. A plot's `mapRef` is a shorthand for links: it names the table (`dataRef`) of map layers, and links the plot to every layer that draws it, in every map.
+A run refuses a link that names no plot, map or layer of the spec, and a link, or a `mapRef`, of which one view reads an OpenStreetMap table one feature per element and the other one per row (see [`osmElements`](#osmelements)). A plot's `mapRef` is a shorthand for links: it names the table (`dataRef`) of map layers, and links the plot to every layer that draws it, in every map.
 
 ```ts
 await grammar.run({
@@ -734,7 +736,7 @@ plot: { dataRef: 'parcels', mark: 'scatter', axis: ['area', 'share'], tickFormat
 
 ### `axisLabels`
 
-The titles of a plot's axes, in the order of `axis`, in place of the column names: the x and y titles of a scatter plot, a bar chart, a line chart and a heat matrix, each axis's title of parallel coordinates, and a table's column headers. An axis without a title keeps its column's name, and an axis that holds a transform's output, `@transform`, is titled `value`. A run refuses more titles than `axis` has columns, and two titles alike.
+The titles of a plot's axes, in the order of `axis`, in place of the column names: the x and y titles of a scatter plot, a bar chart, a line chart and a heat matrix, each axis's title of parallel coordinates, and a table's column headers. An axis without a title keeps its column's name, and an axis that holds a transform's output, `@transform`, is titled `value`. A run refuses more titles than `axis` has columns, two titles alike, and, on a table, a title that a column without one keeps, since both headers would then sort by one column.
 
 ```ts
 plot: { dataRef: 'parcels', mark: 'bar', axis: ['area', '@transform'], transform: { preset: 'binning-1d' }, axisLabels: ['Area (m²)', 'Parcels'] }
@@ -747,7 +749,7 @@ plot: { dataRef: 'parcels', mark: 'bar', axis: ['area', '@transform'], transform
 | `markColor` | The color of the marks that are neither colored by value nor selected, `#rrggbb`. autk-plot's is `#bfbfbf`. |
 | `highlightColor` | The color of the selected marks, and of a table's selected rows, `#rrggbb`. autk-plot's is `#5dade2`. |
 
-autk-plot keeps one mark color and one highlight color for the whole page, which every plot on it reads as it draws and as it shows a selection. So the plots of one spec cannot differ: a run refuses two plots that set different ones, and a plot that sets neither takes the others'. A run sets them for the page, other specs' plots too, and a run whose plots set neither gives back autk-plot's own: each run draws in the colors its spec gives. A run that draws no plot leaves them as they are, and a page whose specs never set them keeps the colors autk-plot has.
+autk-plot keeps one mark color and one highlight color for the whole page, which every plot on it reads as it draws and as it shows a selection. So the plots of one spec cannot differ: a run refuses two plots that set different ones, and a plot that sets neither takes the others'. A run sets them for the page as its plots draw, other specs' plots too, and a run whose plots set neither gives back autk-plot's own: each run draws in the colors its spec gives, though another run on the page draws its plots while this one loads its data. A run that draws no plot, or fails before it draws one, leaves them as they are, and a page whose specs never set them keeps the colors autk-plot has.
 
 ```ts
 plot: [

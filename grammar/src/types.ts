@@ -665,8 +665,9 @@ export type MapLayerSpec = {
      * `osm_type` and `osm_id` as its properties (and `building_id` in a buildings table, whose parts are elements of
      * their own), rather than one feature per row. A compute pass that changes the table in place leaves its elements as
      * they were: they are drawn without the pass's columns. A table that is not an OSM layer, a surface, and an OSM
-     * table an update changed, an in-place `writeBack` among them, are drawn row by row, as without it. Read by the
-     * Autark adapter only.
+     * table an update changed, an in-place `writeBack` among them, are drawn row by row, as without it. A run refuses a
+     * link, in `links` or by a plot's `mapRef`, between this layer and a plot of which one reads its table one feature
+     * per element and the other one per row, since their ids differ. Read by the Autark adapter only.
      */
     osmElements?: boolean,
     /**
@@ -939,8 +940,9 @@ export interface PlotBase {
      * Titles of the plot's axes, in the order of `axis`, in place of the column names: the x and y axes' titles of a
      * scatter plot, a bar chart, a line chart and a heat matrix, each axis's title of parallel coordinates, and a table's
      * column headers. An axis without a title keeps its column's name, and an axis that holds a transform's output,
-     * `@transform`, is titled `value`. A run refuses more titles than `axis` has columns, and two titles alike, since a
-     * table finds the column to sort by its header. Read by the Autark adapter; the deck.gl adapter ignores it.
+     * `@transform`, is titled `value`. A run refuses more titles than `axis` has columns, two titles alike, and, on a
+     * table, a title that a column without one keeps, since both headers would then sort by one column. Read by the
+     * Autark adapter; the deck.gl adapter ignores it.
      * @uniqueItems true
      */
     axisLabels?: string[],
@@ -972,7 +974,9 @@ export interface PlotBase {
      * `osm_type` and `osm_id` (and `building_id` in a buildings table), rather than one row per table row. A compute pass
      * that changes the table in place leaves its elements as they were: they are plotted without the pass's columns. A
      * table that is not an OSM layer, a surface, and an OSM table an update changed, an in-place `writeBack` among them,
-     * are plotted row by row, as without it. Read by the Autark adapter only.
+     * are plotted row by row, as without it. A run refuses a link, in `links` or by `mapRef`, between this plot and a map
+     * layer of which one reads its table one feature per element and the other one per row, since their ids differ.
+     * Read by the Autark adapter only.
      */
     osmElements?: boolean,
 }
@@ -1041,8 +1045,9 @@ export type FromFeatureDirective = {
     fromFeature: {
         /**
          * Table to read from. The Autark adapter reads it as an earlier compute pass wrote it; else, when a GeoJSON source
-         * loaded it with its coordinates in its workspace's CRS, as the source gave its features, each building part with
-         * its own outline; else as autk-db keeps it, a buildings table's geometry inside a GeometryCollection.
+         * loaded it with its coordinates in its workspace's CRS, as the source gave the features autk-db kept, in the
+         * order autk-db keeps them, each building part with its own outline; else as autk-db keeps it, a buildings
+         * table's geometry inside a GeometryCollection.
          */
         layer: string;
         /** Dot path from the feature root, for example `properties.height` or `geometry.coordinates.0`. */
