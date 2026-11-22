@@ -10,7 +10,7 @@ import { createMapAdapter } from "./adapters/map";
 import { createPlotAdapter, linkPlotToLayer, setPlotColors } from "./adapters/plot";
 import { checkPlotKeys, plotColorsOf, plotKey } from "./plot-options";
 import type { PlotColors } from "./plot-options";
-import { layerIdOf } from "./adapters/map";
+import { layerIdOf, shownPicks } from "./adapters/map";
 import { enterWorkspace } from "./workspace";
 import { wiredAdapters } from "./compute-steps";
 import { tourOf } from "./camera";
@@ -464,7 +464,7 @@ export class AutkGrammar {
         this._maps.forEach((map, index) => {
             const mapId = mapIdOf(maps[index], index);
             const handler = ({ layerId, selection }: MapEventData) => {
-                this.interactions.emit('map:picking', { mapId, layerId, selection });
+                this.interactions.emit('map:picking', { mapId, layerId, selection: shownPicks(map, layerId, selection) });
             };
             map.events.on(MapEvent.PICKING, handler);
             this._fwdCleanups.push(() => map.events.off(MapEvent.PICKING, handler));

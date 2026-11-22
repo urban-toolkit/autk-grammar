@@ -475,7 +475,7 @@ map: {
 | `bearing` | Degrees of heading, clockwise when positive: the view turns around the point it looks at. |
 | `roll` | Degrees the view turns around its line of sight: the direction at the top of the view turns clockwise when positive. Looking straight down, a roll turns the heading, as `bearing` does; on a tilted view it banks the horizon. |
 
-Each step takes its `seconds`, more than 0, easing in and out, and sets the camera at every animation frame, so the map draws each one. The tour stops when the user drags, scrolls or presses a key on the map, so the map's own pan, tilt and zoom take over from where the tour had the view. `run()` does not wait for the tour: `grammar.tours` holds the tour of each map, in the order of `grammar.maps`, and a tour's `done` settles once its last step ends, or once it is stopped. `destroy()`, and so the next run, stops the tours of its maps.
+Each step takes its `seconds`, more than 0, easing in and out, and sets the camera at every animation frame, so the map draws each one. The tour stops when the user drags, scrolls or presses a key on the map, so the map's own pan, tilt and zoom take over from where the tour had the view. `run()` does not wait for the tour: `grammar.tours` holds the tour of each map, in the order of `grammar.maps`, and a tour's `done` settles once its last step ends, or once it is stopped. `destroy()`, and so the next run, stops the tours of its maps. A stopped tour asks for no more frames and lets go of its map at once, however long its steps had left.
 
 A run refuses a tour before it draws the map when a step has another `type`, no `amount`, no time, or a `pan` on a step other than `pitch`. The camera's `pitch` and the tour's `pitch` steps add up, in order, to a tilt that stays at least 0 and less than 90 degrees, as `camera.pitch` does: at 90 the line of sight would meet the ground nowhere. A `pitch` step turns the view around its side, so after a `roll` of a tilted view it would also turn the heading: a run refuses a `pitch` step of a banked view until rolls undo the bank.
 
@@ -508,6 +508,13 @@ A map's `terrain` raises its ground to the heights a raster band gives, through 
 | `band` | The band of heights, by its id (`band_1`, ...) or its label, as a raster layer's `getFnv` names one. Defaults to the first band. |
 
 A run refuses a `dataRef` that names no raster table of the map's workspace, and a `band` that names none of the bands of a raster of several.
+
+On a map with a terrain, the `camera` looks at the ground: the point it looks at lies at the terrain's height there, and `zoom` sets the eye's distance from that point, so the eye stays above ground high above z = 0. Without `zoom`, the eye keeps the distance of the view that fits the terrain. Each step of a camera tour turns the view around the ground its line of sight meets as the step starts; when it meets none, as with the eye under the ground, around the point the camera looks at. `applyCamera` and `playCameraMotion` measure from the terrain of a map the grammar drew; on a map whose terrain a host raised itself, they measure from z = 0.
+
+autk-map 4.1.1 measures from z = 0 in two places of its own:
+
+- **The ground its layers are draped over:** it finds the part of the terrain its layers' overlay covers with rays to z = 0, so a view close over high ground and tilted far from straight down can draw nothing.
+- **Its fit of the view to the terrain:** it also measures from z = 0, so on a small raster high above z = 0, a map without a `camera` can start with its eye under the ground.
 
 ```ts
 data: [
@@ -543,7 +550,7 @@ map: {
 | Key | Effect |
 |---|---|
 | `highlightColor` | The color of the features the map draws as picked: by the user, by a layer's `pickedComps`, by a link, or by a call such as `highlightOnMap`, `#rrggbb`. autk-map's is `#5dade2`. |
-| `invalidValueColor` | The color of the features of a layer colored by value whose value autk-map cannot color: one without a value, or with one that is not on the layer's scale, `#rrggbb`. autk-map's is `#ffffff`. |
+| `invalidValueColor` | The color of the features of a layer colored by value whose value autk-map cannot color, `#rrggbb`: on a layer of numbers, a feature without the value or with one that does not read as a finite number (`null` and an empty string read as 0); on a layer of categories, a feature without the value or with a category outside its `colorMapDomain`. A number outside the scale takes the color of the scale's nearer end. autk-map's is `#ffffff`. |
 
 autk-map keeps both for each map, unlike autk-plot's mark and highlight colors, which are the page's: each map of a spec draws in its own.
 
@@ -616,7 +623,9 @@ map: { layerRefs: [{ dataRef: 'income', getFnv: 'median', legend: true }, { data
 
 ### `skippedComps`
 
-A layer's `skippedComps` lists the features it hides, by their positions among those it draws, as `map:picking` events and `highlightOnMap` give them: a filter the map applies as it is drawn. It hides features of every layer of polygons, lines, points or buildings. A run refuses it on a raster layer, and a position that is not a whole number from 0 or is past the last feature the layer draws. With autk-map 4.1.1, a hidden feature of a polygons or buildings layer can still be picked.
+A layer's `skippedComps` lists the features it hides, by their positions among those it draws, as `map:picking` events and `highlightOnMap` give them: a filter the map applies as it is drawn. It hides features of every layer of polygons, lines, points or buildings. A run refuses it on a raster layer, and a position that is not a whole number from 0 or is past the last feature the layer draws.
+
+autk-map 4.1.1 can still pick a hidden feature of a points, polygons or buildings layer, and Autark's main a hidden point: its picking pass draws them. The grammar leaves the features the layer hides when the pick is made out of the picks its `map:picking` events report, and out of the selections it hands the plots linked to the layer, so a feature a host shows or hides after the run, with `setSkippedIds` or `clearSkippedIds`, is picked or left out as the map shows it. A host that listens to the map's own events (`map.events`) still hears them.
 
 ```ts
 map: { layerRefs: [{ dataRef: 'parcels', skippedComps: [2, 5] }] }
@@ -638,12 +647,12 @@ A layer draws its table as the table's own type, which its source or compute pas
 
 | Table | `layerType` |
 |---|---|
-| Polygons, and the surface, parks, water and buildings tables | `polygons`, `surface`, `parks`, `water`, or `buildings`, raised by each feature's height |
+| Polygons, and the surface, parks, water and buildings tables | `polygons`, `surface`, `parks`, `water`, or `buildings`, each feature raised by its `height`, `building:height`, `levels` or `building:levels` |
 | Lines, and the roads tables | `polylines`, or `roads`, each line as wide as its kind of road |
 | Points | `points` |
 | A raster | `raster` |
 
-A run refuses a type of another kind of geometry, for which autk-map would draw nothing. autk-map draws surface, parks, water and roads layers below every other layer, in that order, whatever the order of `layerRefs`.
+A run refuses a type of another kind of geometry, for which autk-map would draw nothing. A layer autk-map draws nothing of, such as `buildings` none of which has `height`, `building:height`, `levels` or `building:levels`, is left out of the map, with a warning that says why, and the map draws its other layers. So is a table with no feature to draw, without a warning. `mapLayer` and links do not find a layer left out, and a run refuses its `legend` and `pickedComps`. autk-map draws surface, parks, water and roads layers below every other layer, in that order, whatever the order of `layerRefs`.
 
 ```ts
 map: {

@@ -178,7 +178,10 @@ expect('heatmap with useCentroid', { data: [{ ...heat, near: { distance: 500, us
 expect('heatmap with a non-boolean useCentroid', { data: [{ ...heat, near: { distance: 500, useCentroid: 'no' } }] }, false);
 expect('heatmap groupBy with count', { data: [{ ...heat, groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }] }] }, true);
 expect('heatmap groupBy with collect, which lists rows while a cell holds one value', { data: [{ ...heat, groupBy: [{ column: 'date', aggregateFn: 'collect' }] }] }, false);
+expect('heatmap groupBy entry without aggregateFn, which every run refuses', { data: [{ ...heat, groupBy: [{ column: 'Unique Key' }] }] }, false);
+expect('heatmap groupBy entry without aggregateFn behind one with it', { data: [{ ...heat, groupBy: [{ column: 'Unique Key', aggregateFn: 'count' }, { column: 'date' }] }] }, false);
 expect('join groupBy with collect', { data: [{ type: 'join', dataRef: 't', joinDataRef: 'n', groupBy: [{ column: 'date', aggregateFn: 'collect' }] }] }, true);
+expect('join groupBy entry without aggregateFn', { data: [{ type: 'join', dataRef: 't', joinDataRef: 'n', groupBy: [{ column: 'date' }] }] }, true);
 expect('heatmap groupBy with normalize', { data: [{ ...heat, groupBy: [{ column: 'Unique Key', aggregateFn: 'count', normalize: true }] }] }, true);
 expect('heatmap groupBy with normalize as a string', { data: [{ ...heat, groupBy: [{ column: 'Unique Key', aggregateFn: 'count', normalize: 'yes' }] }] }, false);
 expect('workspaces on sources, a map, a plot and a compute pass', {
@@ -575,6 +578,16 @@ for (const [definition, paths] of newKeys) {
             failures++;
             console.error(`FAIL ${name} has no description in the schema`);
         }
+    }
+}
+
+// A heatmap's groupBy entry requires aggregateFn, which every run refuses an entry without, while a join's entry keeps it
+// optional, as it was.
+for (const [definition, required] of [['HeatmapSourceSpec', ['column', 'aggregateFn']], ['JoinSourceSpec', ['column']]] as const) {
+    const entries = objectsOf(keysAt(definition, 'groupBy'));
+    if (entries.length !== 1 || JSON.stringify(entries[0].required) !== JSON.stringify(required)) {
+        failures++;
+        console.error(`FAIL ${definition}.groupBy's entry requires ${JSON.stringify(entries.map((entry) => entry.required))}, not ${JSON.stringify(required)}`);
     }
 }
 

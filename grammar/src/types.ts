@@ -94,6 +94,25 @@ export interface JoinSourceSpec {
 }
 
 /**
+ * An entry of a heatmap's `groupBy`, one band of the raster.
+ * @required ["column", "aggregateFn"]
+ */
+type HeatmapGroupByEntry = {
+    column: string;
+    /**
+     * How the rows combine into the cell's value: any aggregate but `collect`, which lists rows, while a cell
+     * holds one value. An entry without it is refused, as nothing would combine the rows.
+     */
+    aggregateFn?: HeatmapAggregateFunction;
+    /**
+     * Rescale the band's values from 0 to 1 across the grid's cells. It needs an autk-db with
+     * urban-toolkit/autark#132, which also adds `_norm` to the band's label; autk-db 4.1.1 builds the band from the
+     * values as they are.
+     */
+    normalize?: boolean;
+};
+
+/**
  * Aggregates a table onto a regular grid, producing a raster heatmap table.
  */
 export interface HeatmapSourceSpec extends TableSourceBase {
@@ -111,20 +130,7 @@ export interface HeatmapSourceSpec extends TableSourceBase {
         useCentroid?: boolean;
     };
     /** Aggregate the rows near each cell, one raster band per entry. Without it, one band counts the rows near each cell. */
-    groupBy?: Array<{
-        column: string;
-        /**
-         * How the rows combine into the cell's value: any aggregate but `collect`, which lists rows, while a cell
-         * holds one value. An entry without it is refused, as nothing would combine the rows.
-         */
-        aggregateFn?: HeatmapAggregateFunction;
-        /**
-         * Rescale the band's values from 0 to 1 across the grid's cells. It needs an autk-db with
-         * urban-toolkit/autark#132, which also adds `_norm` to the band's label; autk-db 4.1.1 builds the band from the
-         * values as they are.
-         */
-        normalize?: boolean;
-    }>;
+    groupBy?: Array<HeatmapGroupByEntry>;
     /** Grid resolution. */
     grid: {
         rows: number;
@@ -623,19 +629,22 @@ export type MapLayerSpec = {
      */
     pickedComps?: RowPosition[],
     /**
-     * Features the layer hides, by their positions among the features it draws, as `map:picking` events give them. A
-     * hidden feature of a polygons or buildings layer can still be picked with autk-map 4.1.1. Read by the Autark adapter;
-     * the deck.gl adapter ignores it.
+     * Features the layer hides, by their positions among the features it draws, as `map:picking` events give them. autk-map
+     * 4.1.1 can still pick a hidden feature of a points, polygons or buildings layer: the Autark adapter leaves the
+     * features the layer hides when the pick is made out of the `map:picking` events it reports and of what it hands the
+     * plots linked to the layer. Read by the Autark adapter; the deck.gl adapter ignores it.
      */
     skippedComps?: RowPosition[],
     /** How values are rescaled before coloring. */
     normalization?: { mode: NormalizationMode; lowerPercentile?: number; upperPercentile?: number },
     /**
      * How the map draws the layer's table, in place of the table's own type, among the types of its kind of geometry: a
-     * table of polygons as `polygons`, `surface`, `parks`, `water` or `buildings` (raised by its heights), a table of lines
-     * as `polylines` or `roads`, a table of points as `points`, and a raster as `raster`. autk-map draws surface, parks,
-     * water and roads layers below the others, in that order, whatever the order of `layerRefs`. Read by the Autark
-     * adapter; the deck.gl adapter ignores it.
+     * table of polygons as `polygons`, `surface`, `parks`, `water` or `buildings` (each feature raised by its `height`,
+     * `building:height`, `levels` or `building:levels`; a buildings layer none of whose features has one is left out of
+     * the map, with a warning, unless `buildingsZeroHeight` raises them), a table of lines as `polylines` or `roads`, a
+     * table of points as `points`, and a raster as `raster`. autk-map draws surface, parks, water and roads layers below
+     * the others, in that order, whatever the order of `layerRefs`. Read by the Autark adapter; the deck.gl adapter
+     * ignores it.
      */
     layerType?: LayerType,
     /**
@@ -749,8 +758,9 @@ export type CameraMotionStep = {
 }
 
 /**
- * The ground of a map in 3D, raised to the heights a raster band gives. Read by the Autark adapter; the deck.gl adapter
- * ignores it.
+ * The ground of a map in 3D, raised to the heights a raster band gives. The map's `camera` looks at that ground, at its
+ * height, and keeps the eye's distance above it, and a camera tour turns the view around it. Read by the Autark adapter;
+ * the deck.gl adapter ignores it.
  */
 export type TerrainSpec = {
     /**
@@ -818,9 +828,11 @@ export type MapSpec = {
      */
     highlightColor?: HexColor,
     /**
-     * The color of the features of a layer colored by value whose value autk-map cannot color: one without a value, or
-     * with one that is not on the layer's scale, `#rrggbb`. Each map has its own; autk-map's is `#ffffff`. Read by the
-     * Autark adapter; the deck.gl adapter ignores it.
+     * The color of the features of a layer colored by value whose value autk-map cannot color, `#rrggbb`: on a layer of
+     * numbers, a feature without the value or with one that does not read as a finite number (`null` and an empty string
+     * read as 0); on a layer of categories, a feature without the value or with a category outside its `colorMapDomain`.
+     * A number outside the scale takes the color of the scale's nearer end. Each map has its own; autk-map's is
+     * `#ffffff`. Read by the Autark adapter; the deck.gl adapter ignores it.
      */
     invalidValueColor?: HexColor,
     /**

@@ -1,3 +1,4 @@
+import type { FeatureCollection } from 'geojson';
 import type { CameraMotionStep } from '@urban-toolkit/the-urban-grammar';
 import type { AutkDb } from '@urban-toolkit/autk-db';
 import type { AutkMap } from '@urban-toolkit/autk-map';
@@ -61,6 +62,135 @@ export function centerOnMap(map: AutkMap, center: [number, number]): [number, nu
         throw new Error(`camera.center [${center.join(', ')}] has no point on this map yet: resolveCameraCenter(db, map, center) puts it in the CRS of the map's workspace, as the grammar does for the maps it draws.`);
     const [ox, oy] = map.layerManager.hasOrigin ? map.layerManager.origin : [0, 0];
     return [kept.point[0] - ox, kept.point[1] - oy];
+}
+
+/**
+ * The ground of a map's terrain as autk-map raises it from a raster band (autk-core's `heightfieldFromRaster`): the band's
+ * heights on a grid of `width` by `height` points from the raster's south-west corner, in the map's world, `cellSizeX` and
+ * `cellSizeY` apart, a height that is not a finite number lying at 0. `lowest` is the lowest of them.
+ */
+type Ground = {
+    values: ArrayLike<number>; width: number; height: number; originX: number; originY: number; cellSizeX: number; cellSizeY: number;
+    lowest: number;
+};
+
+/** The ground of each map whose terrain the grammar raised, which its camera and its tours are measured from. */
+const grounds = new WeakMap<AutkMap, Ground>();
+
+/**
+ * Keeps the ground of the terrain autk-map raised on `map` from the band `band` of `raster`, so that `applyCamera` and the
+ * tours `playCameraMotion` plays on the map measure the camera from it. The map adapter calls it once autk-map's
+ * `enableTerrainMode` took the raster.
+ */
+export function keepTerrainGround(map: AutkMap, raster: FeatureCollection, band: string): void {
+    const props = raster.features?.[0]?.properties as Record<string, unknown> | null | undefined;
+    const values = props?.[band];
+    const bbox = raster.bbox;
+    if (!bbox || !map.layerManager.hasOrigin || !(Array.isArray(values) || (ArrayBuffer.isView(values) && !(values instanceof DataView)))) return;
+    const [ox, oy] = map.layerManager.origin;
+    const [minX, minY, maxX, maxY] = [0, 1, 2, 3].map((i) => Number(bbox[i]));
+    const [width, height] = [Number(props?.rasterResX), Number(props?.rasterResY)];
+    const [cellSizeX, cellSizeY] = [(maxX - minX) / (width - 1), (maxY - minY) / (height - 1)];
+    if (!(width >= 2 && height >= 2 && cellSizeX > 0 && cellSizeY > 0 && Number.isFinite(minX - ox) && Number.isFinite(minY - oy))) return;
+    const heights = values as ArrayLike<number>;
+    let lowest = Infinity;
+    for (let i = 0; i < width * height; i++) {
+        const value = Number(heights[i]);
+        lowest = Math.min(lowest, Number.isFinite(value) ? value : 0);
+    }
+    grounds.set(map, { values: heights, width, height, originX: minX - ox, originY: minY - oy, cellSizeX, cellSizeY, lowest });
+}
+
+/**
+ * The height of `ground` at `[x, y]` of its map's world, as autk-map 4.1.1's terrain draws it (`terrainHeight` in its
+ * terrain.vert.wgsl): between the four points of the grid around it, the point held within the grid up to its last cell
+ * but one.
+ */
+function heightOn(ground: Ground, x: number, y: number): number {
+    const { values, width, height } = ground;
+    const at = (column: number, row: number) => {
+        const value = Number(values[row * width + column]);
+        return Number.isFinite(value) ? value : 0;
+    };
+    const within = (value: number, high: number) => Math.min(Math.max(value, 0), high);
+    const u = within((x - ground.originX) / ground.cellSizeX, width - 2);
+    const v = within((y - ground.originY) / ground.cellSizeY, height - 2);
+    const [column, row] = [Math.floor(u), Math.floor(v)];
+    const [s, t] = [u - column, v - row];
+    const south = at(column, row) * (1 - s) + at(column + 1, row) * s;
+    const north = at(column, row + 1) * (1 - s) + at(column + 1, row + 1) * s;
+    return south * (1 - t) + north * t;
+}
+
+/**
+ * The height of the ground at `[x, y]` of `map`'s world: the terrain's there, on a map whose terrain the grammar raised,
+ * else 0, the height autk-map draws a map's flat layers at.
+ */
+export function groundHeight(map: AutkMap, x: number, y: number): number {
+    const ground = grounds.get(map);
+    return ground ? heightOn(ground, x, y) : 0;
+}
+
+/** The most points of the line of sight `groundAhead` reads before it halves the step where the line meets the ground. */
+const SIGHT_STEPS = 1 << 16;
+
+/**
+ * How far from `eye` along `sight`, a unit vector, the line first meets `ground` ahead of the eye, or `undefined` when it
+ * meets none, as from an eye under the ground that never comes out above it. It reads the line every half cell of the
+ * ground, down to the ground's lowest height, under which the line meets no more ground, then halves the step between the
+ * last point above the ground and the first one on or under it. An eye under the ground meets the ground where the line
+ * comes back down to it.
+ */
+function groundAhead(ground: Ground, eye: number[], sight: number[]): number | undefined {
+    if (!(sight[2] < 0)) return undefined;
+    const reach = (eye[2] - ground.lowest) / -sight[2];
+    if (!(reach > 0)) return undefined;
+    const above = (t: number) => eye[2] + sight[2] * t > heightOn(ground, eye[0] + sight[0] * t, eye[1] + sight[1] * t);
+    const across = Math.hypot(sight[0], sight[1]);
+    const step = across > 0 ? (0.5 * Math.min(ground.cellSizeX, ground.cellSizeY)) / across : reach;
+    const count = Math.min(Math.max(Math.ceil(reach / step), 1), SIGHT_STEPS);
+    let lastAbove = above(0) ? 0 : undefined;
+    for (let i = 1; i <= count; i++) {
+        const t = (reach * i) / count;
+        if (above(t)) {
+            lastAbove = t;
+            continue;
+        }
+        if (lastAbove === undefined) continue;
+        let [low, high] = [lastAbove, t];
+        for (let round = 0; round < 64 && high - low > 1e-9 * reach; round++) {
+            const middle = (low + high) / 2;
+            if (above(middle)) low = middle;
+            else high = middle;
+        }
+        return (low + high) / 2;
+    }
+    return undefined;
+}
+
+/**
+ * The height of a point ahead of the eye for a step to turn the view around: where the line of sight of the view matrix
+ * `m` first meets the ground ahead of the eye, else `lookAt`'s, the point the camera looks at. The eye and the line of
+ * sight are read from the matrix as autk-core's CameraMotion reads them.
+ */
+function sightGround(ground: Ground, m: ArrayLike<number>, lookAt: ArrayLike<number>): number {
+    const eye = [
+        -(m[0] * m[12] + m[1] * m[13] + m[2] * m[14]),
+        -(m[4] * m[12] + m[5] * m[13] + m[6] * m[14]),
+        -(m[8] * m[12] + m[9] * m[13] + m[10] * m[14]),
+    ];
+    const sight = [-m[2], -m[6], -m[10]];
+    const t = groundAhead(ground, eye, sight);
+    return t === undefined ? Number(lookAt[2]) : eye[2] + sight[2] * t;
+}
+
+/** The view matrix `m` of a world lowered by `lift`: what stands at height `lift` stands at 0 in it. */
+function lowered(m: ArrayLike<number>, lift: number): Float32Array {
+    const matrix = Float32Array.from(m);
+    matrix[12] += lift * m[8];
+    matrix[13] += lift * m[9];
+    matrix[14] += lift * m[10];
+    return matrix;
 }
 
 /** The tilt of a view from straight down and its bank, in degrees, as the steps of a tour change them. */
@@ -204,8 +334,11 @@ function queueStep(motion: CameraMotion, step: CameraMotionStep): void {
  * Plays `motion`, a camera tour, on `map` through autk-core's `CameraMotion`, from the view its camera has now, and
  * returns the tour without waiting for it. Each step takes its own `seconds`, easing in and out, and sets the camera at
  * every animation frame, so the map draws each one. The tour stops when the user drags, scrolls or presses a key on the
- * map, which hands the camera to the map's own pan, tilt and zoom, and when another tour is played on the map. It
- * refuses a tour `motionRefusal` refuses from the map's view.
+ * map, which hands the camera to the map's own pan, tilt and zoom, and when another tour is played on the map. A stopped
+ * tour lets go of the map at once and asks for no more frames. It refuses a tour `motionRefusal` refuses from the map's
+ * view. On a map whose terrain the grammar raised, each step turns the view around the ground its line of sight meets
+ * ahead of the eye as the step starts, or, when it meets none, as with the eye under the ground, around the point the
+ * camera looks at.
  *
  * The map adapter calls it once a map is drawn, when its `camera` has a `motion`. A host that frames a map itself and
  * then turns it with `applyCamera` calls it after that turn, so the tour starts from the host's view.
@@ -217,30 +350,68 @@ export function playCameraMotion(map: AutkMap, motion: CameraMotionStep[]): Came
     if (refused) throw new Error(refused);
 
     tours.get(map)?.stop();
-    let stopped = false;
     let settle = (): void => {};
     const stopping = new Promise<void>((resolve) => {
         settle = resolve;
     });
+    // CameraMotion turns the view around the point where its line of sight meets z = 0, which on a terrain the grammar
+    // raised lies under the ground. So as each step starts, it reads the view of a world lowered by the height of the
+    // point `sightGround` gives (`lift`), and the views it sets are raised back by as much: the step turns the view around
+    // that point, ahead of the eye.
+    let ground = grounds.get(map);
+    let lift = 0;
+    // CameraMotion cannot be stopped, so it turns a stand-in of the map's camera, which reaches the camera only while the
+    // tour plays (`view`): a stopped tour lets go of the camera, and of the map with it, at once.
+    let view: Camera | undefined = map.camera;
+    const steps = new CameraMotion();
+    for (const step of motion) queueStep(steps, step);
+    // autk-core 4.1.1's CameraMotion asks for another frame at each frame of a step while the step's progress, its time so
+    // far over its `durationMs`, which it reads at each frame, is below 1. A stopped tour gives each step a `durationMs` of
+    // NaN, so the frame the playing step already asked for ends it, and the next step, which finds no camera as it starts,
+    // ends the tour: a stopped tour asks for no more frames.
+    const queued = (steps as unknown as { steps?: unknown }).steps;
     let unlisten = (): void => {};
-    const stop = (): void => {
-        stopped = true;
+    const letGo = (): void => {
+        view = undefined;
+        ground = undefined;
         unlisten();
+        unlisten = () => {};
+    };
+    const stop = (): void => {
+        letGo();
+        if (Array.isArray(queued)) {
+            for (const step of queued) {
+                if (step !== null && typeof step === 'object') (step as { durationMs?: number }).durationMs = NaN;
+            }
+        }
         settle();
     };
     unlisten = onUserInput((map as { canvas?: HTMLCanvasElement }).canvas, stop);
-    // CameraMotion cannot be stopped, so it turns a stand-in of the map's camera, which stops passing its turns on once
-    // the tour is stopped: the steps it has left run to their end turning nothing.
-    const standIn = new Proxy(map.camera, {
-        get(target, key) {
-            if (stopped && (key === 'resetCamera' || key === 'update')) return () => {};
-            const value: unknown = Reflect.get(target, key);
-            return typeof value === 'function' ? value.bind(target) : value;
+    const standIn = new Proxy({} as Camera, {
+        get(_, key) {
+            const camera = view;
+            if (!camera) {
+                if (key === 'getModelViewMatrix') return () => { throw new Error('The camera tour was stopped.'); };
+                return () => {};
+            }
+            const terrain = ground;
+            if (terrain && key === 'getModelViewMatrix') {
+                return () => {
+                    const matrix = camera.getModelViewMatrix();
+                    lift = sightGround(terrain, matrix, camera.getLookAt());
+                    return lowered(matrix, lift);
+                };
+            }
+            if (terrain && key === 'resetCamera') {
+                return (up: number[], lookAt: number[], eye: number[]) =>
+                    camera.resetCamera(up, [lookAt[0], lookAt[1], lookAt[2] + lift], [eye[0], eye[1], eye[2] + lift]);
+            }
+            const value: unknown = Reflect.get(camera, key);
+            return typeof value === 'function' ? value.bind(camera) : value;
         },
     });
-    const steps = new CameraMotion();
-    for (const step of motion) queueStep(steps, step);
-    const done = Promise.race([steps.play(standIn), stopping]).finally(() => unlisten());
+    // A tour that ended lets go of the camera too.
+    const done = Promise.race([steps.play(standIn), stopping]).finally(letGo);
     const tour: CameraTour = { done, stop };
     tours.set(map, tour);
     return tour;

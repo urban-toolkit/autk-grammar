@@ -13,7 +13,7 @@ import { AutkDb } from '@urban-toolkit/autk-db';
 import { extentOf } from './data';
 import { checkPointSize, planarPointSize } from '../point-size';
 import { HEX_COLOR, buildDomainSpec, colorMapRangeRefusal } from '../color-keys';
-import { centerOnMap, centerRefusal, motionRefusal, playCameraMotion, resolveCameraCenter } from '../camera';
+import { centerOnMap, centerRefusal, groundHeight, keepTerrainGround, motionRefusal, playCameraMotion, resolveCameraCenter } from '../camera';
 
 /** The id a layer has in its map: its `title`, else its `dataRef`. */
 export function layerIdOf(layerRef: MapLayerSpec): string {
@@ -270,10 +270,77 @@ function drawnType(layerRef: MapLayerSpec, tableType: LayerType | undefined, lay
     throw new Error(`Layer "${layerId}": layerType "${wanted}" cannot draw the table "${layerRef.dataRef}", a ${tableType} table: ${kind.drawn}.`);
 }
 
+/**
+ * Why the map has no layer of a layer of the spec, autk-map having been handed `count` features for it: autk-map logs
+ * such a layer and goes on without it. autk-core 4.1.1 raises a building part only from `height`, `building:height`,
+ * `levels` or `building:levels`, to a height above the part's minimum (`TriangulatorBuildings.computeBuildingHeights`),
+ * and autk-map makes no buildings layer of features it raises no part of.
+ */
+function layerNotMade(layerRef: MapLayerSpec, type: LayerType | undefined, count: number): string {
+    if (count === 0) return `the table "${layerRef.dataRef}" has no feature to draw, so the map has no layer of it.`;
+    const features = `${count} feature${count === 1 ? '' : 's'}`;
+    if (type === 'buildings') {
+        const remedy = layerRef.buildingsZeroHeight === true
+            ? 'Each part has one of them, with a height not above its minimum.'
+            : 'Give the features one of those keys, or set buildingsZeroHeight: true to raise each part without them to a random height.';
+        return `autk-map drew no building of the ${features} of the table "${layerRef.dataRef}", so the map has no layer of them: `
+            + `autk-core raises a building part only from height, building:height, levels or building:levels, to a height above the part's minimum. ${remedy}`;
+    }
+    if (type === 'raster')
+        return `autk-map drew nothing of the raster table "${layerRef.dataRef}", so the map has no layer of it.`;
+    return `autk-map drew none of the ${features} of the table "${layerRef.dataRef}"${type ? ` as ${type}` : ''}, so the map has no layer of them.`;
+}
+
+/**
+ * Leaves out a layer the map has no layer of, as autk-map leaves it out, so the run goes on with the others, as 5.6.0
+ * did: it warns why when autk-map was handed features for the layer, and refuses the keys that need the layer, `legend`
+ * and `pickedComps`. The run's lookup and its links do not name the layer.
+ */
+function leaveOut(layerRef: MapLayerSpec, layerId: string, type: LayerType | undefined, count: number): void {
+    const cause = layerNotMade(layerRef, type, count);
+    const needs = layerRef.legend === true ? 'legend' : layerRef.pickedComps !== undefined ? 'pickedComps' : undefined;
+    if (needs)
+        throw new Error(`Layer "${layerId}": ${needs} needs the layer, and ${cause}`);
+    if (count > 0)
+        console.warn(`Layer "${layerId}": ${cause}`);
+}
+
 /** Refuses a list of feature positions that is not whole numbers from 0, as `key` of a layer. */
 function checkPositions(positions: unknown, key: string, layerId: string): void {
     if (!Array.isArray(positions) || !positions.every((position) => Number.isInteger(position) && position >= 0))
         throw new Error(`Layer "${layerId}": ${key} must list the positions of features the layer draws, whole numbers from 0, not ${JSON.stringify(positions)}.`);
+}
+
+/**
+ * The positions of the features `layer` hides now, as autk-map's own getters give them: a vector layer's `skippedIds`,
+ * and on a points layer, which keeps no such list, each feature whose first point instance its `skippedVertices` hides,
+ * its components holding their instances up to a running count, `nPoints`. So the calls that hide and show features,
+ * autk-map's `setSkippedIds` and `clearSkippedIds` and the layer's own, a host's after the run included, count.
+ */
+function hiddenNow(layer: unknown): ReadonlySet<number> {
+    const { skippedIds, skippedVertices, components } = (layer ?? {}) as { skippedIds?: unknown; skippedVertices?: unknown; components?: unknown };
+    if (Array.isArray(skippedIds)) return new Set(skippedIds as number[]);
+    const hidden = new Set<number>();
+    if (!ArrayBuffer.isView(skippedVertices) || !Array.isArray(components)) return hidden;
+    const vertices = skippedVertices as unknown as ArrayLike<number>;
+    const counts = components as Array<{ nPoints?: number } | null>;
+    counts.forEach((component, position) => {
+        const first = position > 0 ? Number(counts[position - 1]?.nPoints) : 0;
+        if (first < Number(component?.nPoints) && vertices[first] > 0) hidden.add(position);
+    });
+    return hidden;
+}
+
+/**
+ * The positions of `selection`, picked on the layer `layerId` of `map`, that the layer shows as the pick arrives.
+ * autk-map 4.1.1's picking passes draw the hidden features of a points, polygons or buildings layer too, so a pick can
+ * find a feature the layer hides: the grammar leaves it out of the picks it forwards and of what it hands the plots
+ * linked to the layer.
+ */
+export function shownPicks(map: AutkMap, layerId: string, selection: number[]): number[] {
+    if (selection.length === 0) return selection;
+    const hidden = hiddenNow(map.layerManager.searchByLayerId(layerId));
+    return hidden.size > 0 ? selection.filter((position) => !hidden.has(position)) : selection;
 }
 
 /** Refuses positions on a raster layer, which draws no features, and positions past the last feature a layer draws. */
@@ -350,7 +417,9 @@ function cameraRefusal(camera: CameraSpec): string | undefined {
 /**
  * Moves a map's camera as `camera` says, from the view that fits the map's layers. The camera reports each change,
  * so the map redraws without a request. It refuses a pitch that is not at least 0 and less than 90 degrees, and a
- * `center` that `resolveCameraCenter` has not put on the map.
+ * `center` that `resolveCameraCenter` has not put on the map. On a map whose terrain the grammar raised, it looks at
+ * the ground, at the terrain's height under the point it looks at, and sets the eye's distance from that point: `zoom`'s,
+ * else that of the view that fits the terrain.
  *
  * The map adapter calls it once the map's layers are loaded and before the map's first `draw()`. A host that builds
  * its own map from a spec's `map` entry calls it at the same point, so the map looks from where the grammar's would.
@@ -366,19 +435,23 @@ export function applyCamera(map: AutkMap, camera: CameraSpec): void {
     // `bearing` the compass heading of the view, clockwise from north.
     const view = map.camera;
     const [x, y] = center ?? view.getLookAt();
+    // autk-map draws a terrain at its raw elevation, which can lie kilometres above z = 0: the point looked at is on the
+    // ground, and the eye's distance is measured from it. Without zoom, it is the height of the eye of the view this
+    // turns, as on a flat map: the view that fits the layers, or the terrain, which autk-map measures from z = 0.
+    const ground = groundHeight(map, x, y);
     const distance = camera.zoom !== undefined ? 10000 / Math.pow(2, camera.zoom - 10) : Math.abs(view.getEye()[2]);
     const pitch = (camera.pitch ?? 0) * Math.PI / 180;
     const bearing = (camera.bearing ?? 0) * Math.PI / 180;
     const eye = [
         x - distance * Math.sin(pitch) * Math.sin(bearing),
         y - distance * Math.sin(pitch) * Math.cos(bearing),
-        distance * Math.cos(pitch),
+        ground + distance * Math.cos(pitch),
     ];
     // The view's up direction: across the line of sight at any pitch, toward the far side of the view, as autk-map's own
     // tilt leaves it. autk-map's pan, tilt and zoom at the cursor move along it and take it to be across the line of
     // sight; a horizontal one is not, beyond a pitch of 0. The view itself is the same either way.
     const up = [Math.cos(pitch) * Math.sin(bearing), Math.cos(pitch) * Math.cos(bearing), Math.sin(pitch)];
-    view.resetCamera(up, [x, y, 0], eye);
+    view.resetCamera(up, [x, y, ground], eye);
 }
 
 /**
@@ -403,6 +476,8 @@ async function loadTerrain(map: AutkMap, context: AutkDb, terrain: TerrainSpec, 
     } catch (error) {
         throw refuse(`"${terrain.dataRef}": ${error instanceof Error ? error.message : String(error)}`);
     }
+    // The ground the map's camera and its tours are measured from.
+    keepTerrainGround(map, collection, band);
 }
 
 /**
@@ -454,15 +529,15 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
 
     /**
      * Loads each layer of `spec` on `map`, and gives, in the order of the layers, the keys of the rows each draws and the
-     * collection it handed autk-map for it.
+     * collection it handed autk-map for it, or `undefined` for a layer the map has no layer of (see `leaveOut`).
      */
-    async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<Array<{ rows: string[]; collection: FeatureCollection }>> {
+    async function loadLayers(map: AutkMap, context: AutkDb, spec: MapSpec): Promise<Array<{ rows: string[]; collection: FeatureCollection } | undefined>> {
         let tableToTypeMap: {[tableName: string]: string} = {};
         for(const table of context.getTablesMetadata()) {
             if(table.type !== undefined) tableToTypeMap[table.name] = table.type;
         }
 
-        const drawn: Array<{ rows: string[]; collection: FeatureCollection }> = [];
+        const drawn: Array<{ rows: string[]; collection: FeatureCollection } | undefined> = [];
         for(const layerRef of spec.layerRefs){
             const name     = layerRef.dataRef;
             const layerId  = layerIdOf(layerRef);
@@ -491,6 +566,11 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 // autk-map leaves out a building part without a height, unless it is told to give each a random one.
                 const zeroHeight = type === 'buildings' && layerRef.buildingsZeroHeight === true;
                 map.loadCollection(layerId, { collection: data, type, ...(zeroHeight ? { loadConfig: { buildingsZeroHeight: true } } : {}) });
+            }
+            if(!map.layerManager.searchByLayerId(layerId)) {
+                leaveOut(layerRef, layerId, type, data.features?.length ?? 0);
+                drawn.push(undefined);
+                continue;
             }
 
             if(layerRef.opacity != null)
@@ -640,7 +720,7 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
 
                 // A map is known to the grammar, which destroys it, once its layers are loaded. One that fails before
                 // is destroyed here, so its controls, event handlers and GPU buffers do not outlive the failed run.
-                let drawn: Array<{ rows: string[]; collection: FeatureCollection }>;
+                let drawn: Array<{ rows: string[]; collection: FeatureCollection } | undefined>;
                 try {
                     applyMapColors(map, spec);
 
@@ -664,10 +744,13 @@ export function createMapAdapter(targets?: Targets, layers?: DrawnLayers, comput
                 }
 
                 const mapId = mapIdOf(spec, index);
-                spec.layerRefs.forEach((layerRef, at) => layers?.push({
-                    map, mapIndex: index, mapId, layerId: layerIdOf(layerRef), dataRef: layerRef.dataRef,
-                    rows: drawn[at].rows, collection: drawn[at].collection,
-                }));
+                spec.layerRefs.forEach((layerRef, at) => {
+                    const loaded = drawn[at];
+                    if(loaded) layers?.push({
+                        map, mapIndex: index, mapId, layerId: layerIdOf(layerRef), dataRef: layerRef.dataRef,
+                        rows: loaded.rows, collection: loaded.collection,
+                    });
+                });
 
                 if(maps)
                     maps[index] = map;

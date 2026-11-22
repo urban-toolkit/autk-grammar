@@ -4,7 +4,7 @@ import type {
     CameraMotionStep, CameraSpec, ColorMapInterpolator, ComputeSpec, DataSourceSpec, GeoTiffDataSourceSpec, HeatmapSourceSpec, MapLayerSpec,
     MapSpec, PlotSpec, RenderComputeSpec, TerrainSpec, UrbanSpec,
 } from '@urban-toolkit/the-urban-grammar';
-import type { CameraView, DrawnMark, LayerState, PaneBox, RunSummary } from './app/main';
+import type { CameraView, DrawnMark, LayerState, PaneBox, RunSummary, TerrainState } from './app/main';
 import { serveExtensions, type ExtensionRequests } from './duckdb-extensions';
 import { spec as interactionExternal } from '../gallery/src/examples/interaction-external';
 import { spec as heatmapGeojson } from '../gallery/src/examples/heatmap-vis-geojson';
@@ -209,6 +209,59 @@ async function answerOverpass(page: Page, answer: object): Promise<string[]> {
     });
     return queries;
 }
+
+/**
+ * Answers the page's Overpass API requests for an OSM source's layers: each query of buildings (one a tile of the area)
+ * with `layers.buildings`, the query of roads with `layers.roads`, and any other (the coastline query) with no elements.
+ */
+async function answerOverpassLayers(page: Page, layers: { roads: object[]; buildings: object[] }): Promise<void> {
+    const headers = { 'access-control-allow-origin': '*' };
+    await page.route('https://overpass-api.de/api/status', (route) => route.fulfill({ status: 404, headers, body: '' }));
+    await page.route('https://overpass-api.de/api/interpreter', (route) => {
+        const query = decodeURIComponent((route.request().postData() ?? '').replace(/^data=/, ''));
+        const elements = query.includes('way["building"') ? layers.buildings : query.includes('way["highway"') ? layers.roads : [];
+        return route.fulfill({ status: 200, headers, contentType: 'application/json', body: JSON.stringify({ version: 0.6, elements }) });
+    });
+}
+
+test('draws the other OSM layers when autk-map raises no building of the buildings, and warns why, naming the keys autk-core raises a part from', async ({ page }) => {
+    // Three buildings tagged building=yes alone, as many OSM buildings are, between two roads inside BOX. autk-map raises
+    // none of them and makes no buildings layer: the run refused the whole spec, where 5.6.0 drew the surface and the roads.
+    // A way through `points`, `[lon, lat]`, its nodes numbered from id + 1. A closed way ends on its first node, as OSM
+    // closes one: autk-db reads a way as an area only when its first and last nodes are one.
+    const way = (id: number, tags: object, points: number[][], closed = false) => {
+        const nodes = points.map((_, i) => id + i + 1);
+        const ring = closed ? [...points, points[0]] : points;
+        return { type: 'way', id, tags, nodes: closed ? [...nodes, nodes[0]] : nodes, geometry: ring.map(([lon, lat]) => ({ lat, lon })) };
+    };
+    const road = (id: number, lat: number) => way(id, { highway: 'residential' }, [[-74.012, lat], [-74.0085, lat]]);
+    const building = (id: number, i: number) => {
+        const [west, east] = [-74.0115 + i * 0.0012, -74.0109 + i * 0.0012];
+        return way(id, { building: 'yes' }, [[west, 40.7068], [east, 40.7068], [east, 40.7074], [west, 40.7074]], true);
+    };
+    await answerOverpassLayers(page, { roads: [road(100, 40.706), road(110, 40.708)], buildings: [building(200, 0), building(210, 1), building(220, 2)] });
+    const warnings: string[] = [];
+    page.on('console', (message) => {
+        if (message.type() === 'warning') warnings.push(message.text());
+    });
+
+    const { tables } = await runSpec(page, {
+        data: [{ type: 'osm', outputTableName: 'plain', queryArea: { bbox: BOX }, autoLoadLayers: { layers: ['surface', 'roads', 'buildings'] } } as DataSourceSpec],
+        map: { camera: { zoom: 14 }, layerRefs: [{ dataRef: 'plain_surface' }, { dataRef: 'plain_roads' }, { dataRef: 'plain_buildings' }] },
+    });
+    expect(tables.plain_buildings?.features).toBe(3);
+    expect(tables.plain_roads?.features).toBeGreaterThan(0);
+    // The map draws the surface and the roads, and has no buildings layer, which the run's lookup does not name.
+    expect((await mapLayers(page)).map((layer) => layer.id).sort()).toEqual(['plain_roads', 'plain_surface']);
+    expect(await page.evaluate(() => window.grammar.mapLayer('plain_buildings') === undefined)).toBe(true);
+    expect(await page.evaluate(() => window.grammar.mapLayer('plain_roads')?.layerId)).toBe('plain_roads');
+    // One warning says why, naming the four keys.
+    expect(warnings.filter((text) => text.startsWith('Layer "plain_buildings"'))).toEqual([
+        expect.stringContaining('Layer "plain_buildings": autk-map drew no building of the 3 features of the table "plain_buildings", so the map has no layer of them: '
+            + 'autk-core raises a building part only from height, building:height, levels or building:levels'),
+    ]);
+    expect(await drawnPixels(page, 'surface and roads, without buildings'), 'pixels of the surface and the roads').toBeGreaterThan(1000);
+});
 
 /** The value at `path` of each of the first `count` features of `table`. */
 function valuesOf(page: Page, table: string, count: number, path: string): Promise<unknown[]> {
@@ -1095,6 +1148,37 @@ test('draws the buildings that have no height with buildingsZeroHeight, each 3 t
     expect(sixRoofs, `six roofs cover ${sixRoofs} pixels, three ${threeRoofs}`).toBeGreaterThan(threeRoofs * 1.6);
 });
 
+test('draws a map without a buildings layer autk-map raises no building of, warns why, and refuses legend and pickedComps on it', async ({ page }) => {
+    // The zones have an id and a v, and none of height, building:height, levels and building:levels. autk-map logs
+    // "Invalid Building Layer." and makes no layer. The run goes on without it, as 5.6.0 did, and says why; the layer's
+    // lookup names no layer the map lacks, and the keys that need the layer are refused, naming the cause.
+    const zonesAsBuildings = (options: Partial<MapLayerSpec>): UrbanSpec => ({
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'area' }, { dataRef: 'zones', title: 'Zones', layerType: 'buildings', ...options }] },
+    });
+    const warnings: string[] = [];
+    page.on('console', (message) => {
+        if (message.type() === 'warning') warnings.push(message.text());
+    });
+    const cause = 'autk-map drew no building of the 4 features of the table "zones", so the map has no layer of them: '
+        + 'autk-core raises a building part only from height, building:height, levels or building:levels';
+    await runSpec(page, zonesAsBuildings({}));
+    expect(warnings.filter((text) => text.startsWith('Layer "Zones"'))).toEqual([expect.stringContaining(`Layer "Zones": ${cause}`)]);
+    expect(Object.keys(await layerById(page))).toEqual(['area']);
+    expect(await page.evaluate(() => window.grammar.mapLayer('zones') === undefined)).toBe(true);
+
+    // legend and pickedComps need the layer. The map that failed is destroyed, so it leaves nothing on the page.
+    await expect(runSpec(page, zonesAsBuildings({ getFnv: 'v', legend: true }))).rejects.toThrow(`Layer "Zones": legend needs the layer, and ${cause}`);
+    expect(await page.evaluate(() => window.grammar.maps.length)).toBe(0);
+    await expect(runSpec(page, zonesAsBuildings({ isPick: true, pickedComps: [0] }))).rejects.toThrow(`Layer "Zones": pickedComps needs the layer, and ${cause}`);
+    expect(await page.evaluate(() => window.grammar.maps.length)).toBe(0);
+
+    // With buildingsZeroHeight, each zone stands at a random height, and the map draws the layer.
+    await runSpec(page, zonesAsBuildings({ buildingsZeroHeight: true }));
+    expect((await layerById(page)).Zones?.type).toBe('buildings');
+    expect(await page.evaluate(() => window.grammar.mapLayer('zones')?.layerId)).toBe('Zones');
+});
+
 test('draws a map in the colors of its style, and its picked features and the values it cannot color in its own colors', async ({ page }) => {
     // Four squares whose layer is colored by v, the third without one.
     const square = (i: number) => {
@@ -1248,6 +1332,82 @@ test('hides the features skippedComps names, on a layer of polygons, of lines or
         .rejects.toThrow('Layer "Hidden": skippedComps names position 4, past the 4 features the layer draws.');
     await expect(runSpec(page, heatmapWith({ skippedComps: [0] })))
         .rejects.toThrow('Layer "heatmap": skippedComps names features, and a raster layer has none.');
+});
+
+/**
+ * Double-clicks the map on #map0 where `[lon, lat]` lies, as the user picks, and gives the selection of the next
+ * map:picking event and the ids of the rows the plot `plotId` then selects. The point is put on the page by the map's
+ * camera.
+ */
+function pickAt(page: Page, plotId: string, [lon, lat]: [number, number]) {
+    return page.evaluate(async ({ plotId, point: [x, y] }) => {
+        const map = window.grammar.maps[0];
+        const [ox, oy] = map.layerManager.origin;
+        map.camera.update();
+        const m = map.camera.getViewProjectionMatrix();
+        const [wx, wy] = [x - ox, y - oy];
+        const [cx, cy, cw] = [m[0] * wx + m[4] * wy + m[12], m[1] * wx + m[5] * wy + m[13], m[3] * wx + m[7] * wy + m[15]];
+        const box = map.canvas.getBoundingClientRect();
+        const clientX = box.left + ((cx / cw + 1) / 2) * box.width;
+        const clientY = box.top + ((1 - cy / cw) / 2) * box.height;
+        const reported = await new Promise<number[] | string>((resolve) => {
+            window.grammar.interactions.on('map:picking', ({ selection }) => resolve([...selection]));
+            setTimeout(() => resolve('no map:picking event within 5 s'), 5000);
+            map.canvas.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX, clientY }));
+        });
+        const rows = window.grammar.plotCollection(plotId)?.features ?? [];
+        const selected = [...(window.grammar as any)._plotRegistry.get(plotId).selection] as number[];
+        return { reported, plotted: selected.map((position) => rows[position]?.properties?.id).sort() };
+    }, { plotId, point: worldMercator(lon, lat) });
+}
+
+/** Where spot `id` of `spots` lies, `[lon, lat]`. */
+const spotAt = (id: number): [number, number] => [-73.984 + (id % 3) * 0.004, 40.751 + Math.floor(id / 3) * 0.004];
+
+test('drops a hidden point a double click picks from map:picking and from the plot linked to its layer', async ({ page }) => {
+    // autk-map's picking pass draws every point of a points layer, the hidden ones too, so a double click where hidden
+    // spot 0 lies picked it: map:picking reported it, and the plot linked to the layer by mapRef selected its row.
+    await runSpec(page, {
+        data: [area, spots],
+        map: { layerRefs: [{ dataRef: 'spots', title: 'Spots', isPick: true, skippedComps: [0] }] },
+        plot: { id: 'p', dataRef: 'spots', mark: 'table', axis: ['id'], mapRef: 'spots', events: ['click'] },
+    });
+    expect((await page.evaluate(() => window.drawnRows('map0', 'Spots'))).map((row) => row?.id)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect((await layerById(page)).Spots.skippedIds).toEqual([0]);
+
+    // A shown spot is picked, and its row selected.
+    expect(await pickAt(page, 'p', spotAt(4))).toEqual({ reported: [4], plotted: [4] });
+    // The hidden spot is not: the pick reports the spots picked before it, and the plot keeps their rows.
+    expect(await pickAt(page, 'p', spotAt(0))).toEqual({ reported: [4], plotted: [4] });
+});
+
+test('drops the picks of the features a layer hides when the pick is made, though a host shows or hides them after the run', async ({ page }) => {
+    // The grammar kept the positions skippedComps hid as the layer loaded: after a host showed a feature again, its pick
+    // was dropped, and after a host hid another, its pick was forwarded.
+    // Zone 1, hidden as the layer loads, shown again with autk-map's own clearSkippedIds: its pick is forwarded.
+    await runSpec(page, {
+        data: [area, zones],
+        map: { layerRefs: [{ dataRef: 'zones', title: 'Zones', isPick: true, skippedComps: [1] }] },
+        plot: { id: 'z', dataRef: 'zones', mark: 'table', axis: ['id'], mapRef: 'zones', events: ['click'] },
+    });
+    expect((await layerById(page)).Zones.skippedIds).toEqual([1]);
+    await page.evaluate(() => window.grammar.maps[0].clearSkippedIds('Zones'));
+    expect((await layerById(page)).Zones.skippedIds).toEqual([]);
+    expect(await pickAt(page, 'z', [-73.9845, 40.7515])).toEqual({ reported: [1], plotted: [1] });
+
+    // On a points layer, which autk-map's setSkippedIds and clearSkippedIds pass over, with the layer's own calls: spot 0
+    // shown again is picked, and spot 4 hidden after the run is not.
+    await runSpec(page, {
+        data: [area, spots],
+        map: { layerRefs: [{ dataRef: 'spots', title: 'Spots', isPick: true, skippedComps: [0] }] },
+        plot: { id: 'p', dataRef: 'spots', mark: 'table', axis: ['id'], mapRef: 'spots', events: ['click'] },
+    });
+    await page.evaluate(() => window.grammar.maps[0].layerManager.searchByLayerId('Spots')?.clearSkippedIds());
+    expect((await layerById(page)).Spots.skippedIds).toEqual([]);
+    expect(await pickAt(page, 'p', spotAt(0))).toEqual({ reported: [0], plotted: [0] });
+    await page.evaluate(() => window.grammar.maps[0].layerManager.searchByLayerId('Spots')?.setSkippedIds([4]));
+    expect((await layerById(page)).Spots.skippedIds).toEqual([4]);
+    expect(await pickAt(page, 'p', spotAt(4))).toEqual({ reported: [0], plotted: [0] });
 });
 
 test('draws each line of a roads layer as wide as widthBy says, and a line without a width as wide as its kind of road', async ({ page }) => {
@@ -2564,9 +2724,9 @@ test('refuses collect in a heatmap groupBy, naming the heatmap, and builds the h
 });
 
 test('refuses a heatmap groupBy entry with no aggregateFn, naming the heatmap and its column, which autk-db 4.1.1 drew as 0', async ({ page }) => {
-    // A cell holds one value, and nothing combines the rows near it without an aggregate. The schema takes such an
-    // entry, as a join's groupBy does, and the adapter passed it on to autk-db, which lists the column's values near
-    // each cell for it: on 4.1.1 its band read 0 in every cell, with no error.
+    // A cell holds one value, and nothing combines the rows near it without an aggregate. The schema refuses such an
+    // entry, but a spec it never checked reaches the adapter, which passed it on to autk-db, which lists the column's
+    // values near each cell for it: on 4.1.1 its band read 0 in every cell, with no error.
     const heatmap = (groupBy: HeatmapSourceSpec['groupBy']): DataSourceSpec => ({
         type: 'heatmap', outputTableName: 'heat', joinDataRef: 'spots', near: { distance: 10000 }, grid: { rows: 2, columns: 2 }, groupBy,
     });
@@ -3211,6 +3371,123 @@ test('raises a map on the heights of the raster band its terrain names, and refu
         .rejects.toThrow('Map 0: terrain dataRef "area" names a polygons table, and a terrain takes its heights from a raster table');
     await expect(runSpec(page, withTerrain({ dataRef: 'elevation' })))
         .rejects.toThrow(`Map 0: terrain dataRef "elevation" names no table of the map's workspace.`);
+});
+
+/**
+ * A GeoTIFF made by the test, as a data URL a geotiff source loads: one band of 32-bit floats, `columns` cells across and
+ * `rows` down over `[west, south, east, north]` in degrees, the value of each cell `valueAt(column, row)` with its row
+ * counted from the south, as autk-db lays out a raster's band. Uncompressed, in one strip, placed by its pixel scale and
+ * its tie point.
+ */
+function geotiffUrl(columns: number, rows: number, [west, south, east, north]: number[], valueAt: (column: number, row: number) => number): string {
+    const [SHORT, LONG, DOUBLE] = [3, 4, 12];
+    const entries: Array<[tag: number, type: number, values: number[]]> = [
+        [256, LONG, [columns]], [257, LONG, [rows]], [258, SHORT, [32]], [259, SHORT, [1]], [262, SHORT, [1]],
+        [273, LONG, [0]], [277, SHORT, [1]], [278, LONG, [rows]], [279, LONG, [columns * rows * 4]], [284, SHORT, [1]],
+        [339, SHORT, [3]], [33550, DOUBLE, [(east - west) / columns, (north - south) / rows, 0]], [33922, DOUBLE, [0, 0, 0, west, north, 0]],
+    ];
+    // The header, then the one directory of entries; the doubles, too long for an entry, after it; then the cells.
+    const align = (offset: number) => Math.ceil(offset / 8) * 8;
+    let extra = align(8 + 2 + entries.length * 12 + 4);
+    const cells = align(extra + 8 * entries.reduce((count, [, type, values]) => count + (type === DOUBLE ? values.length : 0), 0));
+    entries[5][2] = [cells];
+    const view = new DataView(new ArrayBuffer(cells + columns * rows * 4));
+    view.setUint16(0, 0x4949, true);
+    view.setUint16(2, 42, true);
+    view.setUint32(4, 8, true);
+    view.setUint16(8, entries.length, true);
+    entries.forEach(([tag, type, values], i) => {
+        const at = 10 + i * 12;
+        view.setUint16(at, tag, true);
+        view.setUint16(at + 2, type, true);
+        view.setUint32(at + 4, values.length, true);
+        if (type === SHORT) view.setUint16(at + 8, values[0], true);
+        else if (type === LONG) view.setUint32(at + 8, values[0], true);
+        else {
+            view.setUint32(at + 8, extra, true);
+            values.forEach((value, k) => view.setFloat64(extra + 8 * k, value, true));
+            extra += 8 * values.length;
+        }
+    });
+    view.setUint32(10 + entries.length * 12, 0, true);
+    // A GeoTIFF's rows run from the north.
+    for (let row = 0; row < rows; row++) {
+        for (let column = 0; column < columns; column++)
+            view.setFloat32(cells + 4 * (row * columns + column), valueAt(column, rows - 1 - row), true);
+    }
+    return `data:image/tiff;base64,${Buffer.from(view.buffer).toString('base64')}`;
+}
+
+test("looks at a terrain map's ground at its height, keeps the eye and the camera's tour above that ground, and keeps the fitted view's distance without zoom", async ({ page }) => {
+    // Ground about 2 km high, as in Denver, made here: 41 by 41 heights over about 860 by 890 m, rising 60 m from west to
+    // east and 40 m from south to north. The camera looked at z = 0 and set the eye's distance from there, so at zoom 15
+    // the eye stood about 1.7 km under the ground, and the map showed only its background.
+    const [columns, rows] = [41, 41];
+    const heightAt = (column: number, row: number) => 1950 + (60 * column) / (columns - 1) + (40 * row) / (rows - 1);
+    const dem: DataSourceSpec = {
+        type: 'geotiff', outputTableName: 'dem', geotiffFileUrl: geotiffUrl(columns, rows, [-104.995, 39.736, -104.985, 39.744], heightAt),
+    };
+    const onDem = (camera: CameraSpec): UrbanSpec => ({
+        data: [dem],
+        map: {
+            terrain: { dataRef: 'dem' },
+            camera,
+            layerRefs: [{ dataRef: 'dem', colorMapInterpolator: scheme('interpolateViridis'), transferFunction: { opacityMin: 1, opacityMax: 1 } }],
+        },
+    });
+    const view = () => page.evaluate(() => window.cameraView('map0'));
+    const terrainOf = async () => (await page.evaluate(() => window.terrain('map0')))!;
+    // The ground's height at a point of the map's world, as autk-map raises it: between the band's cells, which stand
+    // from the first corner of the terrain's bounds to the last.
+    const groundAt = (terrain: TerrainState, x: number, y: number) => {
+        const [minX, minY, maxX, maxY] = terrain.bounds;
+        return heightAt(((x - minX) * (columns - 1)) / (maxX - minX), ((y - minY) * (rows - 1)) / (maxY - minY));
+    };
+    // Checks that the eye is above the ground under it, and that the camera looks at the ground, `distance` from the eye
+    // and `tilt` degrees from straight down.
+    const expectOnGround = (name: string, terrain: TerrainState, at: CameraView, distance: number, tilt: number) => {
+        const under = groundAt(terrain, at.eye[0], at.eye[1]);
+        expect(at.eye[2], `${name}: the eye's height, over ground ${under.toFixed(1)} m high`).toBeGreaterThan(under);
+        const ground = groundAt(terrain, at.lookAt[0], at.lookAt[1]);
+        expect(Math.abs(at.lookAt[2] - ground), `${name}: the point looked at, ${at.lookAt[2]} m high, on ground ${ground.toFixed(1)} m high`).toBeLessThan(0.05);
+        const offset = at.eye.map((value, i) => value - at.lookAt[i]);
+        expect(Math.hypot(offset[0], offset[1], offset[2]), `${name}: the eye's distance from the point looked at`).toBeCloseTo(distance, 1);
+        expect(offset[2], `${name}: the eye's height above the point looked at`).toBeCloseTo(distance * Math.cos((tilt * Math.PI) / 180), 1);
+    };
+
+    // From the view that fits the ground, tilted 20 degrees: the eye 312.5 m from the middle of the ground.
+    await runSpec(page, onDem({ zoom: 15, pitch: 20 }));
+    const terrain = await terrainOf();
+    expect(terrain.minHeight).toBeCloseTo(1950, 1);
+    expect(terrain.maxHeight).toBeCloseTo(2050, 1);
+    expectOnGround('zoom 15, pitch 20', terrain, await view(), 312.5, 20);
+    await expectDrawn(page, 'map0');
+
+    // A tour turns the view around the ground its line of sight meets: a zoom level in halves the eye's distance from it.
+    await page.evaluate(async () => {
+        window.playTour('map0', [{ type: 'zoom', amount: 1, seconds: 0.25 }]);
+        await window.tour?.done;
+    });
+    expectOnGround('a tour of a zoom level in', terrain, await view(), 156.25, 20);
+    await expectDrawn(page, 'map0');
+
+    // The README's camera, around a center of the ground about 2017 m high: the center is the point looked at.
+    const center: [number, number] = [-104.988, 39.741];
+    await runSpec(page, onDem({ center, zoom: 15, pitch: 50, bearing: 30 }));
+    const turned = await view();
+    const [x, y] = worldMercator(...center);
+    expect(Math.abs(turned.lookAt[0] + turned.origin[0] - x), 'x of the point looked at, in World Mercator meters').toBeLessThan(0.01);
+    expect(Math.abs(turned.lookAt[1] + turned.origin[1] - y), 'y of the point looked at, in World Mercator meters').toBeLessThan(0.01);
+    expectOnGround('the README camera at a center', await terrainOf(), turned, 312.5, 50);
+
+    // Without zoom, the eye keeps the distance of the view that fits the ground, from the point it looks at on the
+    // ground. autk-map measures that view from z = 0, so the eye's height above z = 0 less the ground's, about 2 km, set
+    // the distance.
+    await runSpec(page, onDem({}));
+    const fitted = await view();
+    const fit = Math.hypot(...fitted.eye.map((value, i) => value - fitted.lookAt[i]));
+    await runSpec(page, onDem({ pitch: 50 }));
+    expectOnGround('pitch 50 without zoom', await terrainOf(), await view(), fit, 50);
 });
 
 test('draws the second run of a reused grammar from its own table, though the first run loaded a GeoJSON table of that name', async ({ page }) => {

@@ -5,15 +5,21 @@ import assert from 'node:assert/strict';
 import { Camera } from '@urban-toolkit/autk-core';
 import type { AutkMap } from '@urban-toolkit/autk-map';
 import type { CameraMotionStep } from '@urban-toolkit/the-urban-grammar';
-import { motionRefusal, playCameraMotion, tourOf, viewAngles } from '../../adapters/autk/src/camera.ts';
+import type { FeatureCollection } from 'geojson';
+import { keepTerrainGround, motionRefusal, playCameraMotion, tourOf, viewAngles } from '../../adapters/autk/src/camera.ts';
 
 // The clock the test controls. CameraMotion reads performance.now() and turns the camera in requestAnimationFrame
 // callbacks, each called with the time of its frame; here a frame is drawn every 16 ms, when the test says.
 let now = 0;
 let frames: Array<(time: number) => void> = [];
+/** How many frames have been asked for. */
+let asked = 0;
 Object.defineProperty(globalThis, 'performance', { value: { now: () => now }, configurable: true, writable: true });
 Object.defineProperty(globalThis, 'requestAnimationFrame', {
-    value: (callback: (time: number) => void) => frames.push(callback),
+    value: (callback: (time: number) => void) => {
+        asked++;
+        return frames.push(callback);
+    },
     configurable: true,
     writable: true,
 });
@@ -155,6 +161,92 @@ function expectView(map: AutkMap, name: string, view: { tilt: number; heading: n
     await tour.done;
     await runTo(start + 2048);
     expectView(map, 'bearing stopped at a quarter', { tilt: 30, heading: 11.25, distance: 1000, x: 0, y: 0 });
+}
+
+// A stopped tour asks for no more frames, though its steps had an hour left. autk-core's CameraMotion cannot be stopped:
+// each of its steps asked for a frame at every frame until its seconds were up, and so kept the map's camera, and the map
+// with it, in memory long after the map was destroyed.
+{
+    const map = mapAt(30, 0, 1000);
+    const start = now;
+    const tour = playCameraMotion(map, [
+        { type: 'bearing', amount: 360, seconds: 3600 },
+        { type: 'zoom', amount: 1, seconds: 3600 },
+    ]);
+    await runTo(start + 256);
+    assert.equal(frames.length, 1, 'the tour waits for its next frame');
+    tour.stop();
+    await tour.done;
+    const before = asked;
+    await runTo(start + 2048);
+    assert.equal(asked - before, 0, `the stopped tour asked for ${asked - before} frames`);
+    assert.equal(frames.length, 0, 'no frame is due');
+    // 256 ms into an hour, the bearing had barely turned the view, and it stays where the tour had it.
+    expectView(map, 'an hour of bearing stopped at 256 ms', { tilt: 30, heading: 0, distance: 1000, x: 0, y: 0 });
+}
+
+/**
+ * A map whose terrain the grammar raised, as `keepTerrainGround` keeps it: heights `heightAt(x, y)` on a grid of `columns`
+ * by `rows` points over `[minX, minY, maxX, maxY]` of the map's world, whose origin is [0, 0]. Its camera looks at
+ * `lookAt` from `eye`, its up across the line of sight, toward the far side of the view, as applyCamera leaves it.
+ */
+function mapOnTerrain(bounds: number[], [columns, rows]: number[], heightAt: (x: number, y: number) => number, lookAt: number[], eye: number[]): AutkMap {
+    const [minX, minY, maxX, maxY] = bounds;
+    const camera = new Camera();
+    const sight = unit(lookAt.map((value, i) => value - eye[i]));
+    camera.resetCamera(cross(unit(cross(sight, [0, 0, 1])), sight), lookAt, eye);
+    camera.resize(800, 600);
+    const map = { camera, layerManager: { hasOrigin: true, origin: [0, 0] } } as unknown as AutkMap;
+    // The band's heights row by row from the south, as autk-db lays out a raster's band.
+    const heights = Float32Array.from({ length: columns * rows }, (_, i) =>
+        heightAt(minX + ((i % columns) * (maxX - minX)) / (columns - 1), minY + (Math.floor(i / columns) * (maxY - minY)) / (rows - 1)));
+    const raster = { type: 'FeatureCollection', bbox: bounds, features: [{ type: 'Feature', geometry: null, properties: { band_1: heights, rasterResX: columns, rasterResY: rows } }] };
+    keepTerrainGround(map, raster as unknown as FeatureCollection, 'band_1');
+    return map;
+}
+
+/** Checks that each coordinate of `point` lies within 5 cm of `expected`'s. */
+function expectNear(point: number[], expected: number[], name: string) {
+    for (let i = 0; i < 3; i++)
+        assert.ok(Math.abs(point[i] - expected[i]) < 0.05, `${name}: coordinate ${i} is ${point[i]}, not ${expected[i]}`);
+}
+
+// Ground 8 km long and 2 km wide, rising from 0 m at its south end to 800 m at its north end, with a point every 100 m
+// from south to north.
+const slope = { bounds: [-1000, -4000, 1000, 4000], grid: [3, 81], heightAt: (_: number, y: number) => 400 + y / 10 };
+
+// A tour on sloped ground turns the view around the ground its line of sight meets, ahead of the eye, though the ground
+// rises along the view faster than the line of sight falls: from zoom 11.5, 85 degrees from straight down, looking north
+// at the middle of the slope, 400 m high. The search for that ground stopped at a height above the eye, and the zoom step
+// turned the view around a point behind it.
+{
+    const [distance, tilt] = [10000 / 2 ** 1.5, radians(85)];
+    const middle = [0, 0, 400];
+    const map = mapOnTerrain(slope.bounds, slope.grid, slope.heightAt, middle, [0, -distance * Math.sin(tilt), 400 + distance * Math.cos(tilt)]);
+    const start = now;
+    const tour = playCameraMotion(map, [{ type: 'zoom', amount: 1, seconds: 0.512 }]);
+    await runTo(start + 512);
+    await tour.done;
+    // A zoom level in halves the eye's distance from the middle.
+    expectNear(map.camera.getLookAt(), middle, 'the point a zoom on the slope turned the view around');
+    expectNear(map.camera.getEye(), [0, (-distance / 2) * Math.sin(tilt), 400 + (distance / 2) * Math.cos(tilt)], 'the eye after a zoom on the slope');
+}
+
+// With the eye under the ground, its line of sight meets no ground ahead: a step turns the view around the point the
+// camera looks at, ahead of the eye. It turned the view around the ground under the eye, above it, so a zoom in moved
+// the eye back. Here the eye is 100 m under the slope, 2 km north of its middle, and looks north 60 degrees from
+// straight down at a point 400 m ahead.
+{
+    const tilt = radians(60);
+    const eye = [0, 2000, 500];
+    const lookAt = [0, 2000 + 400 * Math.sin(tilt), 500 - 400 * Math.cos(tilt)];
+    const map = mapOnTerrain(slope.bounds, slope.grid, slope.heightAt, lookAt, eye);
+    const start = now;
+    const tour = playCameraMotion(map, [{ type: 'zoom', amount: 1, seconds: 0.512 }]);
+    await runTo(start + 512);
+    await tour.done;
+    expectNear(map.camera.getLookAt(), lookAt, 'the point a zoom under the ground turned the view around');
+    expectNear(map.camera.getEye(), [0, 2000 + 200 * Math.sin(tilt), 500 - 200 * Math.cos(tilt)], 'the eye after a zoom under the ground');
 }
 
 // A tour played on a map stops the one it plays, and starts from its view.
