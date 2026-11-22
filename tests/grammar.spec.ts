@@ -3860,8 +3860,9 @@ test('opens the test page again when a request of its module fails, and runs lar
     // "window.runExample is not a function".
     await page.route((url) => url.pathname === '/main.ts', (route) => route.abort(), { times: 1 });
     await openTestPage(page);
-    const { tables } = await run(page, 'largest-blocks');
-    expect(tables.largest_blocks.features).toBe(10);
+    await run(page, 'largest-blocks');
+    // The run drew its chart of the ten largest blocks, as the test above reads it.
+    expect(await page.evaluate(() => document.querySelectorAll('#plot rect.autkMark').length)).toBe(10);
 });
 
 test('links the plot of linked-views to its map by their ids: a click in the plot highlights the layer, a pick selects in the plot', async ({ page }) => {
